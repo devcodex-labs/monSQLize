@@ -563,8 +563,8 @@ for (let i = 0; i < allData.length; i += BATCH_SIZE) {
 
 ## 参考资料
 
-- [单条插入可运行示例](https://github.com/vextjs/monSQLize/blob/main/examples/docs/insert.ts) - 当前 TypeScript 单条插入示例
-- [批量插入可运行示例](https://github.com/vextjs/monSQLize/blob/main/examples/docs/insert-many.ts) - 当前 TypeScript 批量插入示例
+- [单条插入可运行示例](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/insert.ts) - 当前 TypeScript 单条插入示例
+- [批量插入可运行示例](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/insert-many.ts) - 当前 TypeScript 批量插入示例
 - [缓存系统](./cache.md) - 缓存失效机制
 - [事件系统](./events.md) - 慢查询监听
 - [MongoDB writeConcern 文档](https://www.mongodb.com/docs/manual/reference/write-concern/)

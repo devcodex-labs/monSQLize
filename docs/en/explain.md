@@ -679,6 +679,6 @@ const goodPipeline = [
 ## References
 
 - [MongoDB Explain Document](https://docs.mongodb.com/manual/reference/method/cursor.explain/)
-- [explain sample code ](https://github.com/vextjs/monSQLize/blob/main/examples/docs/explain.ts)
+- [explain sample code ](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/explain.ts)
 - [Performance Optimization Guide](./count-queue.md)
 - [Best Practices in Index Design](./create-index.md)

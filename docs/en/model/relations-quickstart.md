@@ -387,7 +387,7 @@ async function example() {
 example();
 ```
 
-**Complete sample file**: [populate relations runnable example](https://github.com/vextjs/monSQLize/blob/main/examples/docs/populate-relations.ts)
+**Complete sample file**: [populate relations runnable example](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/populate-relations.ts)
 
 ---
 
@@ -436,6 +436,6 @@ Use the linked runnable example as the next reference when wiring relations into
 
 **Need help?**
 - View the API reference
-- Open an issue: https://github.com/vextjs/monSQLize/issues
+- Open an issue: https://github.com/devcodex-labs/monSQLize/issues
 
 ---

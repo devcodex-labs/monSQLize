@@ -94,7 +94,7 @@ const job = {
 
 SDK 的 `source`、`target` 可以是已连接的 monSQLize 实例，连接生命周期由调用方管理。CLI 配置必须使用两个 `MonSQLizeOptions`，dataTasks 会在完成或失败后关闭自己创建的连接。
 
-SDK 进程结束前应在 `finally` 中关闭上面两个实例；可运行的完整生命周期见 [`examples/docs/data-tasks.ts`](https://github.com/vextjs/monSQLize/blob/main/examples/docs/data-tasks.ts)。
+SDK 进程结束前应在 `finally` 中关闭上面两个实例；可运行的完整生命周期见 [`examples/docs/data-tasks.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/data-tasks.ts)。
 
 ## Job 参数
 

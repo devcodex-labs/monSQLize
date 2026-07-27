@@ -600,6 +600,6 @@ async function connectWithRetry() {
 - [MongoDB Node.js 驱动文档](https://docs.mongodb.com/drivers/node/)
 - [连接字符串格式](https://docs.mongodb.com/manual/reference/connection-string/)
 - [连接池配置](https://docs.mongodb.com/manual/reference/connection-string/#connection-pool-options)
-- [monSQLize README](https://github.com/vextjs/monSQLize/blob/main/README.md)
+- [monSQLize README](https://github.com/devcodex-labs/monSQLize/blob/main/README.md)
 
 

@@ -729,6 +729,6 @@ const goodPipeline = [
 ## 参考资料
 
 - [MongoDB Explain 文档](https://docs.mongodb.com/manual/reference/method/cursor.explain/)
-- [explain 示例代码](https://github.com/vextjs/monSQLize/blob/main/examples/docs/explain.ts)
+- [explain 示例代码](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/explain.ts)
 - [性能优化指南](./count-queue.md)
 - [索引设计最佳实践](./create-index.md)

@@ -198,7 +198,7 @@ async function findOne(filter, options = {}) {
 
 ### 查看 CI 状态
 
-- 访问 [Actions 页面](https://github.com/vextjs/monSQLize/actions) 查看所有工作流
+- 访问 [Actions 页面](https://github.com/devcodex-labs/monSQLize/actions) 查看所有工作流
 - Pull Request 页面会显示所有检查状态
 - README 中的入口说明应与当前仓库现状一致
 
@@ -217,7 +217,7 @@ async function findOne(filter, options = {}) {
 
 ## 🐛 报告问题
 
-在 [GitHub Issues](https://github.com/vextjs/monSQLize/issues) 提交问题时，请包含：
+在 [GitHub Issues](https://github.com/devcodex-labs/monSQLize/issues) 提交问题时，请包含：
 
 - **环境信息**: Node.js 版本、MongoDB 版本、操作系统
 - **复现步骤**: 清晰的步骤说明
@@ -229,8 +229,8 @@ async function findOne(filter, options = {}) {
 
 ## 💬 讨论与交流
 
-- **GitHub Discussions**: [讨论区](https://github.com/vextjs/monSQLize/discussions)
-- **GitHub Issues**: [问题跟踪](https://github.com/vextjs/monSQLize/issues)
+- **GitHub Discussions**: [讨论区](https://github.com/devcodex-labs/monSQLize/discussions)
+- **GitHub Issues**: [问题跟踪](https://github.com/devcodex-labs/monSQLize/issues)
 
 ---
 

@@ -803,7 +803,7 @@ try {
 ## 参考资料
 
 - [MongoDB Aggregation 文档](https://docs.mongodb.com/manual/aggregation/)
-- [aggregate 方法示例](https://github.com/vextjs/monSQLize/blob/main/examples/docs/aggregate.ts)
+- [aggregate 方法示例](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/aggregate.ts)
 - [aggregate 方法测试](../../test/integration/mongodb/aggregate.test.ts)
 - [find 方法文档](./find.md)
 

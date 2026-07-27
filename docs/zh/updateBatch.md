@@ -550,5 +550,5 @@ try {
 - [find - 流式查询](./find.md)
 - [updateMany - 批量更新（小数据量）](./update-many.md)
 - [MongoDB 更新操作符](https://www.mongodb.com/docs/manual/reference/operator/update/)
-- [使用示例](https://github.com/vextjs/monSQLize/blob/main/examples/docs/batch-operations.ts)
+- [使用示例](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/batch-operations.ts)
 - [Batch 写入测试](../../test/unit/writes/batch.test.ts)

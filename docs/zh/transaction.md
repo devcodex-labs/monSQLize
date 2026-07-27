@@ -652,5 +652,5 @@ if (stats) {
 ## 相关文档
 
 - [MongoDB 事务官方文档](https://docs.mongodb.com/manual/core/transactions/)
-- [示例代码](https://github.com/vextjs/monSQLize/blob/main/examples/docs/transaction.ts)
+- [示例代码](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/transaction.ts)
 

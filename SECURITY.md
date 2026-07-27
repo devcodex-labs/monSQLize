@@ -9,7 +9,7 @@ support window.
 
 ## Reporting a Vulnerability / 报告安全问题
 
-Use [GitHub private vulnerability reporting](https://github.com/vextjs/monSQLize/security/advisories/new).
+Use [GitHub private vulnerability reporting](https://github.com/devcodex-labs/monSQLize/security/advisories/new).
 Do not open a public issue for an undisclosed vulnerability.
 
 - Include the affected version, minimal reproduction, impact, and any known workaround.

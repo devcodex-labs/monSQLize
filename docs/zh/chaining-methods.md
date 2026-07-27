@@ -259,9 +259,9 @@ monSQLize 会自动检测调用方式：
 ## 📚 相关文档
 
 - **[链式调用完整 API 文档](./chaining-api.md)** - 详细的使用指南和最佳实践
-- **[链式调用示例](https://github.com/vextjs/monSQLize/blob/main/examples/docs/chaining-api.ts)** - 当前 TypeScript 示例
+- **[链式调用示例](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/chaining-api.ts)** - 当前 TypeScript 示例
 - **[find 方法文档](./find.md)** - find 方法详细说明
 - **[aggregate 方法文档](./aggregate.md)** - aggregate 方法详细说明
 - **[explain 方法文档](./explain.md)** - 性能分析工具
 
-**反馈与建议**: 如有问题或建议，请提交 [GitHub Issue](https://github.com/vextjs/monSQLize/issues)。
+**反馈与建议**: 如有问题或建议，请提交 [GitHub Issue](https://github.com/devcodex-labs/monSQLize/issues)。

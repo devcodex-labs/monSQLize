@@ -26,10 +26,10 @@ This documentation starts with the common application path: connect to MongoDB, 
 3. Basic usage: [`basic-operations.md`](./basic-operations.md)
 4. Constructor configuration: [`configuration.md`](./configuration.md)
 5. Examples:
-   - [examples/README.md](https://github.com/vextjs/monSQLize/blob/main/examples/README.md)
-   - [examples/quick-start/basic-connect.ts](https://github.com/vextjs/monSQLize/blob/main/examples/quick-start/basic-connect.ts)
-   - [examples/quick-start/basic-operations.ts](https://github.com/vextjs/monSQLize/blob/main/examples/quick-start/basic-operations.ts)
-   - [examples/docs](https://github.com/vextjs/monSQLize/tree/main/examples/docs)
+   - [examples/README.md](https://github.com/devcodex-labs/monSQLize/blob/main/examples/README.md)
+   - [examples/quick-start/basic-connect.ts](https://github.com/devcodex-labs/monSQLize/blob/main/examples/quick-start/basic-connect.ts)
+   - [examples/quick-start/basic-operations.ts](https://github.com/devcodex-labs/monSQLize/blob/main/examples/quick-start/basic-operations.ts)
+   - [examples/docs](https://github.com/devcodex-labs/monSQLize/tree/main/examples/docs)
    - [`examples.md`](./examples.md)
 6. Cache guide: [`cache.md`](./cache.md)
 7. Write path policy: [`write-path-policy.md`](./write-path-policy.md)
@@ -44,8 +44,8 @@ This documentation starts with the common application path: connect to MongoDB, 
 
 ## Source and Verification
 
-- The website is generated from [`docs/en`](https://github.com/vextjs/monSQLize/tree/main/docs/en) and [`docs/zh`](https://github.com/vextjs/monSQLize/tree/main/docs/zh).
-- Runnable examples live in [`examples`](https://github.com/vextjs/monSQLize/tree/main/examples).
+- The website is generated from [`docs/en`](https://github.com/devcodex-labs/monSQLize/tree/main/docs/en) and [`docs/zh`](https://github.com/devcodex-labs/monSQLize/tree/main/docs/zh).
+- Runnable examples live in [`examples`](https://github.com/devcodex-labs/monSQLize/tree/main/examples).
 - Public package behavior should match the package root exports, public types, and runnable examples.
 
 ## Running Examples

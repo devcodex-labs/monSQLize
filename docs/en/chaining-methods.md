@@ -256,9 +256,9 @@ monSQLize will automatically detect the calling method:
 ## 📚 Related documents
 
 - **[Chain call complete API documentation](./chaining-api.md)** - Detailed usage guide and best practices
-- **[Chain call example](https://github.com/vextjs/monSQLize/blob/main/examples/docs/chaining-api.ts)** - Current TypeScript example
+- **[Chain call example](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/chaining-api.ts)** - Current TypeScript example
 - **[find method document](./find.md)** - find method detailed description
 - **[aggregate method document](./aggregate.md)** - detailed description of aggregate method
 - **[explain method document](./explain.md)** - Performance analysis tool
 
-**Feedback and Suggestions**: If you have questions or suggestions, please submit [GitHub Issue](https://github.com/vextjs/monSQLize/issues).
+**Feedback and Suggestions**: If you have questions or suggestions, please submit [GitHub Issue](https://github.com/devcodex-labs/monSQLize/issues).

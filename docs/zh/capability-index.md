@@ -39,7 +39,7 @@ monSQLize 是数据库原生的生产数据运行时增强层。当前稳定适�
 Model 相关文档与示例：
 
 - 文档：[Model 概览](./model.md)、[Populate](./populate.md)、[Relations](./relations.md)、[嵌套 Populate](./model/nested-populate.md)
-- 示例：[model.ts](https://github.com/vextjs/monSQLize/blob/main/examples/docs/model.ts)、[populate-relations.ts](https://github.com/vextjs/monSQLize/blob/main/examples/docs/populate-relations.ts)
+- 示例：[model.ts](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/model.ts)、[populate-relations.ts](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/populate-relations.ts)
 
 ## 2. write-path-policy
 
@@ -85,8 +85,8 @@ Model 相关文档与示例：
 
 这些能力已提供专题文档与可执行示例：
 
-- sync：[Change Stream 同步](./sync-backup.md)，示例 [sync.ts](https://github.com/vextjs/monSQLize/blob/main/examples/docs/sync.ts)、[sync-target-failure.ts](https://github.com/vextjs/monSQLize/blob/main/examples/docs/sync-target-failure.ts)
-- slow-query-log：[慢查询日志](./slow-query-log.md)，示例 [slow-query-log.ts](https://github.com/vextjs/monSQLize/blob/main/examples/docs/slow-query-log.ts)
+- sync：[Change Stream 同步](./sync-backup.md)，示例 [sync.ts](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/sync.ts)、[sync-target-failure.ts](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/sync-target-failure.ts)
+- slow-query-log：[慢查询日志](./slow-query-log.md)，示例 [slow-query-log.ts](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/slow-query-log.ts)
 
 部署与故障恢复继续阅读 [分布式部署](./distributed-deployment.md)、[生产发布与迁移](./production-rollout.md) 与 [故障恢复示例](./failure-recovery-examples.md)。
 
@@ -95,7 +95,7 @@ Model 相关文档与示例：
 1. 文档站首页：[README](./README.md)
 2. API 索引：[API 索引](./api-index.md)
 3. 示例索引：[示例](./examples.md)
-4. 可执行示例目录：[examples/docs](https://github.com/vextjs/monSQLize/tree/main/examples/docs)
+4. 可执行示例目录：[examples/docs](https://github.com/devcodex-labs/monSQLize/tree/main/examples/docs)
 
 ## 7. 常用阅读路径
 

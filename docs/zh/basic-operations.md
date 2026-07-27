@@ -11,7 +11,7 @@
 - 给热点读加短 TTL 缓存
 - 判断何时从 `collection()` 切到 `model()`
 
-可运行版本见 [`examples/quick-start/basic-operations.ts`](https://github.com/vextjs/monSQLize/blob/main/examples/quick-start/basic-operations.ts)。
+可运行版本见 [`examples/quick-start/basic-operations.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/quick-start/basic-operations.ts)。
 
 ## 准备连接
 

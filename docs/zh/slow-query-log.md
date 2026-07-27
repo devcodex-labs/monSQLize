@@ -1024,5 +1024,5 @@ db.slow_query_logs.createIndex({ count: -1 });
 
 ### B. 相关链接
 
-- [使用示例](https://github.com/vextjs/monSQLize/blob/main/examples/docs/slow-query-log.ts)
+- [使用示例](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/slow-query-log.ts)
 

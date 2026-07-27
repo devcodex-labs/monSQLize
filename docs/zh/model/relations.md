@@ -746,6 +746,6 @@ interface PopulateOptions {
 ## 更多资源
 
 - [Model API 文档](../model.md)
-- [示例代码](https://github.com/vextjs/monSQLize/blob/main/examples/docs/populate-relations.ts)
-- [GitHub Issues](https://github.com/vextjs/monSQLize/issues)
+- [示例代码](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/populate-relations.ts)
+- [GitHub Issues](https://github.com/devcodex-labs/monSQLize/issues)
 

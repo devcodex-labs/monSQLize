@@ -762,7 +762,7 @@ try {
 ## References
 
 - [MongoDB Aggregation Document ](https://docs.mongodb.com/manual/aggregation/)
-- [aggregate method example ](https://github.com/vextjs/monSQLize/blob/main/examples/docs/aggregate.ts)
+- [aggregate method example ](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/aggregate.ts)
 - [aggregate method test ](../../test/integration/mongodb/aggregate.test.ts)
 - [find method document ](./find.md)
 

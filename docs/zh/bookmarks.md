@@ -522,5 +522,5 @@ try {
 
 - [findPage 方法文档](./findPage.md)
 - [缓存策略文档](./cache.md)
-- [bookmarks 示例代码](https://github.com/vextjs/monSQLize/blob/main/examples/docs/bookmarks.ts)
+- [bookmarks 示例代码](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/bookmarks.ts)
 - 性能优化指南

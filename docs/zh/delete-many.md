@@ -547,7 +547,7 @@ await safeDeleteMany("logs",
 
 ## 示例代码
 
-完整的示例代码请参考 [deleteMany 可运行示例](https://github.com/vextjs/monSQLize/blob/main/examples/docs/delete-many.ts)。
+完整的示例代码请参考 [deleteMany 可运行示例](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/delete-many.ts)。
 
 ## MongoDB 文档
 

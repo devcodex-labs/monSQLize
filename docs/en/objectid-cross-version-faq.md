@@ -250,7 +250,7 @@ Use these options for fields that can legitimately contain 24-character hexadeci
 
 Currently, only cross-version compatibility of ObjectId is handled. If you encounter conflicts with other types (such as Decimal128, Binary, etc.), please:
 
-1. Submit Issue: https://github.com/vextjs/monSQLize/issues
+1. Submit Issue: https://github.com/devcodex-labs/monSQLize/issues
 2. Provide reproduction steps and error information
 3. We will prioritize
 

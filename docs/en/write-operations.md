@@ -611,8 +611,8 @@ for (let i = 0; i < allData.length; i += BATCH_SIZE) {
 
 ## References
 
-- [single insert runnable example](https://github.com/vextjs/monSQLize/blob/main/examples/docs/insert.ts) - Current TypeScript single insertion example
-- [bulk insert runnable example](https://github.com/vextjs/monSQLize/blob/main/examples/docs/insert-many.ts) - Current TypeScript bulk insert example
+- [single insert runnable example](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/insert.ts) - Current TypeScript single insertion example
+- [bulk insert runnable example](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/insert-many.ts) - Current TypeScript bulk insert example
 - [Cache system](./cache.md) - Cache invalidation mechanism
 - [Event system](./events.md) - Slow query monitoring
 - [MongoDB writeConcern documentation](https://www.mongodb.com/docs/manual/reference/write-concern/)

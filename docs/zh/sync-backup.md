@@ -366,6 +366,6 @@ process.on('SIGTERM', async () => {
 
 ## 更多资源
 
-- [示例代码](https://github.com/vextjs/monSQLize/blob/main/examples/docs/sync.ts)
+- [示例代码](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/sync.ts)
 - [MongoDB Change Streams 官方文档](https://www.mongodb.com/docs/manual/changeStreams/)
 - [多连接池配置文档](./multi-pool.md)

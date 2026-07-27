@@ -389,5 +389,5 @@ console.log(`Estimated time: ${Math.ceil(estimatedTime)} seconds`);
 - [insertBatch - Insert documents in batches](./insertBatch.md)
 - [find - streaming query](./find.md)
 - [deleteMany - Batch deletion (small data volume)](./delete-many.md)
-- [Usage Example](https://github.com/vextjs/monSQLize/blob/main/examples/docs/batch-operations.ts)
+- [Usage Example](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/batch-operations.ts)
 - [Batch write test](../../test/unit/writes/batch.test.ts)

@@ -29,7 +29,7 @@ await msq.close();
 
 如果失败，先看缺少 `config.uri` 时的 `INVALID_CONFIG`，以及 `connect()` 前访问集合时的 `NOT_CONNECTED`。
 
-示例源码：[`examples/quick-start/basic-connect.ts`](https://github.com/vextjs/monSQLize/blob/main/examples/quick-start/basic-connect.ts)
+示例源码：[`examples/quick-start/basic-connect.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/quick-start/basic-connect.ts)
 
 ## 开启内存缓存
 
@@ -60,7 +60,7 @@ await msq.connect();
 
 内存缓存不需要额外服务，适合单进程或本地快速验证。写入会失效集合查询缓存；事务内写入会在提交成功后刷新待处理失效。
 
-示例源码：[`examples/cache/with-cache.ts`](https://github.com/vextjs/monSQLize/blob/main/examples/cache/with-cache.ts)
+示例源码：[`examples/cache/with-cache.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/cache/with-cache.ts)
 
 ## 开启 Redis 二级缓存与分布式失效
 
@@ -97,7 +97,7 @@ await msq.connect();
 
 如果 L2 缓存和分布式失效使用同一个 Redis 地址，把它放进 `redisUrl` 变量即可避免字符串重复。runtime 不会从 `cache.redis.url` 自动推导 `cache.distributed.redisUrl`；需要显式提供两个值，或给 `cache.distributed.redis` 传入已有 Redis 实例。
 
-示例源码：[`examples/docs/cache-multilevel.ts`](https://github.com/vextjs/monSQLize/blob/main/examples/docs/cache-multilevel.ts)
+示例源码：[`examples/docs/cache-multilevel.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/cache-multilevel.ts)
 
 ## 通过 SSH 隧道连接内网 MongoDB
 
@@ -161,7 +161,7 @@ const reports = msq.pool('analytics').collection('reports');
 
 连接池配置错误会抛出 `INVALID_CONFIG`；指定不存在的池会抛出 `POOL_NOT_FOUND`；所有池不可用会抛出 `INVALID_OPERATION`。
 
-示例源码：[`examples/docs/pool.ts`](https://github.com/vextjs/monSQLize/blob/main/examples/docs/pool.ts)、[`examples/docs/multi-pool-health-check.ts`](https://github.com/vextjs/monSQLize/blob/main/examples/docs/multi-pool-health-check.ts)
+示例源码：[`examples/docs/pool.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/pool.ts)、[`examples/docs/multi-pool-health-check.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/multi-pool-health-check.ts)
 
 ## 启用 Model 层
 
@@ -195,7 +195,7 @@ await User.insertOne({ name: 'Ada', email: 'ada@example.com' });
 
 Model 的 schema 回调使用当前 `MonSQLize` 实例隔离的 `schema-dsl/runtime`。如果应用持有自定义 schema-dsl 类型或消息，应直接配置该 runtime，并通过 `schemaDsl: { runtime }` 注入。
 
-示例源码：[`examples/docs/model.ts`](https://github.com/vextjs/monSQLize/blob/main/examples/docs/model.ts)
+示例源码：[`examples/docs/model.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/model.ts)
 
 ## 按错误码排障
 

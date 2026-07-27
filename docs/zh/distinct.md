@@ -814,5 +814,5 @@ const chineseNames = await collection('users').distinct('name', {}, {
 ## 示例代码
 
 更多完整示例请参考：
-- [distinct.ts](https://github.com/vextjs/monSQLize/blob/main/examples/docs/distinct.ts) - 当前 TypeScript 使用示例
+- [distinct.ts](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/distinct.ts) - 当前 TypeScript 使用示例
 - [queries.test.ts](../../test/integration/mongodb/queries.test.ts) - 集成测试覆盖

@@ -7,9 +7,9 @@ Database-native production data runtime layer for TypeScript services. monSQLize
 [![MongoDB](https://img.shields.io/badge/MongoDB-7.x%20%2F%208.x-green.svg)](https://www.mongodb.com/)
 [![Node.js](https://img.shields.io/badge/Node.js-18%2B-brightgreen)](https://nodejs.org/)
 
-Documentation: [English](https://vextjs.github.io/monSQLize/) · [简体中文](https://vextjs.github.io/monSQLize/zh/)
-Quick path: [Installation](https://vextjs.github.io/monSQLize/getting-started) · [Basic Usage](https://vextjs.github.io/monSQLize/basic-operations)
-Configuration reference: [English](https://vextjs.github.io/monSQLize/configuration) · [简体中文](https://vextjs.github.io/monSQLize/zh/configuration)
+Documentation: [English](https://devcodex-labs.github.io/monSQLize/) · [简体中文](https://devcodex-labs.github.io/monSQLize/zh/)
+Quick path: [Installation](https://devcodex-labs.github.io/monSQLize/getting-started) · [Basic Usage](https://devcodex-labs.github.io/monSQLize/basic-operations)
+Configuration reference: [English](https://devcodex-labs.github.io/monSQLize/configuration) · [简体中文](https://devcodex-labs.github.io/monSQLize/zh/configuration)
 Upgrade and security: [Migration Guide](./MIGRATION.md) · [Private Vulnerability Reporting](./SECURITY.md)
 
 The npm `latest` dist-tag and GitHub Pages are the stable channel; `main` may contain the next release. Pages deployment accepts only a versioned Git tag whose package version is already present on npm, so unpublished APIs are not promoted as stable documentation.
@@ -134,7 +134,7 @@ await users.updateOne(
 await msq.close();
 ```
 
-Next, use the [Basic Usage guide](https://vextjs.github.io/monSQLize/basic-operations) for common CRUD, pagination, read cache, and Model entry-point examples.
+Next, use the [Basic Usage guide](https://devcodex-labs.github.io/monSQLize/basic-operations) for common CRUD, pagination, read cache, and Model entry-point examples.
 
 ### ESM and TypeScript
 
@@ -496,34 +496,34 @@ The v3 line has been validated against the workspace consumers `chat`, `payment`
 
 See the current support and verification documents:
 
-- [English documentation](https://github.com/vextjs/monSQLize/blob/main/docs/en/README.md)
-- [Chinese documentation](https://github.com/vextjs/monSQLize/blob/main/docs/zh/README.md)
-- [English common scenarios](https://github.com/vextjs/monSQLize/blob/main/docs/en/recipes.md)
-- [Support matrix](https://github.com/vextjs/monSQLize/blob/main/docs/en/support-matrix.md)
-- [test/compatibility/README.md](https://github.com/vextjs/monSQLize/blob/main/test/compatibility/README.md)
-- [test/validation/VERIFICATION-PROGRESS.md](https://github.com/vextjs/monSQLize/blob/main/test/validation/VERIFICATION-PROGRESS.md)
+- [English documentation](https://github.com/devcodex-labs/monSQLize/blob/main/docs/en/README.md)
+- [Chinese documentation](https://github.com/devcodex-labs/monSQLize/blob/main/docs/zh/README.md)
+- [English common scenarios](https://github.com/devcodex-labs/monSQLize/blob/main/docs/en/recipes.md)
+- [Support matrix](https://github.com/devcodex-labs/monSQLize/blob/main/docs/en/support-matrix.md)
+- [test/compatibility/README.md](https://github.com/devcodex-labs/monSQLize/blob/main/test/compatibility/README.md)
+- [test/validation/VERIFICATION-PROGRESS.md](https://github.com/devcodex-labs/monSQLize/blob/main/test/validation/VERIFICATION-PROGRESS.md)
 
 ## Documentation
 
 Current TypeScript documentation and examples are the source of truth for the v3 package:
 
-- Complete docs: [English](https://vextjs.github.io/monSQLize/) · [简体中文](https://vextjs.github.io/monSQLize/zh/)
-- Constructor configuration: [English](https://vextjs.github.io/monSQLize/configuration) · [简体中文](https://vextjs.github.io/monSQLize/zh/configuration)
-- Production rollout: [English](https://vextjs.github.io/monSQLize/production-rollout) · [简体中文](https://vextjs.github.io/monSQLize/zh/production-rollout)
-- Production data migration: [English](https://vextjs.github.io/monSQLize/production-data-migration) · [简体中文](https://vextjs.github.io/monSQLize/zh/production-data-migration)
-- Data tasks API: [English](https://vextjs.github.io/monSQLize/data-tasks) · [简体中文](https://vextjs.github.io/monSQLize/zh/data-tasks)
-- Common scenarios: [English](https://vextjs.github.io/monSQLize/recipes) · [简体中文](https://vextjs.github.io/monSQLize/zh/recipes)
-- Example source: [examples index](https://github.com/vextjs/monSQLize/blob/main/examples/README.md)
-- Documentation source: [docs/en](https://github.com/vextjs/monSQLize/tree/main/docs/en) · [docs/zh](https://github.com/vextjs/monSQLize/tree/main/docs/zh)
-- Compatibility checks: [test/compatibility](https://github.com/vextjs/monSQLize/tree/main/test/compatibility)
-- Verification mapping: [test/validation](https://github.com/vextjs/monSQLize/tree/main/test/validation)
+- Complete docs: [English](https://devcodex-labs.github.io/monSQLize/) · [简体中文](https://devcodex-labs.github.io/monSQLize/zh/)
+- Constructor configuration: [English](https://devcodex-labs.github.io/monSQLize/configuration) · [简体中文](https://devcodex-labs.github.io/monSQLize/zh/configuration)
+- Production rollout: [English](https://devcodex-labs.github.io/monSQLize/production-rollout) · [简体中文](https://devcodex-labs.github.io/monSQLize/zh/production-rollout)
+- Production data migration: [English](https://devcodex-labs.github.io/monSQLize/production-data-migration) · [简体中文](https://devcodex-labs.github.io/monSQLize/zh/production-data-migration)
+- Data tasks API: [English](https://devcodex-labs.github.io/monSQLize/data-tasks) · [简体中文](https://devcodex-labs.github.io/monSQLize/zh/data-tasks)
+- Common scenarios: [English](https://devcodex-labs.github.io/monSQLize/recipes) · [简体中文](https://devcodex-labs.github.io/monSQLize/zh/recipes)
+- Example source: [examples index](https://github.com/devcodex-labs/monSQLize/blob/main/examples/README.md)
+- Documentation source: [docs/en](https://github.com/devcodex-labs/monSQLize/tree/main/docs/en) · [docs/zh](https://github.com/devcodex-labs/monSQLize/tree/main/docs/zh)
+- Compatibility checks: [test/compatibility](https://github.com/devcodex-labs/monSQLize/tree/main/test/compatibility)
+- Verification mapping: [test/validation](https://github.com/devcodex-labs/monSQLize/tree/main/test/validation)
 
 Historical v1 and v2 assets are useful for tracing old behavior, but they are not the current publishing surface for v3.
 
 ## Development
 
 ```bash
-git clone https://github.com/vextjs/monSQLize.git
+git clone https://github.com/devcodex-labs/monSQLize.git
 cd monSQLize
 npm install
 ```
@@ -581,6 +581,6 @@ monSQLize is released under the [Apache License 2.0](./LICENSE).
 
 ## Support
 
-- Issues: [GitHub Issues](https://github.com/vextjs/monSQLize/issues)
+- Issues: [GitHub Issues](https://github.com/devcodex-labs/monSQLize/issues)
 - npm: [monsqlize](https://www.npmjs.com/package/monsqlize)
-- Website: [https://vextjs.github.io/monSQLize/](https://vextjs.github.io/monSQLize/)
+- Website: [https://devcodex-labs.github.io/monSQLize/](https://devcodex-labs.github.io/monSQLize/)

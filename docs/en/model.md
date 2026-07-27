@@ -695,7 +695,7 @@ try {
 | Optional | `type?` | `'string?'` optional string |
 | Required | `type!` | `'string!'` Required string |
 
-See [schema-dsl documentation](https://github.com/vextjs/schema-dsl) for more syntax.
+See [schema-dsl documentation](https://github.com/devcodex-labs/schema-dsl) for more syntax.
 
 
 ## Verification error details
@@ -1893,5 +1893,5 @@ A: instance is injected into the document object, and static is mounted to the M
 ## More examples
 
 Check out current TypeScript examples:
-- [Model basic runnable example](https://github.com/vextjs/monSQLize/blob/main/examples/docs/model.ts) - Basic use of Model
-- [relations and populate runnable example](https://github.com/vextjs/monSQLize/blob/main/examples/docs/populate-relations.ts) - Relations and populate example
+- [Model basic runnable example](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/model.ts) - Basic use of Model
+- [relations and populate runnable example](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/populate-relations.ts) - Relations and populate example

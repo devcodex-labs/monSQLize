@@ -59,7 +59,7 @@ npm run build
 npm run test:examples
 ```
 
-The current official example is [`examples/quick-start/basic-connect.ts`](https://github.com/vextjs/monSQLize/blob/main/examples/quick-start/basic-connect.ts). During verification, it is compiled before it runs. The example:
+The current official example is [`examples/quick-start/basic-connect.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/quick-start/basic-connect.ts). During verification, it is compiled before it runs. The example:
 
 1. Starts an in-memory MongoDB instance.
 2. Creates and connects a `MonSQLize` instance.
@@ -74,11 +74,11 @@ The current official example is [`examples/quick-start/basic-connect.ts`](https:
 - Learn query details in [`find.md`](./find.md), [`findOne.md`](./findOne.md), and [`findPage.md`](./findPage.md).
 - Compare runnable examples in [`examples.md`](./examples.md).
 - Open the source examples on GitHub:
-  - [`examples/quick-start/basic-connect.ts`](https://github.com/vextjs/monSQLize/blob/main/examples/quick-start/basic-connect.ts)
-  - [`examples/quick-start/basic-operations.ts`](https://github.com/vextjs/monSQLize/blob/main/examples/quick-start/basic-operations.ts)
-  - [`examples/docs/find.ts`](https://github.com/vextjs/monSQLize/blob/main/examples/docs/find.ts)
-  - [`examples/docs/find-one.ts`](https://github.com/vextjs/monSQLize/blob/main/examples/docs/find-one.ts)
-  - [`examples/docs/find-page.ts`](https://github.com/vextjs/monSQLize/blob/main/examples/docs/find-page.ts)
+  - [`examples/quick-start/basic-connect.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/quick-start/basic-connect.ts)
+  - [`examples/quick-start/basic-operations.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/quick-start/basic-operations.ts)
+  - [`examples/docs/find.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/find.ts)
+  - [`examples/docs/find-one.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/find-one.ts)
+  - [`examples/docs/find-page.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/find-page.ts)
 
 ## Common Notes
 

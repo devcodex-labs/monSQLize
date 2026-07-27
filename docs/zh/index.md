@@ -27,7 +27,7 @@ hero:
       link: /zh/api-index.html
     - theme: alt
       text: GitHub
-      link: https://github.com/vextjs/monSQLize
+      link: https://github.com/devcodex-labs/monSQLize
 
 features:
   - icon: ⚡

@@ -558,7 +558,7 @@ await safeDeleteMany("logs",
 
 ## Sample code
 
-For complete sample code, please refer to the [deleteMany runnable example](https://github.com/vextjs/monSQLize/blob/main/examples/docs/delete-many.ts).
+For complete sample code, please refer to the [deleteMany runnable example](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/delete-many.ts).
 
 ## MongoDB Documentation
 

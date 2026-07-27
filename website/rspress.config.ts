@@ -85,17 +85,17 @@ const navSource: NavSource[] = [
       {
         en: 'Changelog',
         zh: '更新日志',
-        link: 'https://github.com/vextjs/monSQLize/blob/main/CHANGELOG.md'
+        link: 'https://github.com/devcodex-labs/monSQLize/blob/main/CHANGELOG.md'
       },
       {
         en: 'GitHub Pages',
         zh: 'GitHub Pages',
-        link: 'https://vextjs.github.io/monSQLize/'
+        link: 'https://devcodex-labs.github.io/monSQLize/'
       },
       {
         en: 'v1.x (Legacy JS)',
         zh: 'v1.x（旧版 JS）',
-        link: 'https://github.com/vextjs/monSQLize/tree/v1'
+        link: 'https://github.com/devcodex-labs/monSQLize/tree/v1'
       }
     ]
   }
@@ -122,17 +122,17 @@ const englishFooterMessage = `
     </div>
     <div>
       <h2>Ecosystem</h2>
-      <a href="https://github.com/vextjs" target="_blank" rel="noreferrer">VextJS Organization</a>
-      <a href="https://vextjs.github.io/vext/" target="_blank" rel="noreferrer">VextJS</a>
-      <a href="https://vextjs.github.io/schema-dsl/" target="_blank" rel="noreferrer">schema-dsl</a>
-      <a href="https://vextjs.github.io/flex-rate-limit/" target="_blank" rel="noreferrer">flex-rate-limit</a>
+      <a href="https://github.com/devcodex-labs" target="_blank" rel="noreferrer">VextJS Organization</a>
+      <a href="https://devcodex-labs.github.io/vextjs/" target="_blank" rel="noreferrer">VextJS</a>
+      <a href="https://devcodex-labs.github.io/schema-dsl/" target="_blank" rel="noreferrer">schema-dsl</a>
+      <a href="https://devcodex-labs.github.io/flex-rate-limit/" target="_blank" rel="noreferrer">flex-rate-limit</a>
     </div>
     <div>
       <h2>Project</h2>
-      <a href="https://github.com/vextjs/monSQLize" target="_blank" rel="noreferrer">GitHub</a>
-      <a href="https://github.com/vextjs/monSQLize/blob/main/CHANGELOG.md" target="_blank" rel="noreferrer">Changelog</a>
-      <a href="https://github.com/vextjs/monSQLize/releases" target="_blank" rel="noreferrer">Releases</a>
-      <a href="https://github.com/vextjs/monSQLize/issues" target="_blank" rel="noreferrer">Issues</a>
+      <a href="https://github.com/devcodex-labs/monSQLize" target="_blank" rel="noreferrer">GitHub</a>
+      <a href="https://github.com/devcodex-labs/monSQLize/blob/main/CHANGELOG.md" target="_blank" rel="noreferrer">Changelog</a>
+      <a href="https://github.com/devcodex-labs/monSQLize/releases" target="_blank" rel="noreferrer">Releases</a>
+      <a href="https://github.com/devcodex-labs/monSQLize/issues" target="_blank" rel="noreferrer">Issues</a>
     </div>
     <div>
       <h2>Runtime</h2>
@@ -165,17 +165,17 @@ const chineseFooterMessage = `
     </div>
     <div>
       <h2>生态</h2>
-      <a href="https://github.com/vextjs" target="_blank" rel="noreferrer">VextJS 组织</a>
-      <a href="https://vextjs.github.io/vext/" target="_blank" rel="noreferrer">VextJS</a>
-      <a href="https://vextjs.github.io/schema-dsl/" target="_blank" rel="noreferrer">schema-dsl</a>
-      <a href="https://vextjs.github.io/flex-rate-limit/" target="_blank" rel="noreferrer">flex-rate-limit</a>
+      <a href="https://github.com/devcodex-labs" target="_blank" rel="noreferrer">VextJS 组织</a>
+      <a href="https://devcodex-labs.github.io/vextjs/" target="_blank" rel="noreferrer">VextJS</a>
+      <a href="https://devcodex-labs.github.io/schema-dsl/" target="_blank" rel="noreferrer">schema-dsl</a>
+      <a href="https://devcodex-labs.github.io/flex-rate-limit/" target="_blank" rel="noreferrer">flex-rate-limit</a>
     </div>
     <div>
       <h2>项目</h2>
-      <a href="https://github.com/vextjs/monSQLize" target="_blank" rel="noreferrer">GitHub</a>
-      <a href="https://github.com/vextjs/monSQLize/blob/main/CHANGELOG.md" target="_blank" rel="noreferrer">更新日志</a>
-      <a href="https://github.com/vextjs/monSQLize/releases" target="_blank" rel="noreferrer">Releases</a>
-      <a href="https://github.com/vextjs/monSQLize/issues" target="_blank" rel="noreferrer">Issues</a>
+      <a href="https://github.com/devcodex-labs/monSQLize" target="_blank" rel="noreferrer">GitHub</a>
+      <a href="https://github.com/devcodex-labs/monSQLize/blob/main/CHANGELOG.md" target="_blank" rel="noreferrer">更新日志</a>
+      <a href="https://github.com/devcodex-labs/monSQLize/releases" target="_blank" rel="noreferrer">Releases</a>
+      <a href="https://github.com/devcodex-labs/monSQLize/issues" target="_blank" rel="noreferrer">Issues</a>
     </div>
     <div>
       <h2>运行基线</h2>
@@ -378,7 +378,7 @@ const sidebarSource: SidebarGroupSource[] = [
 const isExternalLink = (link: string) => /^https?:\/\//.test(link);
 const repositoryRoot = path.join(import.meta.dirname, '..');
 const docsRoot = path.join(repositoryRoot, 'docs');
-const githubRepositoryUrl = 'https://github.com/vextjs/monSQLize';
+const githubRepositoryUrl = 'https://github.com/devcodex-labs/monSQLize';
 const siteBase = '/monSQLize/';
 
 const isExternalOrSiteLink = (url: string) =>
@@ -589,7 +589,7 @@ const config: UserConfig = {
   plugins: [
     rewriteGeneratedLanguageSwitchLinks,
     pluginSitemap({
-      siteUrl: 'https://vextjs.github.io/monSQLize'
+      siteUrl: 'https://devcodex-labs.github.io/monSQLize'
     })
   ],
   markdown: {
@@ -636,7 +636,7 @@ const config: UserConfig = {
       {
         icon: 'github',
         mode: 'link',
-        content: 'https://github.com/vextjs/monSQLize'
+        content: 'https://github.com/devcodex-labs/monSQLize'
       }
     ],
     footer: {

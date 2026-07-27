@@ -575,7 +575,7 @@ try {
 ## Sample code
 
 For complete sample code, please refer to:
-- [insertMany runnable example](https://github.com/vextjs/monSQLize/blob/main/examples/docs/insert-many.ts)
+- [insertMany runnable example](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/insert-many.ts)
 - [write operations guide](./write-operations.md)
 
 ## MongoDB Documentation

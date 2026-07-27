@@ -434,4 +434,4 @@ Use this sparingly. Keep the connection-level default for most reads, and overri
 - [MongoDB official documentation - Read Preference](https://www.mongodb.com/docs/manual/core/read-preference/)
 - [MongoDB Replica Set Deployment Guide](https://www.mongodb.com/docs/manual/tutorial/deploy-replica-set/)
 - [monSQLize connection configuration](./connection.md)
-- [Example of multiple connection pools and read preferences](https://github.com/vextjs/monSQLize/blob/main/examples/docs/pool.ts)
+- [Example of multiple connection pools and read preferences](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/pool.ts)

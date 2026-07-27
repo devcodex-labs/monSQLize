@@ -40,7 +40,7 @@ Available entries:
 Model documentation and examples:
 
 - Docs: [Model Overview](./model.md), [Populate](./populate.md), [Relations](./relations.md), [Nested Populate](./model/nested-populate.md)
-- Examples: [model.ts](https://github.com/vextjs/monSQLize/blob/main/examples/docs/model.ts), [populate-relations.ts](https://github.com/vextjs/monSQLize/blob/main/examples/docs/populate-relations.ts)
+- Examples: [model.ts](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/model.ts), [populate-relations.ts](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/populate-relations.ts)
 
 ## 2. write-path-policy
 
@@ -86,8 +86,8 @@ Available entries:
 
 These capabilities include topic pages and runnable examples:
 
-- sync: [Change Stream Sync](./sync-backup.md), examples [sync.ts](https://github.com/vextjs/monSQLize/blob/main/examples/docs/sync.ts) and [sync-target-failure.ts](https://github.com/vextjs/monSQLize/blob/main/examples/docs/sync-target-failure.ts)
-- slow-query-log: [Slow Query Logging](./slow-query-log.md), example [slow-query-log.ts](https://github.com/vextjs/monSQLize/blob/main/examples/docs/slow-query-log.ts)
+- sync: [Change Stream Sync](./sync-backup.md), examples [sync.ts](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/sync.ts) and [sync-target-failure.ts](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/sync-target-failure.ts)
+- slow-query-log: [Slow Query Logging](./slow-query-log.md), example [slow-query-log.ts](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/slow-query-log.ts)
 
 For deployment and failure behavior, continue with [Distributed Deployment](./distributed-deployment.md), [Production Rollout](./production-rollout.md), and [Failure Recovery Examples](./failure-recovery-examples.md).
 
@@ -96,7 +96,7 @@ For deployment and failure behavior, continue with [Distributed Deployment](./di
 1. Documentation home: [README](./README.md)
 2. API index: [API Index](./api-index.md)
 3. Example index: [Examples](./examples.md)
-4. Runnable examples: [examples/docs](https://github.com/vextjs/monSQLize/tree/main/examples/docs)
+4. Runnable examples: [examples/docs](https://github.com/devcodex-labs/monSQLize/tree/main/examples/docs)
 
 ## 7. Common Reading Paths
 

@@ -11,7 +11,7 @@ After installation and the first connection, use this page to run the common dat
 - Add a short read cache
 - Decide when to switch from `collection()` to `model()`
 
-For a runnable version of this flow, open [`examples/quick-start/basic-operations.ts`](https://github.com/vextjs/monSQLize/blob/main/examples/quick-start/basic-operations.ts).
+For a runnable version of this flow, open [`examples/quick-start/basic-operations.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/quick-start/basic-operations.ts).
 
 ## Setup
 

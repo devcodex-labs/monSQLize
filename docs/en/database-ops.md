@@ -231,4 +231,4 @@ console.log('Size (MB):', collStats.size);
 
 - [Operation and Maintenance Monitoring](./admin.md) - ping, buildInfo, serverStatus, stats
 - [Collection Management](./collection-management.md) - Collection level operations
-- [Collection Management Example](https://github.com/vextjs/monSQLize/blob/main/examples/docs/collection-management.ts)
+- [Collection Management Example](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/collection-management.ts)

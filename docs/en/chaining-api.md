@@ -506,4 +506,4 @@ console.log("Query plan:", plan);
 |------|------|---------|
 ---
 
-**Feedback and Suggestions**: If you have questions or suggestions, please submit [GitHub Issue](https://github.com/vextjs/monSQLize/issues).
+**Feedback and Suggestions**: If you have questions or suggestions, please submit [GitHub Issue](https://github.com/devcodex-labs/monSQLize/issues).

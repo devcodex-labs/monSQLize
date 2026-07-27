@@ -394,7 +394,7 @@ for (const err of result.errors) {
 
 ## 参考资料
 
-- [批量操作可运行示例](https://github.com/vextjs/monSQLize/blob/main/examples/docs/batch-operations.ts) - 当前 TypeScript 示例
+- [批量操作可运行示例](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/batch-operations.ts) - 当前 TypeScript 示例
 - [test/unit/writes/batch.test.ts](../../test/unit/writes/batch.test.ts) - 测试用例
 - [写入操作指南](./write-operations.md) - 写入操作总览
 - [缓存系统](./cache.md) - 缓存失效机制

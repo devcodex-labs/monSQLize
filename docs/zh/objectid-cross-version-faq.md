@@ -238,7 +238,7 @@ const msq2 = new MonSQLize({
 
 目前只处理了 ObjectId 的跨版本兼容。如果遇到其他类型（如 Decimal128, Binary 等）的冲突，请：
 
-1. 提交 Issue：https://github.com/vextjs/monSQLize/issues
+1. 提交 Issue：https://github.com/devcodex-labs/monSQLize/issues
 2. 提供复现步骤和错误信息
 3. 我们会优先处理
 

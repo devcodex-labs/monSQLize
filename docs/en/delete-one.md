@@ -377,7 +377,7 @@ await collection("users").deleteOne(
 
 ## Sample code
 
-For complete sample code, please refer to the [delete runnable example](https://github.com/vextjs/monSQLize/blob/main/examples/docs/delete.ts).
+For complete sample code, please refer to the [delete runnable example](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/delete.ts).
 
 ## MongoDB Documentation
 

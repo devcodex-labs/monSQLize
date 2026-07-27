@@ -29,7 +29,7 @@ await msq.close();
 
 If it fails, check for `INVALID_CONFIG` when `config.uri` is missing and `NOT_CONNECTED` when a collection is accessed before `connect()`.
 
-Example source: [`examples/quick-start/basic-connect.ts`](https://github.com/vextjs/monSQLize/blob/main/examples/quick-start/basic-connect.ts)
+Example source: [`examples/quick-start/basic-connect.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/quick-start/basic-connect.ts)
 
 ## Enable Memory Cache
 
@@ -60,7 +60,7 @@ await msq.connect();
 
 Memory cache needs no external service and is the quickest way to verify cached reads locally. Writes clear collection query cache only when `cache.invalidate`, `autoInvalidate`, or global `cache.autoInvalidate` is configured; transaction writes flush pending invalidations after commit.
 
-Example source: [`examples/cache/with-cache.ts`](https://github.com/vextjs/monSQLize/blob/main/examples/cache/with-cache.ts)
+Example source: [`examples/cache/with-cache.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/cache/with-cache.ts)
 
 ## Enable Redis L2 Cache and Distributed Invalidation
 
@@ -97,7 +97,7 @@ await msq.connect();
 
 Keep the Redis URL in a variable when both L2 cache and distributed invalidation use the same Redis endpoint. The runtime does not infer `cache.distributed.redisUrl` from `cache.redis.url`; provide both values or pass a Redis instance to `cache.distributed.redis`.
 
-Example source: [`examples/docs/cache-multilevel.ts`](https://github.com/vextjs/monSQLize/blob/main/examples/docs/cache-multilevel.ts)
+Example source: [`examples/docs/cache-multilevel.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/cache-multilevel.ts)
 
 ## Connect Through an SSH Tunnel
 
@@ -161,7 +161,7 @@ const reports = msq.pool('analytics').collection('reports');
 
 Configuration errors throw `INVALID_CONFIG`; unknown pool names throw `POOL_NOT_FOUND`; unavailable pools throw `INVALID_OPERATION`.
 
-Example sources: [`examples/docs/pool.ts`](https://github.com/vextjs/monSQLize/blob/main/examples/docs/pool.ts) and [`examples/docs/multi-pool-health-check.ts`](https://github.com/vextjs/monSQLize/blob/main/examples/docs/multi-pool-health-check.ts)
+Example sources: [`examples/docs/pool.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/pool.ts) and [`examples/docs/multi-pool-health-check.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/multi-pool-health-check.ts)
 
 ## Enable the Model Layer
 
@@ -195,7 +195,7 @@ await User.insertOne({ name: 'Ada', email: 'ada@example.com' });
 
 Model schema callbacks use the isolated `schema-dsl/runtime` owned by the `MonSQLize` instance. If your application owns custom schema-dsl types or messages, configure that runtime directly and inject it with `schemaDsl: { runtime }`.
 
-Example source: [`examples/docs/model.ts`](https://github.com/vextjs/monSQLize/blob/main/examples/docs/model.ts)
+Example source: [`examples/docs/model.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/model.ts)
 
 ## Troubleshoot by Error Code
 

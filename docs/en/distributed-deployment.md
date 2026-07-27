@@ -778,6 +778,6 @@ const msq = new MonSQLize({
 - [Cache Policy Document](./cache.md)
 - [Cache consistency description](./cache.md)
 - [Transaction Function Document](./transaction.md)
-- [Redis Cache Adapter](https://github.com/vextjs/monSQLize/blob/main/src/capabilities/cache/redis-cache-adapter.ts)
+- [Redis Cache Adapter](https://github.com/devcodex-labs/monSQLize/blob/main/src/capabilities/cache/redis-cache-adapter.ts)
 
 ---

@@ -460,5 +460,5 @@ async function generateDatabaseReport() {
 
 - [数据库操作](./database-ops.md) - listDatabases, dropDatabase
 - [集合管理](./collection-management.md) - 集合统计和管理
-- [集合管理示例](https://github.com/vextjs/monSQLize/blob/main/examples/docs/collection-management.ts) - 当前 TypeScript 示例
+- [集合管理示例](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/collection-management.ts) - 当前 TypeScript 示例
 

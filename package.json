@@ -1,6 +1,6 @@
 {
   "name": "monsqlize",
-  "version": "3.1.0",
+  "version": "3.1.1",
   "description": "TypeScript production data runtime layer for MongoDB today, with cache, transactions, pools, models, sync, and observability",
   "type": "commonjs",
   "main": "./dist/cjs/index.cjs",
@@ -64,12 +64,12 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/vextjs/monSQLize.git"
+    "url": "git+https://github.com/devcodex-labs/monSQLize.git"
   },
   "bugs": {
-    "url": "https://github.com/vextjs/monSQLize/issues"
+    "url": "https://github.com/devcodex-labs/monSQLize/issues"
   },
-  "homepage": "https://vextjs.github.io/monSQLize/",
+  "homepage": "https://devcodex-labs.github.io/monSQLize/",
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"

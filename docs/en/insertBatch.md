@@ -372,7 +372,7 @@ for (const err of result.errors) {
 
 ## References
 
-- [batch operations runnable example](https://github.com/vextjs/monSQLize/blob/main/examples/docs/batch-operations.ts) - Current TypeScript example
+- [batch operations runnable example](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/batch-operations.ts) - Current TypeScript example
 - [test/unit/writes/batch.test.ts](../../test/unit/writes/batch.test.ts) - test case
 - [Write operations guide](./write-operations.md) - Overview of write operations
 - [Cache system](./cache.md) - Cache invalidation mechanism

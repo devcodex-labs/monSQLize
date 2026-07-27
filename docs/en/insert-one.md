@@ -552,7 +552,7 @@ if (result.success) {
 ## Sample code
 
 For complete sample code, please refer to:
-- [insert runnable example](https://github.com/vextjs/monSQLize/blob/main/examples/docs/insert.ts)
+- [insert runnable example](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/insert.ts)
 - [write operations guide](./write-operations.md)
 
 ## MongoDB Documentation

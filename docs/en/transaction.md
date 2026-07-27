@@ -683,4 +683,4 @@ if (stats) {
 ## Related documents
 
 - [MongoDB transaction official document](https://docs.mongodb.com/manual/core/transactions/)
-- [Sample code](https://github.com/vextjs/monSQLize/blob/main/examples/docs/transaction.ts)
+- [Sample code](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/transaction.ts)

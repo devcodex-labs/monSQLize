@@ -366,7 +366,7 @@ await collection("users").deleteOne({ userId: "user123" });
 
 ## 示例代码
 
-完整的示例代码请参考 [delete 可运行示例](https://github.com/vextjs/monSQLize/blob/main/examples/docs/delete.ts)。
+完整的示例代码请参考 [delete 可运行示例](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/delete.ts)。
 
 ## MongoDB 文档
 

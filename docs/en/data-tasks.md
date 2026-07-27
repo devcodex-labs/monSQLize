@@ -86,7 +86,7 @@ const job = {
 
 SDK jobs can use two connected monSQLize instances; the caller owns their lifecycle. CLI jobs must use two `MonSQLizeOptions` values. dataTasks closes connections that it creates.
 
-Close both SDK instances in `finally` before the process exits. See [`examples/docs/data-tasks.ts`](https://github.com/vextjs/monSQLize/blob/main/examples/docs/data-tasks.ts) for the complete runnable lifecycle.
+Close both SDK instances in `finally` before the process exits. See [`examples/docs/data-tasks.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/data-tasks.ts) for the complete runnable lifecycle.
 
 ## Job Parameters
 

@@ -211,5 +211,5 @@ console.log('Size (MB):', collStats.size);
 
 - [运维监控](./admin.md) - ping, buildInfo, serverStatus, stats
 - [集合管理](./collection-management.md) - 集合级别操作
-- [集合管理示例](https://github.com/vextjs/monSQLize/blob/main/examples/docs/collection-management.ts)
+- [集合管理示例](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/collection-management.ts)
 

@@ -666,7 +666,7 @@ try {
 | 可选 | `type?` | `'string?'` 可选字符串 |
 | 必需 | `type!` | `'string!'` 必需字符串 |
 
-更多语法见 [schema-dsl 文档](https://github.com/vextjs/schema-dsl)。
+更多语法见 [schema-dsl 文档](https://github.com/devcodex-labs/schema-dsl)。
 
 ### 验证错误详情
 
@@ -1802,5 +1802,5 @@ A: instance 注入到文档对象，static 挂载到 Model 实例。
 ## 更多示例
 
 查看当前 TypeScript 示例：
-- [Model 基础可运行示例](https://github.com/vextjs/monSQLize/blob/main/examples/docs/model.ts) - Model 基础使用
-- [Relations 与 populate 可运行示例](https://github.com/vextjs/monSQLize/blob/main/examples/docs/populate-relations.ts) - Relations 与 populate 示例
+- [Model 基础可运行示例](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/model.ts) - Model 基础使用
+- [Relations 与 populate 可运行示例](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/populate-relations.ts) - Relations 与 populate 示例

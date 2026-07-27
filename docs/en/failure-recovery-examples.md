@@ -6,10 +6,10 @@ These examples show what monSQLize does when common runtime paths fail and recov
 
 | Scenario | Example | Focus |
 |------|------|--------|
-| Transaction rollback | [transaction-rollback.ts](https://github.com/vextjs/monSQLize/blob/main/examples/docs/transaction-rollback.ts) | Data remains in the rolled-back state after an error inside a transaction |
-| Sync target failure recovery | [sync-target-failure.ts](https://github.com/vextjs/monSQLize/blob/main/examples/docs/sync-target-failure.ts) | `errorCount`, `syncedCount`, and target stats show failure and recovery |
-| Lock competition/timeout | [lock-timeout.ts](https://github.com/vextjs/monSQLize/blob/main/examples/docs/lock-timeout.ts) | `tryAcquireLock()` returns `null`, `acquireLock()` times out, then the lock can be acquired after release |
-| Pool fallback / recovery | [pool-fallback.ts](https://github.com/vextjs/monSQLize/blob/main/examples/docs/pool-fallback.ts) | An unavailable analytics pool falls back to primary and resumes analytics traffic after recovery |
+| Transaction rollback | [transaction-rollback.ts](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/transaction-rollback.ts) | Data remains in the rolled-back state after an error inside a transaction |
+| Sync target failure recovery | [sync-target-failure.ts](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/sync-target-failure.ts) | `errorCount`, `syncedCount`, and target stats show failure and recovery |
+| Lock competition/timeout | [lock-timeout.ts](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/lock-timeout.ts) | `tryAcquireLock()` returns `null`, `acquireLock()` times out, then the lock can be acquired after release |
+| Pool fallback / recovery | [pool-fallback.ts](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/pool-fallback.ts) | An unavailable analytics pool falls back to primary and resumes analytics traffic after recovery |
 
 ## Run The Examples
 

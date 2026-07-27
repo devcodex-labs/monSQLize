@@ -664,7 +664,7 @@ try {
 
 - [MongoDB find 文档](https://docs.mongodb.com/manual/reference/method/db.collection.find/)
 - [findPage 方法文档](./findPage.md)
-- [find 方法示例](https://github.com/vextjs/monSQLize/blob/main/examples/docs/find.ts)
+- [find 方法示例](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/find.ts)
 - [find 方法测试](../../test/integration/mongodb/find.test.ts)
 
 ## 常见问题 FAQ

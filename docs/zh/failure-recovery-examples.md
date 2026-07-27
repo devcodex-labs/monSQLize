@@ -6,10 +6,10 @@
 
 | 场景 | 示例 | 关注点 |
 |------|------|--------|
-| 事务回滚 | [transaction-rollback.ts](https://github.com/vextjs/monSQLize/blob/main/examples/docs/transaction-rollback.ts) | 事务中途抛错后，数据保持回滚后的状态 |
-| Sync target 失败恢复 | [sync-target-failure.ts](https://github.com/vextjs/monSQLize/blob/main/examples/docs/sync-target-failure.ts) | `errorCount`、`syncedCount` 和 target stats 展示失败与恢复 |
-| 锁竞争 / 超时 | [lock-timeout.ts](https://github.com/vextjs/monSQLize/blob/main/examples/docs/lock-timeout.ts) | `tryAcquireLock()` 返回 `null`、`acquireLock()` 超时，释放后可再次获得锁 |
-| Pool fallback / recovery | [pool-fallback.ts](https://github.com/vextjs/monSQLize/blob/main/examples/docs/pool-fallback.ts) | analytics 池不可用时回退到 primary，恢复后重新接管 analytics 读流量 |
+| 事务回滚 | [transaction-rollback.ts](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/transaction-rollback.ts) | 事务中途抛错后，数据保持回滚后的状态 |
+| Sync target 失败恢复 | [sync-target-failure.ts](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/sync-target-failure.ts) | `errorCount`、`syncedCount` 和 target stats 展示失败与恢复 |
+| 锁竞争 / 超时 | [lock-timeout.ts](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/lock-timeout.ts) | `tryAcquireLock()` 返回 `null`、`acquireLock()` 超时，释放后可再次获得锁 |
+| Pool fallback / recovery | [pool-fallback.ts](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/pool-fallback.ts) | analytics 池不可用时回退到 primary，恢复后重新接管 analytics 读流量 |
 
 ## 运行示例
 

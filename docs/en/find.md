@@ -665,7 +665,7 @@ try {
 
 - [MongoDB find document](https://docs.mongodb.com/manual/reference/method/db.collection.find/)
 - [findPage method documentation](./findPage.md)
-- [find method example](https://github.com/vextjs/monSQLize/blob/main/examples/docs/find.ts)
+- [find method example](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/find.ts)
 - [find method test](../../test/integration/mongodb/find.test.ts)
 
 ## FAQ

@@ -26,10 +26,10 @@
 3. 快速上手：[`basic-operations.md`](./basic-operations.md)
 4. 构造配置：[`configuration.md`](./configuration.md)
 5. 可执行示例：
-   - [examples/README.md](https://github.com/vextjs/monSQLize/blob/main/examples/README.md)
-   - [examples/quick-start/basic-connect.ts](https://github.com/vextjs/monSQLize/blob/main/examples/quick-start/basic-connect.ts)
-   - [examples/quick-start/basic-operations.ts](https://github.com/vextjs/monSQLize/blob/main/examples/quick-start/basic-operations.ts)
-   - [examples/docs](https://github.com/vextjs/monSQLize/tree/main/examples/docs)
+   - [examples/README.md](https://github.com/devcodex-labs/monSQLize/blob/main/examples/README.md)
+   - [examples/quick-start/basic-connect.ts](https://github.com/devcodex-labs/monSQLize/blob/main/examples/quick-start/basic-connect.ts)
+   - [examples/quick-start/basic-operations.ts](https://github.com/devcodex-labs/monSQLize/blob/main/examples/quick-start/basic-operations.ts)
+   - [examples/docs](https://github.com/devcodex-labs/monSQLize/tree/main/examples/docs)
    - [`examples.md`](./examples.md)
 6. 缓存专题：[`cache.md`](./cache.md)
 7. 写路径策略：[`write-path-policy.md`](./write-path-policy.md)
@@ -44,8 +44,8 @@
 
 ## 源码与验证
 
-- 文档站由 [`docs/en`](https://github.com/vextjs/monSQLize/tree/main/docs/en) 与 [`docs/zh`](https://github.com/vextjs/monSQLize/tree/main/docs/zh) 生成。
-- 可运行示例位于 [`examples`](https://github.com/vextjs/monSQLize/tree/main/examples)。
+- 文档站由 [`docs/en`](https://github.com/devcodex-labs/monSQLize/tree/main/docs/en) 与 [`docs/zh`](https://github.com/devcodex-labs/monSQLize/tree/main/docs/zh) 生成。
+- 可运行示例位于 [`examples`](https://github.com/devcodex-labs/monSQLize/tree/main/examples)。
 - 公开行为应与包根导出、公开类型和可运行示例保持一致。
 
 ## 示例运行方式
