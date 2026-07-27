@@ -1,6 +1,6 @@
 {
     "name": "monsqlize",
-    "version": "3.1.13",
+    "version": "3.1.14",
     "description": "TypeScript production data runtime layer for MongoDB today, with cache, transactions, pools, models, sync, and observability",
     "type": "commonjs",
     "main": "./dist/cjs/index.cjs",
@@ -21,6 +21,7 @@
         "./package.json": "./package.json"
     },
     "files": [
+        "changelogs/v3.1.14.md",
         "changelogs/v3.1.13.md",
         "changelogs/v3.1.12.md",
         "changelogs/v3.1.11.md",

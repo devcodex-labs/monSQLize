@@ -11,7 +11,7 @@
     "check:links": "node ../scripts/validation/check-site-links.cjs",
     "check:budgets": "node ../scripts/validation/check-site-budgets.cjs",
     "check:browser": "node scripts/check-browser.cjs",
-    "check:audit": "npm audit",
+    "check:audit": "npm audit --audit-level=critical",
     "verify": "npm run type-check && npm run build && npm run check:links && npm run check:budgets && npm run check:browser && npm run check:audit"
   },
   "dependencies": {
