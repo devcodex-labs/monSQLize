@@ -1,157 +1,157 @@
 {
-  "name": "monsqlize",
-  "version": "3.1.2",
-  "description": "TypeScript production data runtime layer for MongoDB today, with cache, transactions, pools, models, sync, and observability",
-  "type": "commonjs",
-  "main": "./dist/cjs/index.cjs",
-  "module": "./dist/esm/index.mjs",
-  "types": "./dist/types/index.d.ts",
-  "bin": {
-    "monsqlize": "dist/cjs/cli/data-task.cjs"
-  },
-  "exports": {
-    ".": {
-      "types": {
-        "import": "./dist/types/index.d.mts",
-        "require": "./dist/types/index.d.ts"
-      },
-      "require": "./dist/cjs/index.cjs",
-      "import": "./dist/esm/index.mjs"
+    "name": "monsqlize",
+    "version": "3.1.5",
+    "description": "TypeScript production data runtime layer for MongoDB today, with cache, transactions, pools, models, sync, and observability",
+    "type": "commonjs",
+    "main": "./dist/cjs/index.cjs",
+    "module": "./dist/esm/index.mjs",
+    "types": "./dist/types/index.d.ts",
+    "bin": {
+        "monsqlize": "dist/cjs/cli/data-task.cjs"
     },
-    "./package.json": "./package.json"
-  },
-  "files": [
-    "dist/**/*.cjs",
-    "dist/**/*.mjs",
-    "dist/**/*.d.ts",
-    "dist/**/*.d.mts",
-    "changelogs/v3.1.0.md",
-    "changelogs/v3.1.0-rc.0.md",
-    "changelogs/v3.0.0.md",
-    "changelogs/v2.0.7.md",
-    "changelogs/v2.0.6.md",
-    "changelogs/v2.0.5.md",
-    "changelogs/v2.0.4.md",
-    "changelogs/v2.0.3.md",
-    "changelogs/v2.0.2.md",
-    "changelogs/v2.0.1.md",
-    "changelogs/v2.0.0.md",
-    "README.md",
-    "MIGRATION.md",
-    "SECURITY.md",
-    "LICENSE",
-    "licenses/production-dependencies.json",
-    "CHANGELOG.md"
-  ],
-  "keywords": [
-    "mongodb",
-    "database",
-    "data-runtime",
-    "database-runtime",
-    "cache",
-    "transaction",
-    "distributed",
-    "cache-invalidation",
-    "pagination",
-    "performance",
-    "mongodb-driver",
-    "nosql",
-    "typescript",
-    "query-builder",
-    "api"
-  ],
-  "author": "vext.js Team",
-  "license": "Apache-2.0",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/devcodex-labs/monSQLize.git"
-  },
-  "bugs": {
-    "url": "https://github.com/devcodex-labs/monSQLize/issues"
-  },
-  "homepage": "https://devcodex-labs.github.io/monSQLize/",
-  "publishConfig": {
-    "access": "public",
-    "registry": "https://registry.npmjs.org/"
-  },
-  "config": {
-    "mongodbMemoryServer": {
-      "downloadDir": ".cache/mongodb-memory-server/binaries",
-      "preferGlobalPath": "false",
-      "version": "7.0.37"
+    "exports": {
+        ".": {
+            "types": {
+                "import": "./dist/types/index.d.mts",
+                "require": "./dist/types/index.d.ts"
+            },
+            "require": "./dist/cjs/index.cjs",
+            "import": "./dist/esm/index.mjs"
+        },
+        "./package.json": "./package.json"
+    },
+    "files": [
+        "dist/**/*.cjs",
+        "dist/**/*.mjs",
+        "dist/**/*.d.ts",
+        "dist/**/*.d.mts",
+        "changelogs/v3.1.0.md",
+        "changelogs/v3.1.0-rc.0.md",
+        "changelogs/v3.0.0.md",
+        "changelogs/v2.0.7.md",
+        "changelogs/v2.0.6.md",
+        "changelogs/v2.0.5.md",
+        "changelogs/v2.0.4.md",
+        "changelogs/v2.0.3.md",
+        "changelogs/v2.0.2.md",
+        "changelogs/v2.0.1.md",
+        "changelogs/v2.0.0.md",
+        "README.md",
+        "MIGRATION.md",
+        "SECURITY.md",
+        "LICENSE",
+        "licenses/production-dependencies.json",
+        "CHANGELOG.md"
+    ],
+    "keywords": [
+        "mongodb",
+        "database",
+        "data-runtime",
+        "database-runtime",
+        "cache",
+        "transaction",
+        "distributed",
+        "cache-invalidation",
+        "pagination",
+        "performance",
+        "mongodb-driver",
+        "nosql",
+        "typescript",
+        "query-builder",
+        "api"
+    ],
+    "author": "vext.js Team",
+    "license": "Apache-2.0",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/devcodex-labs/monSQLize.git"
+    },
+    "bugs": {
+        "url": "https://github.com/devcodex-labs/monSQLize/issues"
+    },
+    "homepage": "https://devcodex-labs.github.io/monSQLize/",
+    "publishConfig": {
+        "access": "public",
+        "registry": "https://registry.npmjs.org/"
+    },
+    "config": {
+        "mongodbMemoryServer": {
+            "downloadDir": ".cache/mongodb-memory-server/binaries",
+            "preferGlobalPath": "false",
+            "version": "7.0.37"
+        }
+    },
+    "engines": {
+        "node": ">=18.0.0"
+    },
+    "scripts": {
+        "check:lint-contract": "node scripts/validation/check-lint-contract.cjs",
+        "check:coverage-policy": "node scripts/validation/check-coverage-policy.cjs",
+        "check:package-budgets": "node scripts/validation/check-package-budgets.cjs",
+        "check:production-licenses": "node scripts/validation/check-production-licenses.cjs",
+        "check:contributor-contract": "node scripts/validation/check-contributor-contract.cjs",
+        "check:dependency-policy": "node scripts/validation/check-dependency-policy.cjs",
+        "check:release-metadata": "node scripts/validation/check-release-metadata.cjs",
+        "check:doc-claims": "node scripts/validation/check-doc-claims.cjs",
+        "check:error-contract": "node scripts/validation/check-error-contract.cjs",
+        "check:current-version": "node scripts/validation/check-current-version-terminology.cjs",
+        "cleanup:derived": "node scripts/cleanup-derived-artifacts.cjs",
+        "cleanup:derived:apply": "node scripts/cleanup-derived-artifacts.cjs --apply --confirm=derived-artifacts",
+        "check:sizes": "node scripts/check-file-sizes.cjs",
+        "check:sizes:strict": "node scripts/check-file-sizes.cjs --strict",
+        "build": "node scripts/build-p1.cjs",
+        "build:tests": "node scripts/compile-tests.cjs",
+        "lint": "eslint . --ignore-pattern .generated/** --ignore-pattern dist/** --ignore-pattern .devcodex/**",
+        "lint:fix": "eslint . --fix --ignore-pattern .generated/** --ignore-pattern dist/** --ignore-pattern .devcodex/**",
+        "test:runtime": "npm run build && npm run build:tests && node --test .generated/test-dist/test/smoke/root-cjs.test.js .generated/test-dist/test/smoke/root-esm.test.js .generated/test-dist/test/smoke/pack-artifacts.test.js",
+        "test:compatibility": "npm run build && npm run build:tests && node --test .generated/test-dist/test/compatibility/exports/exports.test.js .generated/test-dist/test/compatibility/matrix.test.js",
+        "probe:server-matrix": "node scripts/validation/probe-memory-server-matrix.cjs",
+        "test:server-matrix": "node scripts/validation/run-memory-server-matrix.cjs",
+        "test:real-env:private": "node scripts/validation/run-private-real-env-checks.cjs",
+        "test:examples": "npm run build && tsc -p tsconfig.examples.json && node scripts/run-examples.cjs",
+        "test:performance": "npm run build && npm run build:tests && node .generated/test-dist/test/performance/baselines/function-cache.benchmark.js",
+        "test:unit": "npm run build && npm run build:tests && node test/run-tests.cjs unit",
+        "test:integration": "npm run build && npm run build:tests && node --test --test-concurrency=1 .generated/test-dist/test/integration/cache/cache.test.js .generated/test-dist/test/integration/cache/cache-behavior.test.js .generated/test-dist/test/integration/mongodb/connect.test.js .generated/test-dist/test/integration/mongodb/queries.test.js .generated/test-dist/test/integration/mongodb/management.test.js .generated/test-dist/test/integration/mongodb/writes-batch.test.js .generated/test-dist/test/integration/mongodb/find.test.js .generated/test-dist/test/integration/mongodb/find-one.test.js .generated/test-dist/test/integration/mongodb/find-page.test.js .generated/test-dist/test/integration/mongodb/aggregate.test.js .generated/test-dist/test/integration/mongodb/chaining.test.js .generated/test-dist/test/integration/mongodb/insert.test.js .generated/test-dist/test/integration/mongodb/update.test.js .generated/test-dist/test/integration/mongodb/delete.test.js .generated/test-dist/test/integration/mongodb/update-pipeline.test.js .generated/test-dist/test/integration/model/model-features.test.js .generated/test-dist/test/integration/transaction/transaction.test.js .generated/test-dist/test/integration/pool/pool.test.js .generated/test-dist/test/integration/pool/pool-behavior.test.js .generated/test-dist/test/integration/watch/watch-native.test.js .generated/test-dist/test/integration/runtime/runtime-core-regression.test.js .generated/test-dist/test/integration/sync/sync.test.js .generated/test-dist/test/integration/slow-query-log/slow-query-log.test.js .generated/test-dist/test/integration/model/model-crud-extended.test.js .generated/test-dist/test/integration/mongodb/management-complete.test.js .generated/test-dist/test/integration/runtime/runtime-methods-extended.test.js .generated/test-dist/test/integration/mongodb/find-page-advanced.test.js",
+        "test:data-tasks:integration": "npm run build && npm run build:tests && node test/run-tests.cjs data-tasks-integration",
+        "test:data-task-cli": "npm run build && npm run build:tests && node test/run-tests.cjs data-task-cli",
+        "test:pack-install": "npm run build && node scripts/pack-install-smoke.cjs",
+        "test:refactor-guard": "npm run build && npm run build:tests && node --test --test-concurrency=1 .generated/test-dist/test/compatibility/exports/exports.test.js .generated/test-dist/test/integration/model/model-features.test.js .generated/test-dist/test/integration/runtime/runtime-core-regression.test.js .generated/test-dist/test/integration/sync/sync.test.js",
+        "test:refactor-guard:cache": "npm run build && npm run build:tests && node --test .generated/test-dist/test/unit/cache/cache-refactor-guard.test.js",
+        "test:coverage": "node scripts/run-coverage.cjs",
+        "test:audit": "npm audit --omit=dev --registry=https://registry.npmjs.org/",
+        "test": "npm run build && npm run build:tests && node test/run-tests.cjs",
+        "type-check": "npm run build && tsc -p tsconfig.json --noEmit && tsd --files test/types/root-import.test-d.ts --files test/types/cache-usage.test-d.ts --files test/types/model-usage.test-d.ts --files test/types/pool-usage.test-d.ts --files test/types/sync-usage.test-d.ts --files test/types/slow-query-log-usage.test-d.ts --files test/types/saga-usage.test-d.ts --files test/types/data-tasks-usage.test-d.ts",
+        "check:test-language": "node scripts/check-test-language.cjs",
+        "check:docs-examples": "node scripts/validation/check-doc-example-matrix.cjs",
+        "check:release-candidate": "node scripts/check-release-candidate.cjs",
+        "verify:fast": "npm run check:lint-contract && npm run lint && npm run check:contributor-contract && npm run check:dependency-policy && npm run check:release-metadata && npm run check:doc-claims && npm run check:error-contract && npm run check:current-version && npm run check:docs-examples && npm run type-check && npm run check:sizes:strict && npm run test:runtime && npm run check:package-budgets && npm run check:production-licenses && npm run test:compatibility && npm run test:refactor-guard && npm run test:refactor-guard:cache",
+        "verify:full": "npm run check:lint-contract && npm run lint && npm run check:doc-claims && npm run check:error-contract && npm run check:current-version && npm run check:docs-examples && npm run type-check && npm run check:sizes:strict && npm run test:examples && npm run test:server-matrix",
+        "verify:release": "npm run verify:full && npm run test:real-env:private",
+        "verify": "npm run verify:full",
+        "release:preflight": "node scripts/release-preflight.cjs",
+        "prepublishOnly": "npm run release:preflight",
+        "release:publish": "npm run release:preflight && npm publish --ignore-scripts"
+    },
+    "devDependencies": {
+        "@eslint/js": "9.39.4",
+        "@types/node": "25.6.2",
+        "@types/semver": "7.7.1",
+        "c8": "11.0.0",
+        "chai": "6.2.2",
+        "esbuild": "0.28.1",
+        "eslint": "9.39.4",
+        "mongodb-memory-server": "10.4.3",
+        "sinon": "22.0.0",
+        "tsd": "0.33.0",
+        "typescript": "5.9.3",
+        "typescript-eslint": "8.64.0"
+    },
+    "dependencies": {
+        "async-lock": "1.4.1",
+        "cache-hub": "2.2.4",
+        "ioredis": "5.11.1",
+        "mongodb": "6.21.0",
+        "schema-dsl": "3.0.0",
+        "ssh2": "1.17.0"
     }
-  },
-  "engines": {
-    "node": ">=18.0.0"
-  },
-  "scripts": {
-    "check:lint-contract": "node scripts/validation/check-lint-contract.cjs",
-    "check:coverage-policy": "node scripts/validation/check-coverage-policy.cjs",
-    "check:package-budgets": "node scripts/validation/check-package-budgets.cjs",
-    "check:production-licenses": "node scripts/validation/check-production-licenses.cjs",
-    "check:contributor-contract": "node scripts/validation/check-contributor-contract.cjs",
-    "check:dependency-policy": "node scripts/validation/check-dependency-policy.cjs",
-    "check:release-metadata": "node scripts/validation/check-release-metadata.cjs",
-    "check:doc-claims": "node scripts/validation/check-doc-claims.cjs",
-    "check:error-contract": "node scripts/validation/check-error-contract.cjs",
-    "check:current-version": "node scripts/validation/check-current-version-terminology.cjs",
-    "cleanup:derived": "node scripts/cleanup-derived-artifacts.cjs",
-    "cleanup:derived:apply": "node scripts/cleanup-derived-artifacts.cjs --apply --confirm=derived-artifacts",
-    "check:sizes": "node scripts/check-file-sizes.cjs",
-    "check:sizes:strict": "node scripts/check-file-sizes.cjs --strict",
-    "build": "node scripts/build-p1.cjs",
-    "build:tests": "node scripts/compile-tests.cjs",
-    "lint": "eslint . --ignore-pattern .generated/** --ignore-pattern dist/** --ignore-pattern .devcodex/**",
-    "lint:fix": "eslint . --fix --ignore-pattern .generated/** --ignore-pattern dist/** --ignore-pattern .devcodex/**",
-    "test:runtime": "npm run build && npm run build:tests && node --test .generated/test-dist/test/smoke/root-cjs.test.js .generated/test-dist/test/smoke/root-esm.test.js .generated/test-dist/test/smoke/pack-artifacts.test.js",
-    "test:compatibility": "npm run build && npm run build:tests && node --test .generated/test-dist/test/compatibility/exports/exports.test.js .generated/test-dist/test/compatibility/matrix.test.js",
-    "probe:server-matrix": "node scripts/validation/probe-memory-server-matrix.cjs",
-    "test:server-matrix": "node scripts/validation/run-memory-server-matrix.cjs",
-    "test:real-env:private": "node scripts/validation/run-private-real-env-checks.cjs",
-    "test:examples": "npm run build && tsc -p tsconfig.examples.json && node scripts/run-examples.cjs",
-    "test:performance": "npm run build && npm run build:tests && node .generated/test-dist/test/performance/baselines/function-cache.benchmark.js",
-    "test:unit": "npm run build && npm run build:tests && node test/run-tests.cjs unit",
-    "test:integration": "npm run build && npm run build:tests && node --test --test-concurrency=1 .generated/test-dist/test/integration/cache/cache.test.js .generated/test-dist/test/integration/cache/cache-behavior.test.js .generated/test-dist/test/integration/mongodb/connect.test.js .generated/test-dist/test/integration/mongodb/queries.test.js .generated/test-dist/test/integration/mongodb/management.test.js .generated/test-dist/test/integration/mongodb/writes-batch.test.js .generated/test-dist/test/integration/mongodb/find.test.js .generated/test-dist/test/integration/mongodb/find-one.test.js .generated/test-dist/test/integration/mongodb/find-page.test.js .generated/test-dist/test/integration/mongodb/aggregate.test.js .generated/test-dist/test/integration/mongodb/chaining.test.js .generated/test-dist/test/integration/mongodb/insert.test.js .generated/test-dist/test/integration/mongodb/update.test.js .generated/test-dist/test/integration/mongodb/delete.test.js .generated/test-dist/test/integration/mongodb/update-pipeline.test.js .generated/test-dist/test/integration/model/model-features.test.js .generated/test-dist/test/integration/transaction/transaction.test.js .generated/test-dist/test/integration/pool/pool.test.js .generated/test-dist/test/integration/pool/pool-behavior.test.js .generated/test-dist/test/integration/watch/watch-native.test.js .generated/test-dist/test/integration/runtime/runtime-core-regression.test.js .generated/test-dist/test/integration/sync/sync.test.js .generated/test-dist/test/integration/slow-query-log/slow-query-log.test.js .generated/test-dist/test/integration/model/model-crud-extended.test.js .generated/test-dist/test/integration/mongodb/management-complete.test.js .generated/test-dist/test/integration/runtime/runtime-methods-extended.test.js .generated/test-dist/test/integration/mongodb/find-page-advanced.test.js",
-    "test:data-tasks:integration": "npm run build && npm run build:tests && node test/run-tests.cjs data-tasks-integration",
-    "test:data-task-cli": "npm run build && npm run build:tests && node test/run-tests.cjs data-task-cli",
-    "test:pack-install": "npm run build && node scripts/pack-install-smoke.cjs",
-    "test:refactor-guard": "npm run build && npm run build:tests && node --test --test-concurrency=1 .generated/test-dist/test/compatibility/exports/exports.test.js .generated/test-dist/test/integration/model/model-features.test.js .generated/test-dist/test/integration/runtime/runtime-core-regression.test.js .generated/test-dist/test/integration/sync/sync.test.js",
-    "test:refactor-guard:cache": "npm run build && npm run build:tests && node --test .generated/test-dist/test/unit/cache/cache-refactor-guard.test.js",
-    "test:coverage": "node scripts/run-coverage.cjs",
-    "test:audit": "npm audit --omit=dev --registry=https://registry.npmjs.org/",
-    "test": "npm run build && npm run build:tests && node test/run-tests.cjs",
-    "type-check": "npm run build && tsc -p tsconfig.json --noEmit && tsd --files test/types/root-import.test-d.ts --files test/types/cache-usage.test-d.ts --files test/types/model-usage.test-d.ts --files test/types/pool-usage.test-d.ts --files test/types/sync-usage.test-d.ts --files test/types/slow-query-log-usage.test-d.ts --files test/types/saga-usage.test-d.ts --files test/types/data-tasks-usage.test-d.ts",
-    "check:test-language": "node scripts/check-test-language.cjs",
-    "check:docs-examples": "node scripts/validation/check-doc-example-matrix.cjs",
-    "check:release-candidate": "node scripts/check-release-candidate.cjs",
-    "verify:fast": "npm run check:lint-contract && npm run lint && npm run check:contributor-contract && npm run check:dependency-policy && npm run check:release-metadata && npm run check:doc-claims && npm run check:error-contract && npm run check:current-version && npm run check:docs-examples && npm run type-check && npm run check:sizes:strict && npm run test:runtime && npm run check:package-budgets && npm run check:production-licenses && npm run test:compatibility && npm run test:refactor-guard && npm run test:refactor-guard:cache",
-    "verify:full": "npm run check:lint-contract && npm run lint && npm run check:doc-claims && npm run check:error-contract && npm run check:current-version && npm run check:docs-examples && npm run type-check && npm run check:sizes:strict && npm run test:examples && npm run test:server-matrix",
-    "verify:release": "npm run verify:full && npm run test:real-env:private",
-    "verify": "npm run verify:full",
-    "release:preflight": "node scripts/release-preflight.cjs",
-    "prepublishOnly": "npm run release:preflight",
-    "release:publish": "npm run release:preflight && npm publish --ignore-scripts"
-  },
-  "devDependencies": {
-    "@eslint/js": "9.39.4",
-    "@types/node": "25.6.2",
-    "@types/semver": "7.7.1",
-    "c8": "11.0.0",
-    "chai": "6.2.2",
-    "esbuild": "0.28.1",
-    "eslint": "9.39.4",
-    "mongodb-memory-server": "10.4.3",
-    "sinon": "22.0.0",
-    "tsd": "0.33.0",
-    "typescript": "5.9.3",
-    "typescript-eslint": "8.64.0"
-  },
-  "dependencies": {
-    "async-lock": "1.4.1",
-    "cache-hub": "2.2.4",
-    "ioredis": "5.11.1",
-    "mongodb": "6.21.0",
-    "schema-dsl": "3.0.0",
-    "ssh2": "1.17.0"
-  }
 }
