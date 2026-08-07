@@ -16,8 +16,7 @@ import { EventEmitter } from 'node:events';
 import { MemoryCache, DistributedCacheInvalidator, type CacheLike } from '../capabilities/cache';
 import { Lock, LockManager, LockAcquireError, LockOptions, LockStats, LockTimeoutError, DistributedCacheLockManager } from '../capabilities/lock';
 import {
-    Model,
-    ModelInstance,
+    Model, ModelInstance,
     type ModelConnection,
     type ModelDefinition,
     type PopulateConfig,
