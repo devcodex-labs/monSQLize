@@ -61,6 +61,15 @@ import {
     wrapQueryResultWithMeta,
     watchDocuments,
 } from '../queries';
+import {
+    attachVectorSearchOperationContext,
+    buildVectorSearchPipeline,
+    mapVectorSearchRows,
+} from '../queries/vector-search';
+import type {
+    VectorSearchHit,
+    VectorSearchOptions,
+} from '../../../../types/collection';
 import type { QueryCacheLike, RuntimeDefaults } from '../../../types/internal/query';
 import type {
     CollectionAccessorManagementOptions,
@@ -379,6 +388,22 @@ export class MongoCollectionAccessor<TSchema extends Document = Document> {
                 }
                 : undefined,
         );
+    }
+
+    /** Searches a MongoDB Vector Search index through a constrained aggregate pipeline. */
+    async vectorSearch<TDocument = TSchema>(
+        options: VectorSearchOptions,
+    ): Promise<Array<VectorSearchHit<TDocument>>> {
+        const { pipeline, aggregateOptions } = buildVectorSearchPipeline(options);
+        try {
+            const rows = await this.aggregate(
+                pipeline,
+                aggregateOptions as Parameters<Collection<TSchema>['aggregate']>[1],
+            );
+            return mapVectorSearchRows<TDocument>(rows as Document[]);
+        } catch (error) {
+            throw attachVectorSearchOperationContext(error, this.getNamespace());
+        }
     }
 
     /** Returns an array of distinct values for the given field key. */

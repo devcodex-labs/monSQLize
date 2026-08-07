@@ -48,6 +48,8 @@ import MonSQLize, {
     type TotalsInfo,
     type UpdateBatchResult,
     type UpdateResult,
+    type VectorSearchHit,
+    type VectorSearchOptions,
 } from '../..';
 import type { SchemaDslRuntime } from 'schema-dsl/runtime';
 
@@ -121,6 +123,24 @@ expectAssignable<FindOptions>({ projection: ['name'], sort: { name: 1 }, cache: 
 expectAssignable<FindOptions>({ project: ['name'], sort: { name: 1 } });
 expectAssignable<CountOptions>({ cache: 1000, maxTimeMS: 500, meta: true });
 expectAssignable<AggregateOptions>({ allowDiskUse: true, hint: { status: 1 }, comment: 'aggregate' });
+expectAssignable<VectorSearchOptions>({
+    index: 'embeddings_index',
+    path: 'embedding',
+    queryVector: [0.1, 0.2],
+    limit: 5,
+    numCandidates: 100,
+    filter: { status: 'published' },
+    projection: ['title'],
+    aggregateOptions: { allowDiskUse: true },
+});
+expectNotAssignable<VectorSearchOptions>({
+    index: 'embeddings_index',
+    path: 'embedding',
+    queryVector: [0.1, 0.2],
+    limit: 5,
+    numCandidates: 100,
+    aggregateOptions: { meta: true },
+});
 expectAssignable<DistinctOptions>({ collation: { locale: 'en' }, hint: 'name_1', meta: { includeCache: true } });
 
 expectAssignable<SSHConfig>({
@@ -210,6 +230,13 @@ aggregateChain.batchSize(100);
 expectType<Promise<unknown>>(aggregateChain.explain());
 const metaAggregateChain = users.aggregate<{ total: number }>([], { meta: true });
 expectAssignable<Promise<ResultWithMeta<Array<{ total: number }>>>>(metaAggregateChain);
+expectType<Promise<Array<VectorSearchHit<{ name: string; }>>>>(users.vectorSearch({
+    index: 'users_embedding_index',
+    path: 'embedding',
+    queryVector: [0.1, 0.2],
+    limit: 5,
+    numCandidates: 100,
+}));
 
 expectType<Promise<{ name: string; } | null>>(users.findOneById('507f1f77bcf86cd799439011'));
 expectType<Promise<{ name: string; }[]>>(users.findByIds(['507f1f77bcf86cd799439011']));

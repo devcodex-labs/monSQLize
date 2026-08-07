@@ -22,6 +22,14 @@ export const ErrorCodes = {
     INVALID_EXPRESSION: 'INVALID_EXPRESSION',
     INVALID_PAGINATION: 'INVALID_PAGINATION',
     INVALID_OPERATION: 'INVALID_OPERATION',
+    /** Invalid local Vector Search options before the driver is called. */
+    INVALID_VECTOR_SEARCH: 'INVALID_VECTOR_SEARCH',
+    /** Relation select is outside the supported inclusion-only top-level contract. */
+    INVALID_RELATION_SELECT: 'INVALID_RELATION_SELECT',
+    /** A protected delete found declared Model relations that still reference its target. */
+    RELATION_IN_USE: 'RELATION_IN_USE',
+    /** Relation usage coverage is incomplete, so a protected delete must not continue. */
+    RELATION_USAGE_UNAVAILABLE: 'RELATION_USAGE_UNAVAILABLE',
     CACHE_UNAVAILABLE: 'CACHE_UNAVAILABLE',
     MANAGEMENT_OPERATION_FAILED: 'MANAGEMENT_OPERATION_FAILED',
     NOT_CONNECTED: 'NOT_CONNECTED',

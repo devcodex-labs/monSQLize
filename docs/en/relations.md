@@ -198,7 +198,11 @@ After populate:
 | `localField` | String | ✅ | Local field (usually _id) |
 | `foreignField` | String | ✅ | Foreign key field |
 | `single` | Boolean | ✅ | true=hasOne, false=hasMany |
-| `as` | String | ❌ | The field name of the association result (the relationship name is used by default) |
+| `select` | String \| String[] | ❌ | Default top-level inclusion fields; call-site select takes precedence |
+
+`localField` may be a scalar or an array of IDs. For an array, populate flattens values, ignores `null`/`undefined`, fetches all unique keys in one `$in` query, and then rebuilds each parent result in its original local-ID order. Duplicate IDs and missing target documents are omitted. A supplied `sort` overrides that order.
+
+Both relation-level and call-site `select` use inclusion-only top-level fields. Call-site `select` wins; `_id` remains available. Empty values, exclusions such as `-secret`, prefixes, and dot paths are rejected with `INVALID_RELATION_SELECT`. Selection is pushed down to MongoDB; temporary join keys needed for matching or nested populate are removed from the final result unless explicitly selected.
 
 
 ## Complete configuration example
@@ -213,7 +217,7 @@ Model.define('users', {
             localField: '_id',      //Required: local field
             foreignField: 'userId', //Required: foreign key field
             single: false,          //Required: Whether it is single
-            as: 'articles' // Optional: result field name (default 'posts')
+            select: 'title createdAt', // Optional: default public fields
         },
 
         //Minimal configuration

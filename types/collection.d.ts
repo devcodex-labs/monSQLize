@@ -1,12 +1,18 @@
 import type { ChangeStream, Document, FindOptions as MongoFindOptions, Sort } from 'mongodb';
+import type {
+    AggregateOptions,
+    MetaOptions,
+    VectorSearchHit,
+    VectorSearchOptions,
+} from './aggregation';
 
-/** Meta options for controlling timing/cache info in query results. */
-export interface MetaOptions {
-    /** 'op' = operation-level timing only; 'sub' = include sub-step timings (findPage only) */
-    level?: 'op' | 'sub';
-    /** Include cache hit/miss/ttl info in meta */
-    includeCache?: boolean;
-}
+export type {
+    AggregateOptions,
+    MetaOptions,
+    VectorSearchAggregateOptions,
+    VectorSearchHit,
+    VectorSearchOptions,
+} from './aggregation';
 
 export type CacheInvalidationOperation =
     | 'find'
@@ -83,17 +89,6 @@ export interface CountOptions {
     maxTimeMS?: number;
     hint?: any;
     collation?: any;
-    comment?: string;
-    meta?: boolean | MetaOptions;
-}
-
-/** v1-compatible aggregate options exported from the root package. */
-export interface AggregateOptions {
-    cache?: number;
-    maxTimeMS?: number;
-    allowDiskUse?: boolean;
-    collation?: any;
-    hint?: string | object;
     comment?: string;
     meta?: boolean | MetaOptions;
 }
@@ -933,9 +928,14 @@ export interface Collection<TSchema = any> {
      * @param pipeline - Array of aggregation stage documents.
      * @param options - MongoDB AggregateOptions.
      * @returns AggregateChain that resolves to the result array.
-     */
+    */
     aggregate<TResult = unknown>(pipeline: unknown[] | undefined, options: QueryMetaOption): AggregateChain<TResult, ResultWithMeta<TResult[]>>;
     aggregate<TResult = unknown>(pipeline?: unknown[], options?: unknown): AggregateChain<TResult>;
+    /**
+     * Searches a MongoDB Vector Search index and returns each document with its score.
+     * Requires a compatible MongoDB deployment and a pre-created Vector Search index.
+     */
+    vectorSearch<TDocument = TSchema>(options: VectorSearchOptions): Promise<Array<VectorSearchHit<TDocument>>>;
     /** Stream mode: returns a readable stream of page documents when `stream: true`. */
     findPage(options: FindPageOptions<TSchema> & { stream: true }): NodeJS.ReadableStream;
     /** Sync totals mode guarantees `totals.total` and `totals.totalPages` are immediately available. */

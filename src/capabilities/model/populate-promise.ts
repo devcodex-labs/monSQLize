@@ -14,7 +14,7 @@
  * - PopulatePath        — union type of string | PopulateConfig
  */
 
-import type { DeleteBatchResult, IncrementOneResult, InsertBatchResult, InsertManyResult, UpdateBatchResult, UpdateResult } from '../../../types/collection';
+import type { DeleteBatchResult, IncrementOneResult, InsertBatchResult, InsertManyResult, UpdateBatchResult, UpdateResult, VectorSearchHit, VectorSearchOptions } from '../../../types/collection';
 import type { ModelScopeOptions, PopulateConfig, PopulateProxy } from '../../../types/model';
 import { createError, ErrorCodes } from '../../core/errors';
 
@@ -62,6 +62,7 @@ export interface ModelCollectionLike<TDocument = Record<string, unknown>> {
     clearBookmarks(keyDims?: unknown): Promise<unknown>;
     distinct(key: string, query?: unknown, options?: unknown): Promise<unknown[]>;
     aggregate(pipeline?: unknown[], options?: unknown): Promise<unknown[]>;
+    vectorSearch<TVectorDocument = TDocument>(options: VectorSearchOptions): Promise<Array<VectorSearchHit<TVectorDocument>>>;
     stream(query?: unknown, options?: unknown): NodeJS.ReadableStream;
     explain(query?: unknown, options?: unknown): Promise<unknown>;
     invalidate(op?: 'find' | 'findOne' | 'count' | 'findPage' | 'aggregate' | 'distinct'): Promise<number>;

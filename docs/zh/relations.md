@@ -192,7 +192,11 @@ populate 后:
 | `localField` | String | ✅ | 本地字段（通常是 _id） |
 | `foreignField` | String | ✅ | 外键字段 |
 | `single` | Boolean | ✅ | true=hasOne, false=hasMany |
-| `as` | String | ❌ | 关联结果的字段名（默认使用关系名） |
+| `select` | String \| String[] | ❌ | 默认顶层包含字段；调用级 select 优先 |
+
+`localField` 可以是标量，也可以是 ID 数组。数组场景下，populate 会展开值、忽略 `null`/`undefined`、通过一次 `$in` 查询读取全部去重键，再按每个父文档原始 ID 顺序重建结果。重复 ID 与找不到的目标文档会被忽略；显式 `sort` 会覆盖该顺序。
+
+关系级和调用级 `select` 都只支持顶层包含字段，调用级 `select` 优先，且 `_id` 仍会保留。空值、`-secret` 这类排除字段、前缀和点路径会抛出 `INVALID_RELATION_SELECT`。字段选择会下推到 MongoDB；匹配或嵌套 populate 临时需要的 join key 除非被显式选择，否则会在最终结果中移除。
 
 ### 完整配置示例
 
@@ -206,7 +210,7 @@ Model.define('users', {
             localField: '_id',      // 必需：本地字段
             foreignField: 'userId', // 必需：外键字段
             single: false,          // 必需：是否单条
-            as: 'articles'          // 可选：结果字段名（默认'posts'）
+            select: 'title createdAt', // 可选：默认公开字段
         },
         
         // 最小配置

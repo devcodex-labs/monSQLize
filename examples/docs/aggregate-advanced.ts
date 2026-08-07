@@ -58,6 +58,33 @@ async function main() {
         console.log(`  ${o.product} ($${o.amount}) — ${cust.name} [${cust.tier}]`);
     }
 
+    // ── $lookup with let + pipeline — filter related rows before returning ─
+    type GoldCustomerOrder = {
+        product: string;
+        amount: number;
+        customer: { name: string; tier: string };
+    };
+    const goldCustomerOrders = await orders.aggregate<GoldCustomerOrder>([
+        {
+            $lookup: {
+                from: 'customers',
+                let: { customerId: '$customerId' },
+                pipeline: [
+                    { $match: { $expr: { $eq: ['$_id', '$$customerId'] }, tier: 'gold' } },
+                    { $project: { _id: 0, name: 1, tier: 1 } },
+                ],
+                as: 'customer',
+            },
+        },
+        { $unwind: '$customer' },
+        { $project: { _id: 0, product: 1, amount: 1, customer: 1 } },
+        { $sort: { amount: -1 } },
+    ]);
+    console.log('\n=== $lookup pipeline: gold customer orders ===');
+    for (const order of goldCustomerOrders) {
+        console.log(`  ${order.product} ($${order.amount}) — ${order.customer.name}`);
+    }
+
     // ── $group — revenue per category per month ────────────────────────────
     console.log('\n=== $group: monthly category revenue ===');
     const monthly = await orders.aggregate([

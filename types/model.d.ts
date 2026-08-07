@@ -1,4 +1,4 @@
-import type { BookmarkClearResult, BookmarkListResult, BookmarkPrewarmResult, DeleteBatchResult, DeleteResult, IncrementOneResult, IndexCreateResult, InsertBatchResult, InsertManyResult, InsertOneResult, UpdateBatchResult, UpdateResult } from './collection';
+import type { BookmarkClearResult, BookmarkListResult, BookmarkPrewarmResult, DeleteBatchResult, DeleteResult, IncrementOneResult, IndexCreateResult, InsertBatchResult, InsertManyResult, InsertOneResult, UpdateBatchResult, UpdateResult, VectorSearchHit, VectorSearchOptions } from './collection';
 import type { SchemaDslRuntime } from 'schema-dsl/runtime';
 
 /**
@@ -50,6 +50,8 @@ export interface RelationConfig {
     localField: string;
     foreignField: string;
     single?: boolean;
+    /** Default inclusion projection for this relation. Call-site `populate().select` takes precedence. */
+    select?: string | string[];
 }
 
 export interface PopulateConfig {
@@ -63,6 +65,71 @@ export interface PopulateConfig {
     maxDepth?: number;
     populate?: string | PopulateConfig | Array<string | PopulateConfig>;
 }
+
+/** Vector search options at the Model layer, including Model soft-delete visibility. */
+export interface ModelVectorSearchOptions extends VectorSearchOptions {
+    withDeleted?: boolean;
+    onlyDeleted?: boolean;
+}
+
+/** Bounds and filters for inspecting registered, declared inbound Model relations. */
+export interface RelationUsageOptions {
+    session?: unknown;
+    maxTargets?: number;
+    maxSamples?: number;
+    includeRelations?: string[];
+    excludeRelations?: string[];
+    /** Defaults to true so soft-deleted source documents still protect a target. */
+    includeSoftDeletedReferences?: boolean;
+}
+
+export interface RelationUsageEntry {
+    sourceModel: string;
+    sourceCollection: string;
+    relation: string;
+    localField: string;
+    foreignField: string;
+    count: number;
+    sampleIds: unknown[];
+}
+
+export interface RelationUsageCoverage {
+    mode: 'registered-declared';
+    complete: boolean;
+    registryModels: string[];
+    checkedModels: string[];
+    skipped: Array<{
+        sourceModel: string;
+        reason: string;
+    }>;
+}
+
+export interface RelationUsageReport {
+    used: boolean;
+    target: {
+        matchedCount: number;
+        truncated: boolean;
+        sampleIds: unknown[];
+    };
+    checkedRelations: number;
+    usages: RelationUsageEntry[];
+    coverage: RelationUsageCoverage;
+}
+
+/** Result from a protected single-document delete after a relation usage check. */
+export interface RelationProtectedDeleteResult<TResult = unknown> {
+    result: TResult;
+    usage: RelationUsageReport;
+}
+
+/** Driver delete options plus bounds for the protected relation preflight. */
+export type RelationProtectedDeleteOptions = Omit<RelationUsageOptions, 'includeRelations' | 'excludeRelations'> & {
+    /** Protected deletion never permits narrowing the declared-relation scan. */
+    includeRelations?: never;
+    /** Protected deletion never permits narrowing the declared-relation scan. */
+    excludeRelations?: never;
+    [key: string]: unknown;
+};
 
 export interface VirtualConfig {
     get: (this: Record<string, unknown>) => unknown;
@@ -386,6 +453,11 @@ export interface ModelInstance<TDocument = any> {
         total: number;
     }>;
     /**
+     * Runs Vector Search while applying Model soft-delete visibility and hydrating hit documents.
+     * The returned order and score are produced by MongoDB Vector Search.
+     */
+    vectorSearch(options: ModelVectorSearchOptions): Promise<Array<VectorSearchHit<ModelDocument<TDocument>>>>;
+    /**
      * Counts documents matching the query.
      * @param query Optional filter.
      * @param options Optional count options.
@@ -479,6 +551,20 @@ export interface ModelInstance<TDocument = any> {
      * @returns Standard `DeleteResult` object.
      */
     deleteMany(filter?: unknown, options?: unknown): Promise<DeleteResult>;
+    /**
+     * Reports declared, registered Model relations currently using matching target documents.
+     * This is a read-only best-effort scan; inspect `coverage.complete` before relying on it.
+     */
+    checkRelationUsage(filter?: unknown, options?: RelationUsageOptions): Promise<RelationUsageReport>;
+    /**
+     * Deletes one visible target only after a complete declared-relation usage scan finds no references.
+     * Existing `deleteOne` behavior is otherwise preserved.
+     */
+    deleteOneWithRelations(filter: unknown, options?: RelationProtectedDeleteOptions): Promise<RelationProtectedDeleteResult>;
+    /**
+     * Physically deletes one target, including soft-deleted documents, only after the same protected scan.
+     */
+    forceDeleteWithRelations(filter: unknown, options?: RelationProtectedDeleteOptions): Promise<RelationProtectedDeleteResult>;
     // soft-delete extended methods
     /**
      * Finds matching documents, including soft-deleted documents.

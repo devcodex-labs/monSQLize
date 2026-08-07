@@ -65,6 +65,10 @@ See [Data Tasks](./data-tasks.md) for the preview, approval, apply, backup, and 
 | `POOL_NOT_FOUND` | The specified connection pool does not exist or the health checker cannot find the pool | Whether the pool name is registered, whether the case is consistent, and whether `pools` is passed in |
 | `INVALID_OPERATION` | The query is executed repeatedly, all connection pools are unavailable, and the transaction status is not allowed | Whether to repeat `toArray()`, pool health status, transaction life cycle |
 | `INVALID_ARGUMENT` | Query chain parameters, collection management parameters, function cache parameters | Parameter type, value range, non-empty string/object/array |
+| `INVALID_VECTOR_SEARCH` | Local Vector Search option validation | Vector index/path, finite query vector, ANN/ENN combination, filter/projection shape |
+| `INVALID_RELATION_SELECT` | Relation default or populate selection is outside P0 inclusion syntax | Use non-empty top-level inclusion fields only |
+| `RELATION_IN_USE` | Protected Model deletion found declared inbound references | Inspect `error.details[0].usages`; remove or retain references intentionally |
+| `RELATION_USAGE_UNAVAILABLE` | Protected deletion could not complete its declared-relation scan | Inspect coverage/skipped details; do not retry as an unchecked delete |
 | `INVALID_EXPRESSION` | Expression DSL or aggregate expression function is illegal | Function name, number of parameters, lambda/object literal format |
 | `LOCK_ACQUIRE_FAILED` / `LOCK_TIMEOUT` | Failed to obtain business lock or distributed lock | Lock TTL, number of retries, lock key granularity, Redis status |
 
@@ -191,6 +195,38 @@ try {
 - Check the type and value range of parameters
 - Confirm whether the parameter combination is legal
 - Refer to the API documentation for parameter constraints
+
+---
+
+### INVALID_VECTOR_SEARCH
+
+**Explanation**: A local `vectorSearch()` option is invalid before MongoDB is called.
+
+**Handling Suggestions**: Inspect `error.details` for the field/reason, then provide a non-empty index/path, finite vector, valid ANN or ENN combination, and a supported filter/projection shape. Server Vector Search or index errors are not converted to this code.
+
+---
+
+### INVALID_RELATION_SELECT
+
+**Explanation**: A relation default or populate `select` is outside the supported P0 inclusion form.
+
+**Handling Suggestions**: Use non-empty top-level field names such as `'title createdAt'` or `['title', 'createdAt']`. Exclusions, prefixes, and dot paths are not supported here.
+
+---
+
+### RELATION_IN_USE
+
+**Explanation**: A protected Model delete found one or more registered, declared inbound references.
+
+**Handling Suggestions**: Inspect `error.details[0].usages` and resolve the references or keep the target. No delete write is issued for this error.
+
+---
+
+### RELATION_USAGE_UNAVAILABLE
+
+**Explanation**: The relation usage scan was unavailable, exceeded its target bound, or reported incomplete coverage.
+
+**Handling Suggestions**: Inspect `error.details[0].coverage` and `skipped`, restore the required Model/source access or increase the explicit bound, then retry the protected operation. Do not replace it with an unchecked delete.
 
 ---
 
@@ -986,6 +1022,10 @@ try {
 |--------|------|------|
 | `VALIDATION_ERROR` | Verification | Parameter verification failed |
 | `INVALID_ARGUMENT` | Validation | Invalid parameter |
+| `INVALID_VECTOR_SEARCH` | Vector Search | Invalid local Vector Search option |
+| `INVALID_RELATION_SELECT` | Relations | Unsupported relation inclusion selection |
+| `RELATION_IN_USE` | Relations | Protected delete found declared references |
+| `RELATION_USAGE_UNAVAILABLE` | Relations | Protected delete scan coverage is incomplete or unavailable |
 | `INVALID_COLLECTION_NAME` | Validation | Invalid collection name |
 | `INVALID_DATABASE_NAME` | Validation | Invalid database name |
 | `INVALID_EXPRESSION` | Expression | Invalid expression DSL |

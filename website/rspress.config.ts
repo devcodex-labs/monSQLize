@@ -223,6 +223,7 @@ const sidebarSource: SidebarGroupSource[] = [
           { en: 'count()', zh: 'count()', link: '/count' },
           { en: 'distinct()', zh: 'distinct()', link: '/distinct' },
           { en: 'aggregate()', zh: 'aggregate()', link: '/aggregate' },
+          { en: 'vectorSearch()', zh: 'vectorSearch()', link: '/vector-search' },
           { en: 'explain()', zh: 'explain()', link: '/explain' }
         ]
       },

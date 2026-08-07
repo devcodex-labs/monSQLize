@@ -104,6 +104,7 @@ export function createRuntimeModelInstance<TDocument = Record<string, unknown>>(
         host.runtime,
         {
             collectionName: actualCollectionName,
+            modelName: registered.collectionName,
             dbName: databaseName,
             poolName,
             definition: registered.definition,

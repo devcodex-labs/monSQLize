@@ -439,3 +439,157 @@ describe('ModelInstance — automatic index preflight', () => {
         }
     });
 });
+
+describe('ModelInstance — P0 relation integrity', () => {
+    const bootstrap = createMemoryServerBootstrap();
+    let uri = '';
+
+    before(async () => {
+        const ctx = await bootstrap.setup();
+        uri = ctx.uri;
+    });
+
+    after(async () => {
+        MonSQLize.Model._clear();
+        await bootstrap.teardown();
+    });
+
+    it('populates local ID arrays with default projection and nested junction models', async () => {
+        MonSQLize.Model._clear();
+        MonSQLize.Model.define('p0_categories', { schema: {} });
+        MonSQLize.Model.define('p0_tags', {
+            schema: {},
+            relations: {
+                category: { from: 'p0_categories', localField: 'categoryId', foreignField: '_id', single: true },
+            },
+        });
+        MonSQLize.Model.define('p0_articles', {
+            schema: {},
+            relations: {
+                tags: {
+                    from: 'p0_tags',
+                    localField: 'tagIds',
+                    foreignField: '_id',
+                    select: 'label',
+                },
+            },
+        });
+        MonSQLize.Model.define('p0_courses', { schema: {} });
+        MonSQLize.Model.define('p0_enrollments', {
+            schema: {},
+            relations: {
+                course: { from: 'p0_courses', localField: 'courseId', foreignField: '_id', single: true },
+            },
+        });
+        MonSQLize.Model.define('p0_students', {
+            schema: {},
+            relations: {
+                enrollments: { from: 'p0_enrollments', localField: '_id', foreignField: 'studentId' },
+            },
+        });
+
+        const runtime = new MonSQLize({
+            type: 'mongodb',
+            databaseName: 'test_model_p0_relations',
+            config: { uri },
+            autoIndex: false,
+        });
+        try {
+            await runtime.connect();
+            const categories = runtime.model('p0_categories');
+            const tags = runtime.model('p0_tags');
+            const articles = runtime.model('p0_articles');
+            const courses = runtime.model('p0_courses');
+            const enrollments = runtime.model('p0_enrollments');
+            const students = runtime.model('p0_students');
+            const categoryA = await categories.insertOne({ name: 'Category A' });
+            const categoryB = await categories.insertOne({ name: 'Category B' });
+            const tagA = await tags.insertOne({ label: 'A', private: true, categoryId: categoryA.insertedId });
+            const tagB = await tags.insertOne({ label: 'B', private: true, categoryId: categoryB.insertedId });
+            const article = await articles.insertOne({ tagIds: [tagB.insertedId, null, tagA.insertedId, tagB.insertedId, 'missing'] });
+
+            const populated = await articles.findOne({ _id: article.insertedId }).populate({ path: 'tags', populate: 'category' });
+            assert.deepEqual(populated.tags.map((tag: any) => tag.label), ['B', 'A']);
+            assert.equal(populated.tags[0].category.name, 'Category B');
+            assert.equal('private' in populated.tags[0], false);
+            assert.equal('categoryId' in populated.tags[0], false);
+
+            const callerSelected = await articles.findOne({ _id: article.insertedId }).populate({ path: 'tags', select: 'private' });
+            assert.equal('label' in callerSelected.tags[0], false);
+            assert.equal(callerSelected.tags[0].private, true);
+
+            const course = await courses.insertOne({ title: 'Databases' });
+            const student = await students.insertOne({ name: 'Ada' });
+            await enrollments.insertOne({ studentId: student.insertedId, courseId: course.insertedId, enrolledAt: new Date() });
+            const studentWithCourses = await students.findOne({ _id: student.insertedId }).populate({ path: 'enrollments', populate: 'course' });
+            assert.equal(studentWithCourses.enrollments[0].course.title, 'Databases');
+        } finally {
+            await runtime.close();
+        }
+    });
+
+    it('restricts deletion for scalar, array, junction, and soft-deleted inbound references', async () => {
+        MonSQLize.Model._clear();
+        MonSQLize.Model.define('p0_posts', {
+            schema: {},
+            options: { softDelete: true, autoIndex: false },
+        });
+        MonSQLize.Model.define('p0_comments', {
+            schema: {},
+            options: { softDelete: true, autoIndex: false },
+            relations: {
+                post: { from: 'p0_posts', localField: 'postIds', foreignField: '_id' },
+            },
+        });
+        MonSQLize.Model.define('p0_post_links', {
+            schema: {},
+            relations: {
+                post: { from: 'p0_posts', localField: 'postId', foreignField: '_id', single: true },
+            },
+        });
+
+        const runtime = new MonSQLize({
+            type: 'mongodb',
+            databaseName: 'test_model_p0_delete',
+            config: { uri },
+            autoIndex: false,
+        });
+        try {
+            await runtime.connect();
+            const posts = runtime.model('p0_posts');
+            const comments = runtime.model('p0_comments');
+            const links = runtime.model('p0_post_links');
+            const post = await posts.insertOne({ title: 'Protected' });
+            const comment = await comments.insertOne({ postIds: [post.insertedId] });
+            const link = await links.insertOne({ postId: post.insertedId });
+
+            const usage = await posts.checkRelationUsage({ _id: post.insertedId }, { maxSamples: 1 });
+            assert.equal(usage.used, true);
+            assert.equal(usage.coverage.complete, true);
+            assert.equal(usage.usages.length, 2);
+            await assert.rejects(
+                () => posts.deleteOneWithRelations({ _id: post.insertedId }),
+                (error: unknown) => (error as { code?: string }).code === 'RELATION_IN_USE',
+            );
+            assert.ok(await posts.findOne({ _id: post.insertedId }));
+
+            await comments.forceDelete({ _id: comment.insertedId });
+            await links.forceDelete({ _id: link.insertedId });
+            const softReference = await comments.insertOne({ postIds: [post.insertedId] });
+            await comments.deleteOne({ _id: softReference.insertedId });
+            assert.equal((await posts.checkRelationUsage({ _id: post.insertedId })).used, true);
+            assert.equal((await posts.checkRelationUsage({ _id: post.insertedId }, {
+                includeSoftDeletedReferences: false,
+            })).used, false);
+
+            await comments.forceDelete({ _id: softReference.insertedId });
+            const softDeleted = await posts.deleteOneWithRelations({ _id: post.insertedId });
+            assert.equal(softDeleted.usage.used, false);
+            assert.equal(await posts.findOne({ _id: post.insertedId }), null);
+            await posts.forceDeleteWithRelations({ _id: post.insertedId });
+            assert.equal(await runtime._adapter.db.collection('p0_posts').countDocuments({ _id: post.insertedId }), 0);
+        } finally {
+            await runtime.close();
+        }
+    });
+});

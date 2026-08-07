@@ -11,18 +11,29 @@ import type {
     ModelDefinition,
     ModelEnsureIndexesOptions,
     ModelIndexEnsureResult,
+    ModelVectorSearchOptions,
     PopulateConfig,
     PopulateProxy,
+    RelationProtectedDeleteOptions,
+    RelationProtectedDeleteResult,
+    RelationUsageOptions,
+    RelationUsageReport,
     RelationConfig,
     RestoreResult,
     ValidationResult,
 } from '../../../types/model';
-import type { IncrementOneResult, InsertBatchResult, InsertManyResult, UpdateBatchResult, UpdateResult } from '../../../types/collection';
+import type {
+    IncrementOneResult,
+    InsertBatchResult,
+    InsertManyResult,
+    UpdateBatchResult,
+    UpdateResult,
+    VectorSearchHit,
+} from '../../../types/collection';
 import type { SchemaDslEngine, SchemaValidateFn } from './schema-dsl';
 import { PopulatePromise } from './populate-promise';
 import type { ExtendedModelCollectionLike, PopulatePath, ModelCollectionLike, ModelRuntimeLike } from './populate-promise';
 import { validateRelationConfig, normalizePopulateConfig } from './definition-validator';
-import { unique, groupBy, getByPath, toKey, applySort, pickFields, serializeDocument } from './model-utils';
 import { Model } from './model-registry';
 import {
     applyModelDefaults,
@@ -82,6 +93,12 @@ import {
     orchestrateModelUpsertOne,
 } from './model-mutation-orchestrator';
 import { runWithModelWriteSource } from '../write-path-policy';
+import {
+    executeModelVectorSearch,
+    executeProtectedRelationDelete,
+    executeRelationUsageCheck,
+    type ModelP0OperationsHost,
+} from './model-p0-operations';
 
 // Public type re-exports (for external consumers)
 export type {
@@ -94,15 +111,27 @@ export type {
     ModelEnsureIndexesOptions,
     ModelIndexEnsureResult,
     ModelIndexEnsureSummary,
+    ModelVectorSearchOptions,
     ModelScopeOptions,
     PopulateConfig,
     PopulateProxy,
+    RelationProtectedDeleteOptions,
+    RelationProtectedDeleteResult,
+    RelationUsageEntry,
+    RelationUsageCoverage,
+    RelationUsageOptions,
+    RelationUsageReport,
     RegisteredModel,
     RelationConfig,
     ValidationResult,
     VirtualConfig,
 } from '../../../types/model';
 export { Model };
+
+function resolveModelRegistryName<TDocument>(definition: ModelDefinition<TDocument>, fallback: string): string {
+    return Model.list().find((name) => Model.get(name)?.definition === definition) ?? fallback;
+}
+
 /**
  * An instantiated model bound to a specific collection and database.
  * Created by calling {@link MonSQLize#model}.
@@ -115,6 +144,7 @@ export class ModelInstance<TDocument = Record<string, unknown>> {
     readonly definition: ModelDefinition<TDocument>;
 
     private readonly relations: Map<string, RelationConfig>;
+    private readonly modelName: string;
 
     /** v1 compat: expose relations map as _relations */
     get _relations(): Map<string, RelationConfig> { return this.relations; }
@@ -147,6 +177,7 @@ export class ModelInstance<TDocument = Record<string, unknown>> {
         private readonly runtime: ModelRuntimeLike,
         options: {
             collectionName: string;
+            modelName?: string;
             dbName: string;
             poolName?: string;
             definition: ModelDefinition<TDocument>;
@@ -157,6 +188,7 @@ export class ModelInstance<TDocument = Record<string, unknown>> {
         this.dbName = options.dbName;
         this.poolName = options.poolName;
         this.definition = options.definition;
+        this.modelName = options.modelName ?? resolveModelRegistryName(options.definition, options.collectionName);
         this.relations = new Map(Object.entries(options.definition.relations ?? {}));
         for (const [name, config] of this.relations) {
             validateRelationConfig(name, config);
@@ -381,6 +413,11 @@ export class ModelInstance<TDocument = Record<string, unknown>> {
         });
     }
 
+    async vectorSearch(
+        options: ModelVectorSearchOptions,
+    ): Promise<Array<VectorSearchHit<TDocument & Record<string, unknown>>>> {
+        return executeModelVectorSearch(this.p0OperationsContext(), options);
+    }
     count(query?: unknown, options?: unknown): Promise<number> {
         const filteredQuery = applyModelSoftDeleteFilter(query, options, this._softDeleteConfig);
         return this.runV1HookedOperation('find', [filteredQuery, options], (nextQuery, nextOptions) => this.collection.count(nextQuery, nextOptions));
@@ -444,6 +481,28 @@ export class ModelInstance<TDocument = Record<string, unknown>> {
 
     async deleteMany(filter?: unknown, options?: unknown): Promise<unknown> {
         return this.runModelWrite(() => orchestrateModelDeleteMany(this.mutationContext(), filter, options));
+    }
+
+    /**
+     * Inspects only registered and declared inbound relations. It is read-only;
+     * callers must check coverage before treating an empty result as safe.
+     */
+    async checkRelationUsage(filter?: unknown, options?: RelationUsageOptions): Promise<RelationUsageReport> {
+        return executeRelationUsageCheck(this.p0OperationsContext(), filter, options);
+    }
+
+    async deleteOneWithRelations(
+        filter: unknown,
+        options?: RelationProtectedDeleteOptions,
+    ): Promise<RelationProtectedDeleteResult> {
+        return executeProtectedRelationDelete(this.p0OperationsContext(), filter, options, false);
+    }
+
+    async forceDeleteWithRelations(
+        filter: unknown,
+        options?: RelationProtectedDeleteOptions,
+    ): Promise<RelationProtectedDeleteResult> {
+        return executeProtectedRelationDelete(this.p0OperationsContext(), filter, options, true);
     }
 
     // ── soft-delete extended methods (only meaningful when softDelete is enabled) ──
@@ -666,6 +725,21 @@ export class ModelInstance<TDocument = Record<string, unknown>> {
             populateDocument: (document, paths) => this.populateSingle(document, paths),
         }, doc);
     }
+
+    private p0OperationsContext(): ModelP0OperationsHost<TDocument> {
+        return {
+            collection: this.collection,
+            softDeleteConfig: this._softDeleteConfig,
+            modelName: this.modelName,
+            runtime: this.runtime,
+            dbName: this.dbName,
+            poolName: this.poolName,
+            hydrateDocument: (doc) => this.hydrateDocument(doc),
+            deleteOne: (filter, options) => this.deleteOne(filter, options),
+            forceDelete: (filter, options) => this.forceDelete(filter, options),
+        };
+    }
+
     private softDeleteContext() {
         return {
             collection: this.collection,

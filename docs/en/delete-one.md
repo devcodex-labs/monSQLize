@@ -50,6 +50,37 @@ Return an object containing the results of the deletion:
 }
 ```
 
+## Protected Model deletion for declared relations
+
+`collection.deleteOne()` keeps its existing behavior. When deletion must be blocked while declared Model relations still point at the target, use the explicit Model APIs instead:
+
+```ts
+const usage = await runtime.model('posts').checkRelationUsage(
+  { _id: postId },
+  { session, maxTargets: 100, maxSamples: 20 },
+);
+
+const deleted = await runtime.model('posts').deleteOneWithRelations(
+  { _id: postId },
+  { session },
+);
+
+// Physically removes a target, including an already soft-deleted target.
+const forceDeleted = await runtime.model('posts').forceDeleteWithRelations(
+  { _id: postId },
+  { session },
+);
+```
+
+`checkRelationUsage()` is read-only and reports `used`, per-relation counts/sample IDs, and `coverage`. Its discovery scope is deliberately `registered-declared`: only Model relations registered in the current runtime and explicitly declared as inbound relations can be found. Soft-deleted source documents count as references by default; set `includeSoftDeletedReferences: false` only for an explicit diagnostic query.
+
+`deleteOneWithRelations()` and `forceDeleteWithRelations()` require a non-empty object filter. They resolve one target, inspect every declared inbound relation, then call the existing Model soft-delete or force-delete operation only when `coverage.complete` is true and no references exist. They reject `includeRelations` and `excludeRelations`, because narrowing the scan would weaken deletion safety. A narrowed read-only usage check intentionally reports incomplete coverage.
+
+- `RELATION_IN_USE`: at least one declared reference was found; no delete write is issued.
+- `RELATION_USAGE_UNAVAILABLE`: the target/source scan failed, hit `maxTargets`, or otherwise has incomplete coverage; no delete write is issued.
+
+This is a restrict-style guard, not a database foreign key: it does not infer relations from arbitrary data or `$lookup` pipelines, does not cascade/update references, and cannot eliminate a reference created concurrently after the scan. Use a shared session/transaction where the deployment and application workflow can coordinate the writes.
+
 ## Core Features
 
 ## ✅ Only delete the first matching document

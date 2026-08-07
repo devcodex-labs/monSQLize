@@ -54,6 +54,8 @@ const UNIT = [
     'test/unit/transaction/transaction.test.js',
     'test/unit/pool/pool.test.js',
     'test/unit/runtime/runtime-compat.test.js',
+    'test/unit/runtime/vector-search.test.js',
+    'test/unit/runtime/model-relations-p0.test.js',
     'test/unit/runtime/write-path-policy.test.js',
     'test/unit/validation/server-matrix-contract.test.js',
     'test/unit/data-tasks/data-task-job-facade.test.js',

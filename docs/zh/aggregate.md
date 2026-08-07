@@ -290,6 +290,42 @@ const ordersWithDetails = await collection('orders').aggregate([
 - 使用 pipeline 形式可以添加额外过滤条件
 - 避免多级嵌套 $lookup（性能差）
 
+#### 关联查询边界与基数
+
+`collection.aggregate<TResult>()` 是同库关联管道的直接集合 API。它不会新增 `join()` 或 `lookup()` 辅助方法：MongoDB 聚合管道保持可见，并可直接表达一对一、一对多和多对多关系，无需引入第二套查询语言。
+
+| 关系 | 管道形态 | 结果形态 |
+|---|---|---|
+| 一对一 | `$lookup` 后接 `$unwind` | 每条源记录对应一个关联文档 |
+| 一对多 | `$lookup`（可选 `let` + `pipeline`） | `as` 字段中保留关联数组 |
+| 多对多 | 先 `$lookup` 中间集合、`$unwind`，再 `$lookup` 目标集合 | 每个关联一行，或通过 `$group` 重新聚合 |
+
+```ts
+type AuthorWithArticles = {
+  name: string;
+  articles: Array<{ title: string; rank: number }>;
+};
+
+const authors = runtime.collection('authors');
+const authorsWithArticles = await authors.aggregate<AuthorWithArticles>([
+  {
+    $lookup: {
+      from: 'articles',
+      let: { authorId: '$_id' },
+      pipeline: [
+        { $match: { $expr: { $eq: ['$authorId', '$$authorId'] }, published: true } },
+        { $project: { _id: 0, title: 1, rank: 1 } },
+        { $sort: { rank: -1 } },
+        { $limit: 3 },
+      ],
+      as: 'articles',
+    },
+  },
+]);
+```
+
+这属于原始集合聚合，不会应用 Model hooks、Model hydrate 或 Model 软删除默认条件。如果关联集合使用软删除或租户隔离，必须在对应的 `$lookup.pipeline` 中显式加入过滤条件。`$out` 与 `$merge` 仍是可写聚合阶段，受配置的 `writePathPolicy` 约束，不属于只读关联查询契约。
+
 ### 3. 数据转换与计算
 
 使用 `$project` 和 `$addFields` 进行字段转换和计算：

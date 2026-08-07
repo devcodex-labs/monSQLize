@@ -62,6 +62,10 @@ try {
 | `POOL_NOT_FOUND` | 指定连接池不存在或 health checker 找不到池 | 池名称是否注册、大小写是否一致、`pools` 是否传入 |
 | `INVALID_OPERATION` | 查询重复执行、连接池全部不可用、事务状态不允许 | 是否重复 `toArray()`，池健康状态，事务生命周期 |
 | `INVALID_ARGUMENT` | 查询链参数、集合管理参数、函数缓存参数 | 参数类型、取值范围、非空字符串/对象/数组 |
+| `INVALID_VECTOR_SEARCH` | 本地 Vector Search 参数校验 | 向量索引/路径、有限 query vector、ANN/ENN 组合、filter/projection 形态 |
+| `INVALID_RELATION_SELECT` | relation 默认或 populate 字段选择超出 P0 包含式语法 | 只使用非空顶层包含字段 |
+| `RELATION_IN_USE` | 受保护 Model 删除发现已声明的入站引用 | 查看 `error.details[0].usages`，有意处理或保留引用 |
+| `RELATION_USAGE_UNAVAILABLE` | 受保护删除未能完成已声明关系扫描 | 查看 coverage/skipped，不要降级为未检查删除 |
 | `INVALID_EXPRESSION` | 表达式 DSL 或聚合表达式函数不合法 | 函数名、参数数量、lambda/object literal 格式 |
 | `LOCK_ACQUIRE_FAILED` / `LOCK_TIMEOUT` | 业务锁或分布式锁获取失败 | 锁 TTL、重试次数、锁 key 粒度、Redis 状态 |
 
@@ -182,6 +186,38 @@ try {
 - 检查参数的类型和取值范围
 - 确认参数组合是否合法
 - 参考 API 文档了解参数约束
+
+---
+
+#### INVALID_VECTOR_SEARCH
+
+**说明**: MongoDB 调用前，`vectorSearch()` 的本地参数不合法。
+
+**处理建议**: 查看 `error.details` 中的字段与原因，提供非空 index/path、有限向量、正确的 ANN 或 ENN 组合以及受支持的 filter/projection 形态。服务端的 Vector Search 或索引错误不会被改写为该错误码。
+
+---
+
+#### INVALID_RELATION_SELECT
+
+**说明**: relation 默认或 populate 的 `select` 超出了 P0 支持的包含式形式。
+
+**处理建议**: 使用 `'title createdAt'` 或 `['title', 'createdAt']` 这样的非空顶层字段。这里不支持排除式字段、前缀和点路径。
+
+---
+
+#### RELATION_IN_USE
+
+**说明**: 受保护的 Model 删除发现至少一个已注册、已声明的入站引用。
+
+**处理建议**: 查看 `error.details[0].usages`，处理引用或保留目标。此错误不会发出删除写入。
+
+---
+
+#### RELATION_USAGE_UNAVAILABLE
+
+**说明**: 关系占用扫描不可用、超出目标上限，或 coverage 不完整。
+
+**处理建议**: 查看 `error.details[0].coverage` 与 `skipped`，恢复所需 Model/来源访问或提高显式上限后重试受保护操作。不要改用未检查的删除。
 
 ---
 
@@ -941,6 +977,10 @@ try {
 |--------|------|------|
 | `VALIDATION_ERROR` | 验证 | 参数校验失败 |
 | `INVALID_ARGUMENT` | 验证 | 参数无效 |
+| `INVALID_VECTOR_SEARCH` | 向量查询 | 本地 Vector Search 参数无效 |
+| `INVALID_RELATION_SELECT` | 关系 | 不支持的 relation 包含式字段选择 |
+| `RELATION_IN_USE` | 关系 | 受保护删除发现已声明引用 |
+| `RELATION_USAGE_UNAVAILABLE` | 关系 | 受保护删除扫描 coverage 不完整或不可用 |
 | `INVALID_COLLECTION_NAME` | 验证 | 集合名称无效 |
 | `INVALID_DATABASE_NAME` | 验证 | 数据库名称无效 |
 | `INVALID_EXPRESSION` | 表达式 | 表达式 DSL 无效 |

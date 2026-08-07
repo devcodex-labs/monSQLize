@@ -334,6 +334,7 @@ export declare class ModelInstance<TDocument = any> implements ModelInstanceCont
         meta?: import('./collection').MetaInfo;
     }>;
     findAndCount(query?: unknown, options?: unknown): import('./model').PopulateProxy<{ data: Array<import('./model').ModelDocument<TDocument>>; total: number; }>;
+    vectorSearch(options: import('./model').ModelVectorSearchOptions): Promise<Array<import('./collection').VectorSearchHit<import('./model').ModelDocument<TDocument>>>>;
     count(query?: unknown, options?: unknown): Promise<number>;
     insertOne(document?: unknown, options?: unknown): Promise<{ acknowledged: boolean; insertedId: any; }>;
     insertMany(documents?: unknown[], options?: unknown): Promise<InsertManyResult>;
@@ -345,6 +346,9 @@ export declare class ModelInstance<TDocument = any> implements ModelInstanceCont
     upsertOne(filter?: unknown, update?: unknown, options?: unknown): Promise<UpdateResult>;
     deleteOne(filter?: unknown, options?: unknown): Promise<DeleteResult>;
     deleteMany(filter?: unknown, options?: unknown): Promise<DeleteResult>;
+    checkRelationUsage(filter?: unknown, options?: import('./model').RelationUsageOptions): Promise<import('./model').RelationUsageReport>;
+    deleteOneWithRelations(filter: unknown, options?: import('./model').RelationProtectedDeleteOptions): Promise<import('./model').RelationProtectedDeleteResult>;
+    forceDeleteWithRelations(filter: unknown, options?: import('./model').RelationProtectedDeleteOptions): Promise<import('./model').RelationProtectedDeleteResult>;
     createIndex(keys: unknown, options?: unknown): Promise<IndexCreateResult>;
     createIndexes(specs: Array<{ key: unknown; } & Record<string, unknown>>): Promise<string[]>;
     listIndexes(): Promise<Record<string, unknown>[]>;

@@ -187,6 +187,26 @@ user.profile = {
 ```
 
 
+Relation definitions can also provide the default selection:
+
+```ts
+relations: {
+  profile: {
+    from: 'profiles',
+    localField: 'profileId',
+    foreignField: '_id',
+    single: true,
+    select: 'bio avatar',
+  },
+}
+```
+
+Call-site `select` overrides the relation default. P0 selection accepts only non-empty top-level inclusion fields (`'bio avatar'` or `['bio', 'avatar']`); exclusions, `+`/`-` prefixes, and dot paths throw `INVALID_RELATION_SELECT`. `_id` remains included. The related query receives a MongoDB projection; join keys needed to match or run nested populate are retained only internally and are removed before the populated value is returned unless selected.
+
+### Local ID arrays
+
+`localField` can contain an ID array, for example `tagIds: ['tag-b', 'tag-a', 'tag-b']`. Populate fetches unique non-null IDs in one query and returns matching tags as `['tag-b', 'tag-a']`; unknown IDs are ignored. Without `sort`, that local-ID order is preserved. With `sort`, matched related documents use the requested sort instead.
+
 ## sort - Sort
 
 ```javascript
@@ -587,15 +607,24 @@ A: Use `$in` batch query, which has less impact on performance. Suggestions:
 A: Use an intermediate collection when a relationship needs extra fields or many-to-many ownership:
 ```javascript
 // users ←→ user_roles ←→ roles
-relations: {
-    userRoles: {
-        from: 'user_roles',
-        localField: '_id',
-        foreignField: 'userId',
-        single: false
-    }
-}
-//Then manually query the roles
+Model.define('users', {
+    relations: {
+        userRoles: {
+            from: 'user_roles',
+            localField: '_id',
+            foreignField: 'userId',
+            single: false,
+        },
+    },
+});
+Model.define('user_roles', {
+    relations: {
+        role: { from: 'roles', localField: 'roleId', foreignField: '_id', single: true },
+    },
+});
+
+const user = await User.findOne({ _id }).populate({ path: 'userRoles', populate: 'role' });
+// user.userRoles keeps join metadata and exposes user.userRoles[n].role
 ```
 
 **Q: What options does populate support? **

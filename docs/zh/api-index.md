@@ -15,7 +15,7 @@
 | [ObjectId 自动转换](objectid-auto-convert.md) | MongoDB 查询和写入路径的 ObjectId 自动转换 |
 | [Model 层](model.md) | Model schema 校验、自定义方法、hooks、relations 与 runtime 绑定 |
 | [Populate API](populate.md) | 加载 Model relations 声明的关联文档 |
-| [Relations API](relations.md) | 定义 `hasOne` / `hasMany` / `belongsTo` 风格关系 |
+| [Relations API](relations.md) | 定义 `hasOne` / `hasMany` / `belongsTo` 风格关系、数组键和默认字段选择 |
 | [Hooks API](hooks.md) | create、update、delete、find 流程的标准 Model 生命周期钩子 |
 | [Relations 与 Populate](model/relations.md) | Model 关系定义与关联数据填充 |
 | [嵌套 Populate](model/nested-populate.md) | 多层关系填充 |
@@ -83,7 +83,7 @@
 
 | 文档 | 方法 | 说明 |
 |------|------|------|
-| [删除单个文档](delete-one.md) | `deleteOne()` | 删除单个文档 |
+| [删除单个文档](delete-one.md) | `deleteOne()` / Model 受保护删除 | 删除单个文档，或基于已声明关系执行 restrict 删除 |
 | [批量删除文档](delete-many.md) | `deleteMany()` | 批量删除文档 |
 | [大批量删除](deleteBatch.md) | `deleteBatch()` | 大批量删除（分批+重试） |
 | [查询并删除](find-one-and-delete.md) | `findOneAndDelete()` | 原子删除并返回 |
@@ -95,6 +95,7 @@
 | 文档 | 方法 | 说明 |
 |------|------|------|
 | [聚合管道查询](aggregate.md) | `aggregate()` | 聚合管道查询 |
+| [向量查询](vector-search.md) | Collection / Model `vectorSearch()` | MongoDB Vector Search 向量查询；Model 会应用软删除可见性 |
 
 ---
 
@@ -168,6 +169,7 @@
 ### 高级查询
 
 - [聚合管道查询](aggregate.md) - 聚合管道
+- [向量查询](vector-search.md) - MongoDB Vector Search 向量查询
 - [查询计划分析](explain.md) - 查询计划
 - [链式调用](chaining-api.md) - 链式调用
 

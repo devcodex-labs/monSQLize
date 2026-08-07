@@ -1,4 +1,4 @@
-import { expectAssignable, expectType } from 'tsd';
+import { expectAssignable, expectNotAssignable, expectType } from 'tsd';
 import MonSQLize, {
     type ModelAccessor,
     type ModelAutoIndexOptions,
@@ -8,8 +8,13 @@ import MonSQLize, {
     type ModelEnsureIndexesOptions,
     type ModelIndexEnsureResult,
     type ModelIndexEnsureSummary,
+    type ModelVectorSearchOptions,
     type PopulateProxy,
     type RelationConfig,
+    type RelationProtectedDeleteOptions,
+    type RelationProtectedDeleteResult,
+    type RelationUsageOptions,
+    type RelationUsageReport,
     type VirtualConfig,
 } from 'monsqlize';
 
@@ -25,6 +30,26 @@ const relation: RelationConfig = {
     from: 'posts',
     localField: '_id',
     foreignField: 'authorId',
+    select: 'title createdAt',
+};
+
+const relationUsageOptions: RelationUsageOptions = {
+    maxTargets: 10,
+    maxSamples: 3,
+    includeRelations: ['comments.author'],
+    includeSoftDeletedReferences: true,
+};
+
+expectAssignable<RelationProtectedDeleteOptions>({ maxSamples: 3, session: {} });
+expectNotAssignable<RelationProtectedDeleteOptions>({ includeRelations: ['comments.author'] });
+
+const modelVectorOptions: ModelVectorSearchOptions = {
+    index: 'users_embedding_index',
+    path: 'embedding',
+    queryVector: [0.1, 0.2],
+    limit: 5,
+    numCandidates: 100,
+    withDeleted: true,
 };
 
 const virtual: VirtualConfig = {
@@ -119,6 +144,10 @@ expectType<Promise<import('monsqlize').RestoreResult>>(users.restoreMany({ first
 expectType<Promise<import('monsqlize').InsertBatchResult>>(users.insertBatch([{ firstName: 'Ada', lastName: 'Lovelace' }]));
 expectType<Promise<import('monsqlize').UpdateBatchResult>>(users.updateBatch({}, { $set: { nickname: 'Analyst' } }));
 expectType<Promise<import('monsqlize').DeleteBatchResult>>(users.deleteBatch({ firstName: 'Ada' }));
+expectType<Promise<Array<import('monsqlize').VectorSearchHit<ModelDocument<UserDoc>>>>>(users.vectorSearch(modelVectorOptions));
+expectType<Promise<RelationUsageReport>>(users.checkRelationUsage({ firstName: 'Ada' }, relationUsageOptions));
+expectType<Promise<RelationProtectedDeleteResult>>(users.deleteOneWithRelations({ firstName: 'Ada' }, { maxSamples: 1 }));
+expectType<Promise<RelationProtectedDeleteResult>>(users.forceDeleteWithRelations({ firstName: 'Ada' }));
 expectType<Promise<import('monsqlize').BookmarkPrewarmResult>>(users.prewarmBookmarks({ limit: 10 }, [1, 2]));
 expectType<Promise<import('monsqlize').BookmarkListResult>>(users.listBookmarks({ limit: 10 }));
 expectType<Promise<import('monsqlize').BookmarkClearResult>>(users.clearBookmarks({ limit: 10 }));

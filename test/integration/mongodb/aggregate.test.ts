@@ -43,6 +43,15 @@ describe('aggregate() / distinct() / count() / explain()', () => {
         await db.collection('products').deleteMany({});
         await db.collection('product_summary').deleteMany({});
         await db.collection('product_summary_no_invalidate').deleteMany({});
+        await Promise.all([
+            'lookup_users',
+            'lookup_orders',
+            'lookup_authors',
+            'lookup_articles',
+            'lookup_students',
+            'lookup_enrollments',
+            'lookup_courses',
+        ].map((name) => db.collection(name).deleteMany({})));
 
         const categories = ['electronics', 'clothing', 'food'];
         const docs: Omit<Product, '_id'>[] = [];
@@ -293,6 +302,85 @@ describe('aggregate() / distinct() / count() / explain()', () => {
 
             const second = await summary.find({ _id: 'electronics' }, { cache: 60_000 });
             assert.equal(second[0].total, 20);
+        });
+    });
+
+    describe('aggregate() $lookup relation pipelines', () => {
+        it('supports one-to-one lookup with $unwind', async () => {
+            const db = runtime._adapter.db;
+            await db.collection('lookup_users').insertOne({ _id: 'user-1', name: 'Ada' });
+            await db.collection('lookup_orders').insertOne({ _id: 'order-1', userId: 'user-1', total: 42 });
+
+            const result = await runtime.collection('lookup_orders').aggregate([
+                { $lookup: { from: 'lookup_users', localField: 'userId', foreignField: '_id', as: 'user' } },
+                { $unwind: '$user' },
+                { $project: { _id: 0, total: 1, userName: '$user.name' } },
+            ]);
+
+            assert.deepEqual(result, [{ total: 42, userName: 'Ada' }]);
+        });
+
+        it('keeps one-to-many lookup results as arrays and supports let pipelines', async () => {
+            const db = runtime._adapter.db;
+            await db.collection('lookup_authors').insertOne({ _id: 'author-1', name: 'Grace' });
+            await db.collection('lookup_articles').insertMany([
+                { _id: 'article-1', authorId: 'author-1', title: 'First', published: true, rank: 1 },
+                { _id: 'article-2', authorId: 'author-1', title: 'Second', published: true, rank: 3 },
+                { _id: 'article-3', authorId: 'author-1', title: 'Draft', published: false, rank: 4 },
+                { _id: 'article-4', authorId: 'author-1', title: 'Third', published: true, rank: 2 },
+            ]);
+
+            const result = await runtime.collection('lookup_authors').aggregate([
+                { $match: { _id: 'author-1' } },
+                {
+                    $lookup: {
+                        from: 'lookup_articles',
+                        let: { authorId: '$_id' },
+                        pipeline: [
+                            { $match: { $expr: { $eq: ['$authorId', '$$authorId'] }, published: true } },
+                            { $project: { _id: 0, title: 1, rank: 1 } },
+                            { $sort: { rank: -1 } },
+                            { $limit: 2 },
+                        ],
+                        as: 'articles',
+                    },
+                },
+                { $project: { _id: 0, name: 1, articles: 1 } },
+            ]);
+
+            assert.deepEqual(result, [{
+                name: 'Grace',
+                articles: [
+                    { title: 'Second', rank: 3 },
+                    { title: 'Third', rank: 2 },
+                ],
+            }]);
+        });
+
+        it('supports many-to-many traversal through a junction collection', async () => {
+            const db = runtime._adapter.db;
+            await db.collection('lookup_students').insertOne({ _id: 'student-1', name: 'Lin' });
+            await db.collection('lookup_courses').insertMany([
+                { _id: 'course-1', title: 'Databases' },
+                { _id: 'course-2', title: 'Search' },
+            ]);
+            await db.collection('lookup_enrollments').insertMany([
+                { _id: 'enrollment-1', studentId: 'student-1', courseId: 'course-2' },
+                { _id: 'enrollment-2', studentId: 'student-1', courseId: 'course-1' },
+            ]);
+
+            const result = await runtime.collection('lookup_students').aggregate([
+                { $match: { _id: 'student-1' } },
+                { $lookup: { from: 'lookup_enrollments', localField: '_id', foreignField: 'studentId', as: 'enrollments' } },
+                { $unwind: '$enrollments' },
+                { $lookup: { from: 'lookup_courses', localField: 'enrollments.courseId', foreignField: '_id', as: 'course' } },
+                { $unwind: '$course' },
+                { $sort: { 'course.title': 1 } },
+                { $group: { _id: '$name', courses: { $push: '$course.title' } } },
+                { $project: { _id: 0, name: '$_id', courses: 1 } },
+            ]);
+
+            assert.deepEqual(result, [{ name: 'Lin', courses: ['Databases', 'Search'] }]);
         });
     });
 

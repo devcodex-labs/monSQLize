@@ -15,7 +15,7 @@ This index documents the current stable MongoDB adapter APIs and shared runtime 
 | [ObjectId auto conversion](objectid-auto-convert.md) | ObjectId auto conversion for MongoDB query and write paths |
 | [Model layer](model.md) | Model schema validation, methods, hooks, relations, and runtime binding |
 | [Populate API](populate.md) | Load related documents declared by Model relations |
-| [Relations API](relations.md) | Define `hasOne` / `hasMany` / `belongsTo`-style relationships |
+| [Relations API](relations.md) | Define `hasOne` / `hasMany` / `belongsTo`-style relationships, array keys, and default selection |
 | [Hooks API](hooks.md) | Standard Model lifecycle hooks for create, update, delete, and find flows |
 | [Relations and Populate](model/relations.md) | Model relationship definitions and related-data population |
 | [Nested Populate](model/nested-populate.md) | Multi-level relation population |
@@ -83,7 +83,7 @@ This index documents the current stable MongoDB adapter APIs and shared runtime 
 
 | Document | Method | Description |
 |----------|--------|-------------|
-| [Delete one document](delete-one.md) | `deleteOne()` | Delete one document |
+| [Delete one document](delete-one.md) | `deleteOne()` / Model protected delete | Delete one document or restrict deletion using declared relations |
 | [Delete many documents](delete-many.md) | `deleteMany()` | Delete many documents |
 | [Batch delete](deleteBatch.md) | `deleteBatch()` | Large batch delete with batching and retry |
 | [Find one and delete](find-one-and-delete.md) | `findOneAndDelete()` | Atomically delete and return |
@@ -95,6 +95,7 @@ This index documents the current stable MongoDB adapter APIs and shared runtime 
 | Document | Method | Description |
 |----------|--------|-------------|
 | [Aggregation pipeline](aggregate.md) | `aggregate()` | Aggregation pipeline query |
+| [Vector search](vector-search.md) | Collection / Model `vectorSearch()` | MongoDB Vector Search query with Model soft-delete visibility when applicable |
 
 ---
 
@@ -170,6 +171,7 @@ This index documents the current stable MongoDB adapter APIs and shared runtime 
 ### Advanced Queries
 
 - [Aggregation pipeline](aggregate.md) - Aggregation pipelines
+- [Vector search](vector-search.md) - MongoDB Vector Search queries
 - [Query plans](explain.md) - Query plans
 - [Chain queries](chaining-api.md) - Chain queries
 

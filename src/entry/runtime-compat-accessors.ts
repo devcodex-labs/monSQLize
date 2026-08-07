@@ -204,6 +204,7 @@ export function createCompatModelInstance<TDocument>(config: {
     collection: unknown;
     runtime: unknown;
     collectionName: string;
+    modelName?: string;
     dbName: string;
     poolName?: string;
     definition: ModelDefinition<TDocument>;
@@ -214,6 +215,7 @@ export function createCompatModelInstance<TDocument>(config: {
         config.runtime as ModelRuntimeLike,
         {
             collectionName: config.collectionName,
+            modelName: config.modelName,
             dbName: config.dbName,
             poolName: config.poolName,
             definition: config.definition,

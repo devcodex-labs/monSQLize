@@ -181,6 +181,26 @@ user.profile = {
 };
 ```
 
+关系定义也可以提供默认字段选择：
+
+```ts
+relations: {
+  profile: {
+    from: 'profiles',
+    localField: 'profileId',
+    foreignField: '_id',
+    single: true,
+    select: 'bio avatar',
+  },
+}
+```
+
+调用级 `select` 会覆盖关系默认值。P0 的字段选择只接受非空的顶层包含字段（`'bio avatar'` 或 `['bio', 'avatar']`）；排除式字段、`+`/`-` 前缀和点路径会抛出 `INVALID_RELATION_SELECT`。`_id` 仍会保留。关联查询会把投影下推到 MongoDB；为匹配或嵌套 populate 临时保留的 join key，除非被显式选择，否则会在填充结果返回前移除。
+
+### 本地 ID 数组
+
+`localField` 可以保存 ID 数组，例如 `tagIds: ['tag-b', 'tag-a', 'tag-b']`。Populate 会在一次查询中读取去重后的非空 ID，并返回 `['tag-b', 'tag-a']` 对应的目标；未知 ID 会被忽略。没有 `sort` 时保留本地 ID 顺序；设置 `sort` 后，匹配到的关联文档按指定排序返回。
+
 ### sort - 排序
 
 ```javascript
@@ -567,15 +587,24 @@ A: 使用 `$in` 批量查询，性能影响较小。建议：
 A: 需要额外字段或多对多归属时，使用中间集合建模：
 ```javascript
 // users ←→ user_roles ←→ roles
-relations: {
-    userRoles: {
-        from: 'user_roles',
-        localField: '_id',
-        foreignField: 'userId',
-        single: false
-    }
-}
-// 然后手动查询 roles
+Model.define('users', {
+    relations: {
+        userRoles: {
+            from: 'user_roles',
+            localField: '_id',
+            foreignField: 'userId',
+            single: false,
+        },
+    },
+});
+Model.define('user_roles', {
+    relations: {
+        role: { from: 'roles', localField: 'roleId', foreignField: '_id', single: true },
+    },
+});
+
+const user = await User.findOne({ _id }).populate({ path: 'userRoles', populate: 'role' });
+// user.userRoles 保留中间表字段，user.userRoles[n].role 为关联角色
 ```
 
 **Q: populate 支持哪些选项？**  

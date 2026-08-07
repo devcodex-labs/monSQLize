@@ -12,7 +12,7 @@ import type {
     ValidationResult,
 } from '../../../types/model';
 import { PopulatePromise, type ModelCollectionLike, type ModelRuntimeLike, type PopulatePath } from './populate-promise';
-import { normalizePopulateConfig } from './definition-validator';
+import { normalizePopulateConfig, normalizeRelationSelect } from './definition-validator';
 import { Model } from './model-registry';
 import { applySort, getByPath, groupBy, pickFields, serializeDocument, toKey, unique } from './model-utils';
 import {
@@ -100,6 +100,77 @@ function resolveRegisteredCollectionName<TDocument>(
     return definition.collection ?? definition.name ?? registered.collectionName;
 }
 
+function flattenComparableValues(value: unknown): unknown[] {
+    if (Array.isArray(value)) {
+        return value.flatMap((entry) => flattenComparableValues(entry));
+    }
+    return value === undefined || value === null ? [] : [value];
+}
+
+function resolveNestedPopulatePaths(value: PopulateConfig['populate']): PopulatePath[] {
+    if (value === undefined) {
+        return [];
+    }
+    const paths = Array.isArray(value) ? value : [value];
+    for (const path of paths) {
+        const valid = typeof path === 'string'
+            || (typeof path === 'object' && path !== null && !Array.isArray(path) && Boolean((path as PopulateConfig).path));
+        if (!valid) {
+            throw createError(ErrorCodes.INVALID_ARGUMENT, 'nested populate must be a string, array, or object');
+        }
+    }
+    return paths as PopulatePath[];
+}
+
+function collectNestedLocalFields(
+    relatedModel: { getRelations(): Record<string, RelationConfig> } | null,
+    nestedPaths: PopulatePath[],
+): string[] {
+    if (!relatedModel) {
+        return [];
+    }
+    const relations = relatedModel.getRelations();
+    return unique(
+        nestedPaths
+            .map((path) => relations[normalizePopulateConfig(path).path]?.localField)
+            .filter((field): field is string => Boolean(field)),
+    ) as string[];
+}
+
+function dedupeDocuments<TDocument extends Record<string, unknown>>(documents: TDocument[]): TDocument[] {
+    const seen = new Set<TDocument>();
+    return documents.filter((document) => {
+        if (seen.has(document)) {
+            return false;
+        }
+        seen.add(document);
+        return true;
+    });
+}
+
+function rebuildPopulateMatches<TDocument extends Record<string, unknown>>(
+    localValue: unknown,
+    grouped: Map<string, TDocument[]>,
+    sort?: Record<string, 1 | -1>,
+): TDocument[] {
+    const matches = flattenComparableValues(localValue)
+        .flatMap((value) => grouped.get(toKey(value)) ?? []);
+    const deduped = dedupeDocuments(matches);
+    return sort ? applySort(deduped, sort) : deduped;
+}
+
+function projectPopulatedDocument(
+    document: Record<string, unknown>,
+    select: string[] | undefined,
+    nestedPaths: PopulatePath[],
+): Record<string, unknown> {
+    if (!select) {
+        return document;
+    }
+    const nestedRelationFields = nestedPaths.map((path) => normalizePopulateConfig(path).path);
+    return pickFields(document, [...new Set([...select, ...nestedRelationFields])]);
+}
+
 export async function populateModelPath<TDocument>(
     context: PopulateContext<TDocument>,
     docs: Array<TDocument & Record<string, unknown>>,
@@ -124,11 +195,8 @@ export async function populateModelPath<TDocument>(
         throw createError(ErrorCodes.INVALID_ARGUMENT, `Undefined relation: ${config.path}`);
     }
 
-    const keys = unique(
-        docs
-            .map((doc) => getByPath(doc, relation.localField))
-            .filter((value) => value !== undefined && value !== null),
-    );
+    const localValues = docs.map((doc) => getByPath(doc, relation.localField));
+    const keys = unique(localValues.flatMap((value) => flattenComparableValues(value)));
 
     if (keys.length === 0) {
         for (const doc of docs) {
@@ -145,57 +213,50 @@ export async function populateModelPath<TDocument>(
     const relatedCollectionName = resolveRegisteredCollectionName(registered, relation.from);
     const relatedCollection = context.runtime.scopedCollection(relatedCollectionName, scope);
     const relatedModel = Model.has(relation.from) ? context.runtime.scopedModel(relation.from, scope) : null;
+    const nestedPaths = resolveNestedPopulatePaths(config.populate);
+    const effectiveSelect = normalizeRelationSelect(config.select, { path: config.path })
+        ?? normalizeRelationSelect(relation.select, { relation: config.path });
+    const projectionFields = effectiveSelect
+        ? [...new Set([
+            ...effectiveSelect,
+            relation.foreignField,
+            '_id',
+            ...collectNestedLocalFields(relatedModel, nestedPaths),
+        ])]
+        : [];
     const relatedDocs = await relatedCollection.find({
         [relation.foreignField]: { $in: keys },
         ...(config.match ?? {}),
-    });
+    }, effectiveSelect ? {
+        projection: Object.fromEntries(projectionFields.map((field) => [field, 1])),
+    } : undefined);
 
-    let hydrated = relatedModel
+    let hydrated: Array<Record<string, unknown>> = relatedModel
         ? relatedModel.hydrateDocuments(relatedDocs as Array<Record<string, unknown>>)
         : (relatedDocs as Array<Record<string, unknown>>).map((item) => ({ ...item }));
 
-    if (config.sort) {
-        hydrated = applySort(hydrated, config.sort);
-    }
-    if (config.select) {
-        const select = config.select;
-        hydrated = hydrated.map((item: TDocument & Record<string, unknown>) => pickFields(item, select, [relation.foreignField]));
-    }
-
-    if (config.populate) {
-        const nestedRaw = config.populate as unknown;
-        const isValidNestedConfig = (value: unknown): boolean => {
-            if (typeof value === 'string' || Array.isArray(value)) return true;
-            if (typeof value === 'object' && value !== null && (value as PopulateConfig).path) return true;
-            return false;
-        };
-        if (!isValidNestedConfig(nestedRaw)) {
-            throw createError(ErrorCodes.INVALID_ARGUMENT, 'nested populate must be a string, array, or object');
+    if (nestedPaths.length > 0 && relatedModel) {
+        if (state.depth + 1 > state.maxDepth) {
+            throw createError(ErrorCodes.INVALID_ARGUMENT, `populate maxDepth exceeded: ${state.maxDepth}`);
         }
-        if (relatedModel) {
-            if (state.depth + 1 > state.maxDepth) {
-                throw createError(ErrorCodes.INVALID_ARGUMENT, `populate maxDepth exceeded: ${state.maxDepth}`);
-            }
-            const nestedPaths = Array.isArray(config.populate) ? config.populate : [config.populate];
-            hydrated = await relatedModel.populateDocuments(hydrated, nestedPaths, {
-                depth: state.depth + 1,
-                maxDepth: state.maxDepth,
-                activeConfigs: state.activeConfigs,
-            });
-        }
+        hydrated = await relatedModel.populateDocuments(hydrated, nestedPaths, {
+            depth: state.depth + 1,
+            maxDepth: state.maxDepth,
+            activeConfigs: state.activeConfigs,
+        });
     }
 
     const grouped = groupBy(hydrated, (item) => getByPath(item as Record<string, unknown>, relation.foreignField));
-    for (const doc of docs) {
-        const localValue = getByPath(doc, relation.localField);
-        let matches = grouped.get(toKey(localValue)) ?? [];
+    for (const [index, doc] of docs.entries()) {
+        let matches = rebuildPopulateMatches(localValues[index], grouped, config.sort);
         if (config.skip) {
             matches = matches.slice(config.skip);
         }
         if (config.limit !== undefined) {
             matches = matches.slice(0, config.limit);
         }
-        (doc as Record<string, unknown>)[config.path] = relation.single ? (matches[0] ?? null) : [...matches];
+        const projectedMatches = matches.map((item) => projectPopulatedDocument(item, effectiveSelect, nestedPaths));
+        (doc as Record<string, unknown>)[config.path] = relation.single ? (projectedMatches[0] ?? null) : projectedMatches;
     }
 
     return docs;

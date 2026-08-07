@@ -273,6 +273,42 @@ const ordersWithDetails = await collection('orders').aggregate([
 - Use pipeline form to add additional filtering conditions
 - Avoid multi-level nested $lookups (poor performance)
 
+#### Relation-query boundary and cardinality
+
+`collection.aggregate<TResult>()` is the supported direct-collection API for same-database relation pipelines. It deliberately does **not** add `join()` or `lookup()` helper methods: the MongoDB pipeline remains visible and can express one-to-one, one-to-many, and many-to-many relationships without a second query language.
+
+| Relationship | Pipeline shape | Result shape |
+|---|---|---|
+| One-to-one | `$lookup` followed by `$unwind` | One related document per source row |
+| One-to-many | `$lookup` (optionally `let` + `pipeline`) | An array in the `as` field |
+| Many-to-many | `$lookup` the junction collection, `$unwind`, then `$lookup` the target collection | One row per link, or regroup with `$group` |
+
+```ts
+type AuthorWithArticles = {
+  name: string;
+  articles: Array<{ title: string; rank: number }>;
+};
+
+const authors = runtime.collection('authors');
+const authorsWithArticles = await authors.aggregate<AuthorWithArticles>([
+  {
+    $lookup: {
+      from: 'articles',
+      let: { authorId: '$_id' },
+      pipeline: [
+        { $match: { $expr: { $eq: ['$authorId', '$$authorId'] }, published: true } },
+        { $project: { _id: 0, title: 1, rank: 1 } },
+        { $sort: { rank: -1 } },
+        { $limit: 3 },
+      ],
+      as: 'articles',
+    },
+  },
+]);
+```
+
+This is raw collection aggregation. It does not apply Model hooks, Model hydration, or Model soft-delete defaults. If a joined collection uses soft deletion or tenant boundaries, put the required predicate inside its `$lookup.pipeline` explicitly. `$out` and `$merge` remain write-capable aggregation stages and are governed by the configured `writePathPolicy`; they are outside the read-only relation-query contract.
+
 ### 3. Data conversion and calculation
 
 Use `$project` and `$addFields` for field conversions and calculations:

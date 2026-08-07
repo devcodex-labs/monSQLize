@@ -134,6 +134,7 @@ export function validateDefinition<TDocument>(definition: ModelDefinition<TDocum
  * Validate a single RelationConfig entry:
  * - from / localField / foreignField must be non-empty strings
  * - single (if provided) must be a boolean
+ * - select (if provided) must use the supported top-level inclusion projection form
  */
 export function validateRelationConfig(name: string, config: RelationConfig): void {
     if (!name || typeof name !== 'string') {
@@ -154,6 +155,62 @@ export function validateRelationConfig(name: string, config: RelationConfig): vo
     if (config.single !== undefined && typeof config.single !== 'boolean') {
         throw createError(ErrorCodes.INVALID_ARGUMENT, `relations.single must be a boolean`);
     }
+    normalizeRelationSelect(config.select, { relation: name });
+}
+
+type RelationSelectContext = {
+    relation?: string;
+    path?: string;
+};
+
+/**
+ * Normalizes P0 relation selection to unique, top-level inclusion fields.
+ * It intentionally does not validate schema fields: Models can use open schemas.
+ */
+export function normalizeRelationSelect(
+    value: unknown,
+    context: RelationSelectContext = {},
+): string[] | undefined {
+    if (value === undefined) {
+        return undefined;
+    }
+
+    const invalid = (reason: string): never => {
+        throw createError(
+            ErrorCodes.INVALID_RELATION_SELECT,
+            `Relation select must use non-empty top-level inclusion fields: ${reason}`,
+            [{ ...context, value, reason }],
+        );
+    };
+
+    const rawTokens = typeof value === 'string'
+        ? [value]
+        : Array.isArray(value)
+            ? value
+            : invalid('select must be a string or string array');
+
+    const tokens: string[] = [];
+    for (const rawToken of rawTokens) {
+        if (typeof rawToken !== 'string') {
+            invalid('select array entries must be strings');
+        }
+        const parts = rawToken.trim().split(/\s+/).filter(Boolean);
+        if (parts.length === 0) {
+            invalid('select must not be empty');
+        }
+        tokens.push(...parts);
+    }
+
+    for (const token of tokens) {
+        if (token.startsWith('-') || token.startsWith('+')) {
+            invalid('exclusion and prefix tokens are not supported');
+        }
+        if (token.includes('.')) {
+            invalid('dot-path fields are not supported');
+        }
+    }
+
+    return [...new Set(tokens)];
 }
 
 /**

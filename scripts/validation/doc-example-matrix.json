@@ -24,6 +24,13 @@
       "status": "covered"
     },
     {
+      "doc": "vector-search",
+      "kind": "doc-check",
+      "target": "docs/en/vector-search.md",
+      "runner": "check:docs-examples",
+      "status": "covered"
+    },
+    {
       "doc": "api-index",
       "kind": "doc-check",
       "target": "docs/en/api-index.md",

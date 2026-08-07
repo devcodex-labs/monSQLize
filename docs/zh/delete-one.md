@@ -53,6 +53,37 @@ await collection("products").deleteOne({
 }
 ```
 
+## 面向已声明关系的受保护 Model 删除
+
+`collection.deleteOne()` 保持原有行为。如果删除时必须阻止仍被已声明 Model relation 引用的目标，请显式使用 Model API：
+
+```ts
+const usage = await runtime.model('posts').checkRelationUsage(
+  { _id: postId },
+  { session, maxTargets: 100, maxSamples: 20 },
+);
+
+const deleted = await runtime.model('posts').deleteOneWithRelations(
+  { _id: postId },
+  { session },
+);
+
+// 物理删除目标，包括已经软删除的目标。
+const forceDeleted = await runtime.model('posts').forceDeleteWithRelations(
+  { _id: postId },
+  { session },
+);
+```
+
+`checkRelationUsage()` 是零写入检查，返回 `used`、每条关系的数量/有限 sample ID 以及 `coverage`。发现范围刻意限定为 `registered-declared`：只能发现当前 runtime 已注册、且明确声明为入站 relation 的 Model 关系。默认仍把软删除来源文档计作引用；只有诊断性查询才应显式设置 `includeSoftDeletedReferences: false`。
+
+`deleteOneWithRelations()` 和 `forceDeleteWithRelations()` 要求传入非空对象 filter。它们先解析一个目标，扫描所有已声明入站关系，只有 `coverage.complete` 为 true 且不存在引用时，才调用既有的 Model 软删除或物理删除。为了不削弱安全性，受保护删除会拒绝 `includeRelations` 和 `excludeRelations`；使用它们缩小范围的只读检查会明确返回不完整 coverage。
+
+- `RELATION_IN_USE`：至少发现一条已声明引用；不会发出删除写入。
+- `RELATION_USAGE_UNAVAILABLE`：目标/来源扫描失败、命中 `maxTargets` 或 coverage 不完整；不会发出删除写入。
+
+这是 restrict 风格的保护，不是数据库外键：不会从任意数据或 `$lookup` 管道反推关系，不会 cascade/更新引用，也无法消除扫描后并发新建引用的竞态。部署和业务工作流能够协调时，请用同一个 session/transaction 包裹相关写入。
+
 ## 核心特性
 
 ### ✅ 只删除第一个匹配的文档
