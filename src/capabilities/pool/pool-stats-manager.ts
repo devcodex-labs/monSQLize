@@ -6,14 +6,21 @@
  */
 import type { PoolBufferItem, PoolStatsData } from '../../types/internal/pool';
 
+type PoolStatsLogger = {
+    info?: (...args: unknown[]) => void;
+    warn?: (...args: unknown[]) => void;
+};
+
+const SILENT_POOL_STATS_LOGGER: PoolStatsLogger = {};
+
 export class PoolStatsManager {
     private readonly _stats = new Map<string, PoolStatsData>();
     private _buffer: PoolBufferItem[] = [];
     private _batchInterval: ReturnType<typeof setInterval> | null;
-    private readonly _logger: { info?: (...args: unknown[]) => void; warn?: (...args: unknown[]) => void; };
+    private readonly _logger: PoolStatsLogger;
 
-    constructor(options: { logger?: { info?: (...args: unknown[]) => void; warn?: (...args: unknown[]) => void; }; } = {}) {
-        this._logger = options.logger ?? console;
+    constructor(options: { logger?: PoolStatsLogger; } = {}) {
+        this._logger = options.logger ?? SILENT_POOL_STATS_LOGGER;
         this._batchInterval = setInterval(() => { this._flush(); }, 100);
         (this._batchInterval as ReturnType<typeof setInterval> & { unref?: () => void }).unref?.();
     }

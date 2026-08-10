@@ -251,7 +251,7 @@ new ConnectionPoolManager(options?: ManagerOptions)
 | options.maxPoolsCount | number | 否 | 10 | 最大连接池数量（1-100） |
 | options.poolStrategy | string | 否 | 'auto' | 选择策略 |
 | options.poolFallback | object | 否 | - | 故障转移配置 |
-| options.logger | object | 否 | console | 日志对象 |
+| options.logger | object | 否 | 无（静默） | 可选日志对象；未提供时不输出日志 |
 
 **示例**:
 ```javascript

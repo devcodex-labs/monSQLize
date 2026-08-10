@@ -167,4 +167,52 @@ describe('P4-B pool manager', () => {
             globalThis.clearTimeout = originalClearTimeout;
         }
     });
+
+    it('forwards the manager logger to PoolSelector and HealthChecker', async () => {
+        const entries: Array<{ level: 'info' | 'warn'; args: unknown[] }> = [];
+        const logger = {
+            info: (...args: unknown[]) => entries.push({ level: 'info', args }),
+            warn: (...args: unknown[]) => entries.push({ level: 'warn', args }),
+        };
+        const manager = new MonSQLize.ConnectionPoolManager({ logger });
+
+        try {
+            manager._selector.setStrategy('roundRobin');
+            manager._selector.setStrategy('unknown-strategy');
+            manager._selector.select([{ name: 'primary' }], {});
+            manager._healthChecker.start();
+            manager._healthChecker.stop();
+
+            assert.deepEqual(entries.map((entry) => entry.level), ['info', 'info', 'warn', 'info', 'info']);
+            assert.match(String(entries[0].args[0]), /Strategy changed/);
+            assert.match(String(entries[2].args[0]), /Unknown strategy/);
+            assert.match(String(entries[3].args[0]), /Health check started/);
+            assert.match(String(entries[4].args[0]), /Health check stopped/);
+        } finally {
+            await manager.close();
+        }
+    });
+
+    it('stays silent when Pool logging is not configured', async () => {
+        const consoleEvents: Array<{ level: 'info' | 'warn'; args: unknown[] }> = [];
+        const originalInfo = console.info;
+        const originalWarn = console.warn;
+        console.info = (...args: unknown[]) => consoleEvents.push({ level: 'info', args });
+        console.warn = (...args: unknown[]) => consoleEvents.push({ level: 'warn', args });
+
+        const manager = new MonSQLize.ConnectionPoolManager();
+        try {
+            manager._selector.setStrategy('roundRobin');
+            manager._selector.setStrategy('unknown-strategy');
+            manager._selector.select([{ name: 'primary' }], {});
+            manager._healthChecker.start();
+            manager._healthChecker.stop();
+
+            assert.deepEqual(consoleEvents, []);
+        } finally {
+            console.info = originalInfo;
+            console.warn = originalWarn;
+            await manager.close();
+        }
+    });
 });

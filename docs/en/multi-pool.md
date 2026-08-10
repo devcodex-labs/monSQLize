@@ -251,7 +251,7 @@ new ConnectionPoolManager(options?: ManagerOptions)
 | options.maxPoolsCount | number | No | 10 | Maximum number of connection pools (1-100) |
 | options.poolStrategy | string | no | 'auto' | select strategy |
 | options.poolFallback | object | no | - | failover configuration |
-| options.logger | object | no | console | log object |
+| options.logger | object | no | none (silent) | optional log object; no logs are emitted when omitted |
 
 **Example**:
 ```javascript

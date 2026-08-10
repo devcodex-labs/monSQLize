@@ -29,6 +29,8 @@ type PoolSelectorOptions = {
     logger?: Pick<LoggerLike, 'warn' | 'info'>;
 };
 
+const SILENT_POOL_SELECTOR_LOGGER: Pick<LoggerLike, 'warn' | 'info'> = {};
+
 const POOL_STRATEGY_ALIASES: Record<string, string> = {
     'round-robin': 'roundRobin',
     'least-connections': 'leastConnections',
@@ -62,7 +64,7 @@ export class PoolSelector {
 
     constructor(options: PoolSelectorOptions = {}) {
         this._strategy = normalizePoolStrategy(options.strategy);
-        this._logger = options.logger ?? console;
+        this._logger = options.logger ?? SILENT_POOL_SELECTOR_LOGGER;
     }
 
     select(pools: PoolSelectorPoolConfig[], context: PoolSelectorContext): string {

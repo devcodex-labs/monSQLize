@@ -141,9 +141,9 @@ export class ConnectionPoolManager {
         this._fallbackConfig = this.fallback;
         this._fallback = this.fallback;
         this._pools = this.pools;
-        this._selector = new PoolSelector({ strategy: this.strategy });
-        this._healthChecker = new HealthChecker({ poolManager: this });
-        this._stats = new PoolStatsManager({ logger: options.logger ?? undefined });
+        this._selector = new PoolSelector({ strategy: this.strategy, logger: this.logger ?? undefined });
+        this._healthChecker = new HealthChecker({ poolManager: this, logger: this.logger ?? undefined });
+        this._stats = new PoolStatsManager({ logger: this.logger ?? undefined });
     }
 
     /**

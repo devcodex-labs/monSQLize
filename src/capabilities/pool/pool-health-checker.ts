@@ -17,9 +17,16 @@ interface HealthCheckerPoolManager {
     _getPool(name: string): { db: (name: string) => { command: (cmd: Record<string, unknown>) => Promise<unknown> }; } | null;
 }
 
+type HealthCheckerLogger = {
+    info?: (...args: unknown[]) => void;
+    warn?: (...args: unknown[]) => void;
+};
+
+const SILENT_HEALTH_CHECKER_LOGGER: HealthCheckerLogger = {};
+
 export class HealthChecker {
     private readonly _poolManager: HealthCheckerPoolManager | null;
-    private readonly _logger: { info?: (...args: unknown[]) => void; warn?: (...args: unknown[]) => void; };
+    private readonly _logger: HealthCheckerLogger;
     private readonly _healthStatus = new Map<string, HealthStatus>();
     private readonly _checkConfigs = new Map<string, Record<string, unknown>>();
     private readonly _clients = new Map<string, unknown>();
@@ -27,9 +34,9 @@ export class HealthChecker {
     private readonly _inProgress = new Set<string>();
     _started = false;
 
-    constructor(options: { poolManager?: HealthCheckerPoolManager; logger?: { info?: (...args: unknown[]) => void; warn?: (...args: unknown[]) => void; }; } = {}) {
+    constructor(options: { poolManager?: HealthCheckerPoolManager; logger?: HealthCheckerLogger; } = {}) {
         this._poolManager = options.poolManager ?? null;
-        this._logger = options.logger ?? console;
+        this._logger = options.logger ?? SILENT_HEALTH_CHECKER_LOGGER;
     }
 
     register(poolNameOrConfig: string | Record<string, unknown>, configOrClient?: Record<string, unknown> | null | unknown): void {
