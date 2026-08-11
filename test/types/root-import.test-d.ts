@@ -37,6 +37,7 @@ import MonSQLize, {
     type DistinctOptions,
     type LoggerLike,
     type ModelAccessor,
+    type ModelBindingAccessor,
     type ModelInstance,
     type MonSQLizeOptions,
     type MonSQLizeSchemaDslRuntime,
@@ -160,7 +161,7 @@ expectType<Promise<{
     db: (name?: string) => DbAccessor;
     use: (name: string) => {
         collection: <TSchema = any>(collectionName: string) => Collection<TSchema>;
-        model: <TDocument = any>(modelName: string) => ModelAccessor<TDocument>;
+        model: ModelBindingAccessor;
     };
     instance: MonSQLize;
 }>>(db.connect());

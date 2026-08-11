@@ -1,6 +1,6 @@
 import type { BookmarkClearResult, BookmarkListResult, BookmarkPrewarmResult, DeleteBatchResult, DeleteResult, IncrementOneResult, IndexCreateResult, InsertBatchResult, InsertManyResult, UpdateBatchResult, UpdateResult } from './collection';
 import type { LoggerLike, ExpressionFunction, ExpressionObject } from './base';
-import type { ModelDefinition, ModelEnsureIndexesOptions, ModelIndexEnsureResult, ModelInstance as ModelInstanceContract, RegisteredModel, RelationConfig } from './model';
+import type { ModelDefinition, ModelDescriptor, ModelEnsureIndexesOptions, ModelIndexEnsureResult, ModelInstance as ModelInstanceContract, RegisteredModel, RelationConfig } from './model';
 import type { LockOptions, LockStats } from './lock';
 import type { ConnectionPoolManagerOptions, FallbackStrategy, PoolConfig, PoolHealthStatus, PoolRole, PoolStats, PoolStrategy } from './pool';
 import type { SagaDefinition, SagaOrchestratorOptions, SagaResult, SagaStats, SagaStep } from './saga';
@@ -289,6 +289,8 @@ export declare class FunctionCache {
 }
 
 export declare class Model {
+    /** @since v3.3.0 */
+    static define<TName extends string, TDocument>(descriptor: ModelDescriptor<TName, TDocument>): void;
     static define<TDocument = any>(name: string, definition: ModelDefinition<TDocument>): void;
     static get<TDocument = any>(name: string): RegisteredModel<TDocument> | undefined;
     static has(name: string): boolean;

@@ -25,6 +25,7 @@ import {
     FunctionCache,
     generateQueryHash,
     getSlowQueryThreshold,
+    defineModel,
     hasExpressionInObject,
     hasExpressionInPipeline,
     isExpressionObject,
@@ -85,6 +86,7 @@ MonSQLize.PoolSelector = PoolSelector;
 MonSQLize.PoolStats = PoolStatsManager;
 MonSQLize.validatePoolConfig = validatePoolConfig;
 MonSQLize.validatePoolConfigSafe = validatePoolConfigSafe;
+MonSQLize.defineModel = defineModel;
 MonSQLize.Model = Model;
 MonSQLize.ModelInstance = ModelInstance;
 MonSQLize.expr = expr;
@@ -153,6 +155,7 @@ export {
     PoolStatsManager,
     validatePoolConfig,
     validatePoolConfigSafe,
+    defineModel,
     Model,
     ModelInstance,
     expr,

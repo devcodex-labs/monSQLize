@@ -22,6 +22,7 @@ test('release paths consume the complete single-source preflight gate', () => {
     const publishWorkflow = read('.github/workflows/publish.yml');
     const deployDocsWorkflow = read('.github/workflows/deploy-docs.yml');
     const candidateCheck = read('scripts/check-release-candidate.cjs');
+    const releaseMetadataCheck = read('scripts/validation/check-release-metadata.cjs');
     const packInstallSmoke = read('scripts/pack-install-smoke.cjs');
     const buildScript = read('scripts/build-p1.cjs');
     const compileTestsScript = read('scripts/compile-tests.cjs');
@@ -55,11 +56,14 @@ test('release paths consume the complete single-source preflight gate', () => {
         2,
     );
     assert.match(preflight, /\['--prefix', 'website', 'ci'\]/);
+    assert.match(preflight, /\['--prefix', 'website', 'audit', '--audit-level=high'\]/);
     assert.match(preflight, /playwright[\s\S]*install[\s\S]*chromium/);
     assert.match(preflight, /\['--prefix', 'website', 'run', 'verify'\]/);
     assert.match(candidateCheck, /git[\s\S]*status[\s\S]*--porcelain=v1/);
     assert.match(candidateCheck, /npm[\s\S]*ls[\s\S]*--all/);
     assert.match(candidateCheck, /git[\s\S]*ls-remote[\s\S]*origin/);
+    assert.match(releaseMetadataCheck, /compatibilityMatrix\.packageVersion/);
+    assert.match(releaseMetadataCheck, /compatibilityMatrix\.generatedAt/);
     assert.match(packInstallSmoke, /MIGRATION\.md/);
     assert.match(packInstallSmoke, /SECURITY\.md/);
     assert.match(packInstallSmoke, /dataTasks/);

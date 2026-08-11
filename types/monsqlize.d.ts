@@ -35,7 +35,7 @@ export interface SSHConfig {
 import type { Collection, CursorValueNormalizer, CursorValueType, DbAccessor, HealthView } from './collection';
 import type { DataTaskJobError } from './data-tasks';
 import type { Lock, LockOptions, LockStats } from './lock';
-import type { ModelAutoIndexOptions, ModelEnsureAllIndexesOptions, ModelIndexEnsureSummary, ModelInstance } from './model';
+import type { ModelAutoIndexOptions, ModelDescriptor, ModelEnsureAllIndexesOptions, ModelIndexEnsureSummary, ModelInstance } from './model';
 import type { MongoConnectConfig } from './mongodb';
 import type { ConnectionPoolManagerOptions, PoolConfig, PoolHealthStatus, PoolStats, PoolStrategy } from './pool';
 import type {
@@ -69,6 +69,15 @@ import type { SagaDefinition, SagaOrchestrator, SagaResult, SagaStats } from './
 import type { SlowQueryLogConfigInput, SlowQueryLogEntry, SlowQueryLogFilter, SlowQueryLogManager, SlowQueryLogQueryOptions, SlowQueryLogRecord } from './slow-query-log';
 import type { ChangeStreamSyncManager, SyncConfig, SyncStats } from './sync';
 import type { Transaction, TransactionOptions, TransactionStats } from './transaction';
+
+/**
+ * Callable model accessor that preserves a descriptor's inferred document type.
+ * @since v3.3.0
+ */
+export interface ModelBindingAccessor {
+    <TDocument>(descriptor: ModelDescriptor<string, TDocument>): ModelInstance<TDocument>;
+    <TDocument = any>(modelName: string): ModelInstance<TDocument>;
+}
 
 /** Write path policy mode. `allow-both` preserves the existing collection and model write behavior. */
 export type WritePathPolicyMode = 'allow-both' | 'model-only';
@@ -283,7 +292,7 @@ export interface MonSQLizeInstance {
         db: (name?: string) => DbAccessor;
         use: (name: string) => {
             collection: <TSchema = any>(collectionName: string) => Collection<TSchema>;
-            model: <TDocument = any>(modelName: string) => ModelInstance<TDocument>;
+            model: ModelBindingAccessor;
         };
         instance: MonSQLize;
     }>;
@@ -315,7 +324,7 @@ export interface MonSQLizeInstance {
      */
     use(name: string): {
         collection: <TSchema = any>(collectionName: string) => Collection<TSchema>;
-        model: <TDocument = any>(modelName: string) => ModelInstance<TDocument>;
+        model: ModelBindingAccessor;
     };
     /**
      * Return collection and model accessors for the named connection pool.
@@ -323,10 +332,10 @@ export interface MonSQLizeInstance {
      */
     pool(poolName: string): {
         collection: <TSchema = any>(name: string) => Collection<TSchema>;
-        model: <TDocument = any>(name: string) => ModelInstance<TDocument>;
+        model: ModelBindingAccessor;
         use: (dbName: string) => {
             collection: <TSchema = any>(name: string) => Collection<TSchema>;
-            model: <TDocument = any>(name: string) => ModelInstance<TDocument>;
+            model: ModelBindingAccessor;
         };
     };
     /**
@@ -341,12 +350,16 @@ export interface MonSQLizeInstance {
      * @param name Model name.
      * @param options Optional database or pool scope options.
      */
+    /** @since v3.3.0 */
+    scopedModel<TDocument>(descriptor: ModelDescriptor<string, TDocument>, options?: { database?: string; pool?: string; }): ModelInstance<TDocument>;
     scopedModel<TDocument = any>(name: string, options?: { database?: string; pool?: string; }): ModelInstance<TDocument>;
     scopedModel(name: string, options?: { database?: string; pool?: string; }): ModelInstance<any>;
     /**
      * Return the registered model instance for the given model name.
      * @param name Model name used during registration.
      */
+    /** @since v3.3.0 */
+    model<TDocument>(descriptor: ModelDescriptor<string, TDocument>): ModelInstance<TDocument>;
     model<TDocument = any>(name: string): ModelInstance<TDocument>;
     model(name: string): ModelInstance<any>;
     /**
@@ -516,7 +529,7 @@ export default class MonSQLize implements MonSQLizeInstance {
         db: (name?: string) => DbAccessor;
         use: (name: string) => {
             collection: <TSchema = any>(collectionName: string) => Collection<TSchema>;
-            model: <TDocument = any>(modelName: string) => ModelInstance<TDocument>;
+            model: ModelBindingAccessor;
         };
         instance: MonSQLize;
     }>;
@@ -529,20 +542,24 @@ export default class MonSQLize implements MonSQLizeInstance {
     db(name?: string): DbAccessor;
     use(name: string): {
         collection: <TSchema = any>(collectionName: string) => Collection<TSchema>;
-        model: <TDocument = any>(modelName: string) => ModelInstance<TDocument>;
+        model: ModelBindingAccessor;
     };
     pool(poolName: string): {
         collection: <TSchema = any>(name: string) => Collection<TSchema>;
-        model: <TDocument = any>(name: string) => ModelInstance<TDocument>;
+        model: ModelBindingAccessor;
         use: (dbName: string) => {
             collection: <TSchema = any>(name: string) => Collection<TSchema>;
-            model: <TDocument = any>(name: string) => ModelInstance<TDocument>;
+            model: ModelBindingAccessor;
         };
     };
     scopedCollection<TSchema = any>(name: string, options?: { database?: string; pool?: string; }): Collection<TSchema>;
     scopedCollection(name: string, options?: { database?: string; pool?: string; }): Collection<any>;
+    /** @since v3.3.0 */
+    scopedModel<TDocument>(descriptor: ModelDescriptor<string, TDocument>, options?: { database?: string; pool?: string; }): ModelInstance<TDocument>;
     scopedModel<TDocument = any>(name: string, options?: { database?: string; pool?: string; }): ModelInstance<TDocument>;
     scopedModel(name: string, options?: { database?: string; pool?: string; }): ModelInstance<any>;
+    /** @since v3.3.0 */
+    model<TDocument>(descriptor: ModelDescriptor<string, TDocument>): ModelInstance<TDocument>;
     model<TDocument = any>(name: string): ModelInstance<TDocument>;
     model(name: string): ModelInstance<any>;
     ensureModelIndexes(options?: ModelEnsureAllIndexesOptions): Promise<ModelIndexEnsureSummary>;
@@ -601,6 +618,8 @@ export default class MonSQLize implements MonSQLizeInstance {
     static LockTimeoutError: typeof import('./lock').LockTimeoutError;
     static DistributedCacheInvalidator: typeof DistributedCacheInvalidator;
     static ConnectionPoolManager: typeof import('./pool').ConnectionPoolManager;
+    /** @since v3.3.0 */
+    static defineModel: typeof import('./model').defineModel;
     static Model: typeof import('./runtime').Model;
     static ModelInstance: typeof import('./runtime').ModelInstance;
     static expr: typeof expr;

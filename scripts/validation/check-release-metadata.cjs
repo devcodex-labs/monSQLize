@@ -7,6 +7,7 @@ const path = require('node:path');
 
 const root = path.resolve(__dirname, '../..');
 const packageJson = require('../../package.json');
+const compatibilityMatrix = require('../../test/compatibility/matrix.json');
 const tag = `v${packageJson.version}`;
 
 function git(args) {
@@ -16,6 +17,9 @@ function git(args) {
 }
 
 try {
+    if (compatibilityMatrix.packageVersion !== packageJson.version) {
+        throw new Error(`compatibility matrix version drift: expected ${packageJson.version}, got ${compatibilityMatrix.packageVersion}`);
+    }
     if (packageJson.version.includes('-')) {
         const candidateNotes = path.join(root, 'changelogs', `v${packageJson.version}.md`);
         if (!fs.existsSync(candidateNotes)) {
@@ -30,11 +34,15 @@ try {
     }
     const releaseNotes = fs.readFileSync(path.join(root, 'changelogs', `${tag}.md`), 'utf8');
     const unreleased = fs.readFileSync(path.join(root, 'changelogs', 'unreleased.md'), 'utf8');
+    const releaseDate = releaseNotes.match(/^> Release date: (\d{4}-\d{2}-\d{2})$/m)?.[1];
+    if (!releaseDate) {
+        throw new Error(`${tag} release notes must contain a YYYY-MM-DD release date`);
+    }
+    if (compatibilityMatrix.generatedAt !== releaseDate) {
+        throw new Error(`compatibility matrix evidence date drift: expected ${releaseDate}, got ${compatibilityMatrix.generatedAt}`);
+    }
     const tagDate = git(['for-each-ref', `refs/tags/${tag}`, '--format=%(creatordate:short)']);
     if (!tagDate) {
-        if (!/^> Release date: \d{4}-\d{2}-\d{2}$/m.test(releaseNotes)) {
-            throw new Error(`${tag} pre-tag release notes must contain a YYYY-MM-DD release date`);
-        }
         if (!unreleased.includes(`Changes after ${tag}`)) {
             throw new Error(`Unreleased must contain a "Changes after ${tag}" section`);
         }

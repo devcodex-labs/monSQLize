@@ -16,6 +16,8 @@ test('ESM root entry returns default export and named export matrix', async () =
     assert.equal(typeof mod.CacheLockManager, 'function');
     assert.equal(typeof mod.DistributedCacheInvalidator, 'function');
     assert.equal(typeof mod.ConnectionPoolManager, 'function');
+    assert.equal(typeof mod.defineModel, 'function');
+    assert.equal(typeof mod.default.defineModel, 'function');
     assert.equal(typeof mod.Model, 'function');
     assert.equal(typeof mod.DataTaskJobError, 'function');
     assert.equal(mod.default.DataTaskJobError, mod.DataTaskJobError);

@@ -15,8 +15,26 @@
  */
 
 import { ErrorCodes, createError } from '../../core/errors';
-import type { ModelDefinition, RegisteredModel } from '../../../types/model';
+import type { InferSchema } from 'schema-dsl';
+import type { ModelDefinition, ModelDescriptor, RegisteredModel } from '../../../types/model';
 import { validateCollectionName, validateDefinition, processTimestamps } from './definition-validator';
+
+/**
+ * Build a typed descriptor for a static Model schema.
+ *
+ * Registration remains explicit so runtime Model lifecycle and TypeScript type
+ * inference stay independent from the process-global registry.
+ *
+ * @since v3.3.0
+ */
+export function defineModel<
+    const TName extends string,
+    const TSchema extends Record<string, unknown>,
+>(collectionName: TName, definition: Omit<ModelDefinition<InferSchema<TSchema>>, 'schema'> & {
+    schema: TSchema;
+}): ModelDescriptor<TName, InferSchema<TSchema>> {
+    return { collectionName, definition };
+}
 
 /**
  * Static model registry.
@@ -41,18 +59,30 @@ export class Model {
      * Throws MODEL_ALREADY_EXISTS if a model with the same name already exists.
      * Validates the definition and resolves the timestamps option.
      */
-    static define<TDocument = Record<string, unknown>>(collectionName: string, definition: ModelDefinition<TDocument>): void {
+    static define<TName extends string, TDocument>(descriptor: ModelDescriptor<TName, TDocument>): void;
+    static define<TDocument = Record<string, unknown>>(collectionName: string, definition: ModelDefinition<TDocument>): void;
+    static define<TDocument = Record<string, unknown>>(
+        collectionNameOrDescriptor: string | ModelDescriptor<string, TDocument>,
+        definition?: ModelDefinition<TDocument>,
+    ): void {
+        const collectionName = typeof collectionNameOrDescriptor === 'string'
+            ? collectionNameOrDescriptor
+            : collectionNameOrDescriptor.collectionName;
+        const modelDefinition = typeof collectionNameOrDescriptor === 'string'
+            ? definition
+            : collectionNameOrDescriptor.definition;
         const normalizedName = validateCollectionName(collectionName);
         if (this.registry.has(normalizedName)) {
             throw createError(ErrorCodes.MODEL_ALREADY_EXISTS, `Model '${normalizedName}' is already defined.`);
         }
-        validateDefinition<TDocument>(definition);
-        processTimestamps(definition);
+        validateDefinition<TDocument>(modelDefinition);
+        const resolvedDefinition = modelDefinition as ModelDefinition<TDocument>;
+        processTimestamps(resolvedDefinition);
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         this.registry.set(normalizedName, {
             collectionName: normalizedName,
-            definition,
+            definition: resolvedDefinition,
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } as RegisteredModel<any>);
         this.bumpRevision(normalizedName);

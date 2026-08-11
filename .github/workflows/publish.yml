@@ -76,7 +76,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::error::NPM_TOKEN is not configured or is not available to this repository. Grant the same npm publish secret used by schema-dsl to vextjs/monSQLize, or configure npm trusted publishing and adjust this workflow."
+            echo "::error::NPM_TOKEN is not configured or is not available to devcodex-labs/monSQLize. Grant this repository an npm publish secret, or configure npm trusted publishing and adjust this workflow."
             exit 2
           fi
           npm whoami --registry=https://registry.npmjs.org/
@@ -135,9 +135,9 @@ jobs:
           cd "${CONSUMER_DIR}"
           npm init -y
           npm install "monsqlize@${VERSION}" "typescript@5.9.3" "@types/node@25.6.2" --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/
-          node -e "const p=require('monsqlize/package.json'); const M=require('monsqlize'); if(!M || p.version!==process.argv[1] || typeof M.dataTasks?.preview!=='function') process.exit(1)" "${VERSION}"
-          node --input-type=module -e "import M,{dataTasks} from 'monsqlize'; if(!M || typeof dataTasks?.apply!=='function') process.exit(1)"
-          node -e "require('node:fs').writeFileSync('consumer.ts', \"import MonSQLize, { dataTasks } from 'monsqlize';\\nvoid MonSQLize; void dataTasks.preview;\\n\")"
+          node -e "const p=require('monsqlize/package.json'); const M=require('monsqlize'); if(!M || p.version!==process.argv[1] || typeof M.defineModel!=='function' || typeof M.dataTasks?.preview!=='function') process.exit(1)" "${VERSION}"
+          node --input-type=module -e "import M,{dataTasks,defineModel} from 'monsqlize'; if(!M || typeof M.defineModel!=='function' || typeof defineModel!=='function' || typeof dataTasks?.apply!=='function') process.exit(1)"
+          node -e "require('node:fs').writeFileSync('consumer.ts', \"import MonSQLize, { dataTasks, defineModel, Model, type InferModelDocument } from 'monsqlize';\\nconst User = defineModel('registry_users', { schema: { email: 'email!', age: 'number?' } });\\ntype IsAny<T> = 0 extends (1 & T) ? true : false;\\ntype AssertFalse<T extends false> = T;\\ntype DescriptorDocumentIsNotAny = AssertFalse<IsAny<InferModelDocument<typeof User>>>;\\nModel.define(User);\\nconst users = new MonSQLize({ type: 'mongodb', databaseName: 'consumer' }).model(User);\\nvoid (null as DescriptorDocumentIsNotAny | null); void users; void dataTasks.preview;\\n\")"
           ./node_modules/.bin/tsc --noEmit --module NodeNext --moduleResolution NodeNext --target ES2021 consumer.ts
           ./node_modules/.bin/monsqlize --version | grep -Fx "${VERSION}"
 

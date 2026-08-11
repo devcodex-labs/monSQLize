@@ -5,7 +5,7 @@
     { "name": "cache-hub", "version": "2.2.4", "license": "Apache-2.0", "source": "package-metadata" },
     { "name": "ioredis", "version": "5.11.1", "license": "MIT", "source": "package-metadata" },
     { "name": "mongodb", "version": "6.21.0", "license": "Apache-2.0", "source": "package-metadata" },
-    { "name": "schema-dsl", "version": "3.0.0", "license": "Apache-2.0", "source": "package-metadata" },
+    { "name": "schema-dsl", "version": "3.0.4", "license": "Apache-2.0", "source": "package-metadata" },
     { "name": "ssh2", "version": "1.17.0", "license": "MIT", "source": "LICENSE:d06b5d27bbbbe22c36b1fd88406b1208876e2d37d795f5b8eaed951a459a3111" }
   ]
 }

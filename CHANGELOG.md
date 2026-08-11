@@ -1,14 +1,19 @@
 # CHANGELOG
 
-> Summary index — the latest stable release details are in [changelogs/v3.2.0.md](./changelogs/v3.2.0.md); the earlier RC note remains an unpublished rehearsal archive.
-> **Last updated**: 2026-08-07
+> Summary index — the newest versioned release details are in [changelogs/v3.3.0.md](./changelogs/v3.3.0.md); the earlier RC note remains an unpublished rehearsal archive.
+> **Last updated**: 2026-08-11
 
 ---
+
+## Unreleased
+
+No changes are currently recorded after v3.3.0.
 
 ## Version Overview
 
 | Version | Date | Summary | Details |
 |---------|------|---------|---------|
+| [v3.3.0](./changelogs/v3.3.0.md) | 2026-08-11 | Minor: static Model schema type inference, schema-dsl 3.0.4, and silent-by-default Pool logging | [View](./changelogs/v3.3.0.md) |
 | [v3.2.0](./changelogs/v3.2.0.md) | 2026-08-07 | Minor: Vector Search APIs, relation-safe Model deletion, and relation projection improvements | [View](./changelogs/v3.2.0.md) |
 | [v3.1.0](./changelogs/v3.1.0.md) | 2026-07-15 | Minor: schema-dsl v3 GA consumption, canonical validation errors, and normalized full-document persistence | [View](./changelogs/v3.1.0.md) |
 | [v3.0.0](./changelogs/v3.0.0.md) | 2026-07-14 | Major: two-instance preview/apply/restore data tasks, write-path policy, runtime-scoped schema DSL, stricter OCC/sync/query contracts, and release recovery controls | [View](./changelogs/v3.0.0.md) |

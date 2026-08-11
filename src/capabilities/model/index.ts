@@ -103,7 +103,9 @@ import {
 // Public type re-exports (for external consumers)
 export type {
     HookContext,
+    InferModelDocument,
     ModelAutoIndexOptions,
+    ModelDescriptor,
     ModelDeclaredIndex,
     ModelConnection,
     ModelDefinition,
@@ -126,7 +128,7 @@ export type {
     ValidationResult,
     VirtualConfig,
 } from '../../../types/model';
-export { Model };
+export { defineModel, Model } from './model-registry';
 
 function resolveModelRegistryName<TDocument>(definition: ModelDefinition<TDocument>, fallback: string): string {
     return Model.list().find((name) => Model.get(name)?.definition === definition) ?? fallback;
@@ -662,11 +664,9 @@ export class ModelInstance<TDocument = Record<string, unknown>> {
     convertToCapped(size: number, options?: { max?: number }): Promise<{ ok: number; collection: string; capped: boolean; size: number }> {
         return this.runModelWrite(() => this.extendedCollection().convertToCapped(size, options));
     }
-
     watch(pipeline?: unknown[], options?: unknown): unknown {
         return this.collection.watch(pipeline, options);
     }
-
     validate(document?: unknown): ValidationResult {
         return validateModelDocument({
             schemaError: this._schemaError,

@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-08-07",
-  "packageVersion": "3.2.0",
+  "generatedAt": "2026-08-11",
+  "packageVersion": "3.3.0",
   "support": {
     "node": {
       "declared": ">=18.0.0",
@@ -16,7 +16,7 @@
       "additionalVerifiedRuntimes": [
         {
           "verifiedMajor": 22,
-          "sampleVersion": "22.22.3",
+          "sampleVersion": "22.23.2",
           "runner": "volta run --node 22",
           "evidence": [
             "volta run --node 22 node -p \"process.version\"",
@@ -109,6 +109,7 @@
       "LockAcquireError",
       "LockTimeoutError",
       "DistributedCacheInvalidator",
+      "defineModel",
       "Model",
       "ConnectionPoolManager",
       "HealthChecker",
@@ -177,6 +178,7 @@
       "DistributedCacheLockManager",
       "DistributedCacheInvalidator",
       "ConnectionPoolManager",
+      "defineModel",
       "Model",
       "ModelInstance",
       "expr",
@@ -214,6 +216,7 @@
       "LockAcquireError",
       "LockTimeoutError",
       "DistributedCacheInvalidator",
+      "defineModel",
       "Model",
       "ConnectionPoolManager",
       "HealthChecker",

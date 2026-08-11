@@ -1,5 +1,8 @@
 import { expectAssignable, expectNotAssignable, expectType } from 'tsd';
 import MonSQLize, {
+    defineModel,
+    Model,
+    type InferModelDocument,
     type ModelAccessor,
     type ModelAutoIndexOptions,
     type ModelDefinition,
@@ -91,6 +94,36 @@ expectAssignable<ModelEnsureAllIndexesOptions>({ models: ['users'], database: 't
 
 const runtime = new MonSQLize({ type: 'mongodb', databaseName: 'types_model', autoIndex: { enabled: false } });
 const users = runtime.model<UserDoc>('users');
+
+const TypedUser = defineModel('typed_users', {
+    schema: {
+        email: 'email!',
+        age: 'number?',
+        roles: 'array<string>?',
+    },
+});
+type TypedUserDocument = InferModelDocument<typeof TypedUser>;
+expectType<'typed_users'>(TypedUser.collectionName);
+expectAssignable<TypedUserDocument>({ email: 'ada@example.com' });
+expectNotAssignable<TypedUserDocument>({ age: 35 });
+declare const typedUserDocument: TypedUserDocument;
+expectType<string>(typedUserDocument.email);
+expectType<number | undefined>(typedUserDocument.age);
+expectType<string[] | undefined>(typedUserDocument.roles);
+Model.define(TypedUser);
+const inferredUsers = runtime.model(TypedUser);
+expectType<ModelAccessor<TypedUserDocument>>(inferredUsers);
+expectType<PopulateProxy<ModelDocument<TypedUserDocument> | null>>(inferredUsers.findOne({ email: 'ada@example.com' }));
+expectType<ModelAccessor<TypedUserDocument>>(runtime.scopedModel(TypedUser, { database: 'tenant_a' }));
+expectType<ModelAccessor<TypedUserDocument>>(runtime.use('tenant_a').model(TypedUser));
+expectType<ModelAccessor<TypedUserDocument>>(runtime.pool('primary').model(TypedUser));
+expectType<ModelAccessor<TypedUserDocument>>(runtime.pool('primary').use('tenant_a').model(TypedUser));
+
+const StaticTypedUser = MonSQLize.defineModel('static_typed_users', {
+    schema: { name: 'string!' },
+});
+expectType<'static_typed_users'>(StaticTypedUser.collectionName);
+
 declare const userDocument: ModelDocument<UserDoc>;
 expectType<ModelAccessor<UserDoc>>(users);
 expectType<PopulateProxy<ModelDocument<UserDoc> | null>>(users.findOne({ firstName: 'Ada' }));

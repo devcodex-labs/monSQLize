@@ -10,7 +10,7 @@
 
 import type { Db, MongoClient, Collection } from 'mongodb';
 import type { CacheLike, MemoryCache } from '../../capabilities/cache';
-import type { ModelInstance } from '../../capabilities/model';
+import type { ModelDescriptor, ModelInstance } from '../../capabilities/model';
 import type {
     MongoCollectionAccessor as CollectionFacade,
     MongoDbAccessor as DbFacade,
@@ -86,7 +86,9 @@ export interface ScopedUseResult {
     /** Get the accessor for the named collection. */
     collection(collectionName: string): CollectionFacade;
     /** Get the typed instance for the named model. */
-    model<TDocument = Record<string, unknown>>(modelName: string): ModelInstance<TDocument>;
+    model<TDocument = Record<string, unknown>>(
+        model: string | ModelDescriptor<string, TDocument>,
+    ): ModelInstance<TDocument>;
 }
 
 /**

@@ -170,6 +170,7 @@ run('npm', ['run', 'test:data-task-cli']);
 run('npm', ['run', 'test:audit']);
 run('npm', ['run', 'test:pack-install']);
 run('npm', ['--prefix', 'website', 'ci']);
+run('npm', ['--prefix', 'website', 'audit', '--audit-level=high']);
 run('npm', [
     '--prefix',
     'website',

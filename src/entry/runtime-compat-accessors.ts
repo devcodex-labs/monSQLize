@@ -18,6 +18,7 @@ import { ErrorCodes, createError } from '../core/errors';
 import {
     ModelInstance,
     type ModelDefinition,
+    type ModelDescriptor,
 } from '../capabilities/model';
 import type { ModelCollectionLike, ModelRuntimeLike } from '../capabilities/model/populate-promise';
 import type { SchemaDslEngine } from '../capabilities/model/schema-dsl';
@@ -37,10 +38,14 @@ export type RuntimeDbInstanceLike = {
  */
 export type RuntimePoolScope = {
     collection: (name: string) => CollectionFacade;
-    model: <TDocument = Record<string, unknown>>(name: string) => ModelInstance<TDocument>;
+    model: <TDocument = Record<string, unknown>>(
+        model: string | ModelDescriptor<string, TDocument>,
+    ) => ModelInstance<TDocument>;
     use: (dbName: string) => {
         collection: (name: string) => CollectionFacade;
-        model: <TDocument = Record<string, unknown>>(name: string) => ModelInstance<TDocument>;
+        model: <TDocument = Record<string, unknown>>(
+            model: string | ModelDescriptor<string, TDocument>,
+        ) => ModelInstance<TDocument>;
     };
 };
 
@@ -51,7 +56,7 @@ export type RuntimePoolScope = {
 export type RuntimePoolScopeHost = {
     scopedCollection: (name: string, options?: { database?: string; pool?: string }) => CollectionFacade;
     scopedModel: <TDocument = Record<string, unknown>>(
-        name: string,
+        model: string | ModelDescriptor<string, TDocument>,
         options?: { database?: string; pool?: string },
     ) => ModelInstance<TDocument>;
 };
@@ -142,10 +147,10 @@ export function assertCompatPoolExists(poolManager: Record<string, unknown>, poo
 export function createPoolScope(runtime: RuntimePoolScopeHost, poolName: string): RuntimePoolScope {
     return {
         collection: (name: string) => runtime.scopedCollection(name, { pool: poolName }),
-        model: <TDocument = Record<string, unknown>>(name: string) => runtime.scopedModel<TDocument>(name, { pool: poolName }),
+        model: <TDocument = Record<string, unknown>>(model: string | ModelDescriptor<string, TDocument>) => runtime.scopedModel<TDocument>(model, { pool: poolName }),
         use: (dbName: string) => ({
             collection: (name: string) => runtime.scopedCollection(name, { pool: poolName, database: dbName }),
-            model: <TDocument = Record<string, unknown>>(name: string) => runtime.scopedModel<TDocument>(name, { pool: poolName, database: dbName }),
+            model: <TDocument = Record<string, unknown>>(model: string | ModelDescriptor<string, TDocument>) => runtime.scopedModel<TDocument>(model, { pool: poolName, database: dbName }),
         }),
     };
 }

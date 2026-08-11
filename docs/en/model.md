@@ -637,6 +637,32 @@ When validation succeeds, those six write paths continue with schema-dsl's norma
 
 Patch-style writes such as `updateOne()`, `updateMany()`, `findOneAndUpdate()`, `upsertOne()`, `incrementOne()`, and `updateBatch()` receive MongoDB update operators or aggregation pipelines rather than the final document. monSQLize does not run full-document schema validation for those patch writes; use hooks, `Model.validate()`, or application-side validation when a patch must be checked against a complete domain object.
 
+## TypeScript static schema inference
+
+Available since monSQLize 3.3.0.
+
+For a static object-literal schema, `defineModel()` carries the schema-derived document type through registration to `model()`, `scopedModel()`, `use().model()`, and `pool().model()`. The descriptor does not register itself, so the existing process-wide registry lifecycle stays explicit.
+
+```typescript
+import { defineModel, Model } from 'monsqlize';
+
+const User = defineModel('users', {
+    schema: {
+        email: 'email!',
+        age: 'number?',
+    },
+});
+
+Model.define(User);
+
+const users = msq.model(User);
+const user = await users.findOne({ email: 'ada@example.com' });
+// user?.email: string
+// user?.age: number | undefined
+```
+
+Call `Model.define(User)` before binding the descriptor through a runtime accessor. Callback-based or dynamically composed schemas continue to use the existing explicit generic form, such as `msq.model<UserDocument>('users')`. The inferred type contains schema fields only; timestamp, soft-delete, version, relation, and virtual fields remain application-defined types.
+
 
 ## Basic usage
 

@@ -1,4 +1,5 @@
 import type { BookmarkClearResult, BookmarkListResult, BookmarkPrewarmResult, DeleteBatchResult, DeleteResult, IncrementOneResult, IndexCreateResult, InsertBatchResult, InsertManyResult, InsertOneResult, UpdateBatchResult, UpdateResult, VectorSearchHit, VectorSearchOptions } from './collection';
+import type { InferSchema } from 'schema-dsl';
 import type { SchemaDslRuntime } from 'schema-dsl/runtime';
 
 /**
@@ -11,6 +12,42 @@ export type ModelSchemaDsl = SchemaDslRuntime['s'];
  * @since v1.0.0
  */
 export type SchemaDSL = (s: ModelSchemaDsl) => unknown;
+
+/**
+ * A statically typed Model registration descriptor.
+ *
+ * The descriptor preserves the document type inferred from an object-literal
+ * schema while keeping Model registration explicit at runtime.
+ * @since v3.3.0
+ */
+export interface ModelDescriptor<TName extends string = string, TDocument = Record<string, unknown>> {
+    readonly collectionName: TName;
+    readonly definition: ModelDefinition<TDocument>;
+    readonly __document?: TDocument;
+}
+
+/**
+ * Extract the document type carried by a Model descriptor.
+ * @since v3.3.0
+ */
+export type InferModelDocument<TDescriptor> = TDescriptor extends ModelDescriptor<string, infer TDocument>
+    ? TDocument
+    : never;
+
+/**
+ * Create a typed Model descriptor from a static object-literal schema.
+ *
+ * Register the returned descriptor with `Model.define(descriptor)` before
+ * binding it through a MonSQLize runtime. Callback schemas continue to use
+ * the existing explicit generic APIs because their static shape is not stable.
+ * @since v3.3.0
+ */
+export declare function defineModel<
+    const TName extends string,
+    const TSchema extends Record<string, unknown>,
+>(collectionName: TName, definition: Omit<ModelDefinition<InferSchema<TSchema>>, 'schema'> & {
+    schema: TSchema;
+}): ModelDescriptor<TName, InferSchema<TSchema>>;
 
 /**
  * Default value for a model field — either a static value or a factory function.
@@ -739,6 +776,8 @@ export interface ModelInstance<TDocument = any> {
 }
 
 export declare class Model {
+    /** @since v3.3.0 */
+    static define<TName extends string, TDocument>(descriptor: ModelDescriptor<TName, TDocument>): void;
     static define<TDocument = Record<string, unknown>>(collectionName: string, definition: ModelDefinition<TDocument>): void;
     static get<TDocument = Record<string, unknown>>(collectionName: string): RegisteredModel<TDocument> | undefined;
     static has(collectionName: string): boolean;

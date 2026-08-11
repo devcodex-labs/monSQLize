@@ -20,9 +20,11 @@ export { FunctionCache, withCache } from '../capabilities/function-cache';
 export type { CachedFunction, WithCacheOptions } from '../capabilities/function-cache';
 
 // Model / expression / pool / sync and other core capabilities
-export { Model, ModelInstance } from '../capabilities/model';
+export { defineModel, Model, ModelInstance } from '../capabilities/model';
 export type {
+    InferModelDocument,
     ModelConnection,
+    ModelDescriptor,
     ModelDefinition,
     PopulateConfig,
     PopulateProxy,

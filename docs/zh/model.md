@@ -610,6 +610,32 @@ monSQLize 使用 `schema-dsl` 作为 Model 文档的 schema 校验引擎。每�
 
 `updateOne()`、`updateMany()`、`findOneAndUpdate()`、`upsertOne()`、`incrementOne()` 和 `updateBatch()` 这类 patch 写入接收的是 MongoDB update operators 或 aggregation pipeline，而不是最终完整文档。monSQLize 不会对这些 patch 写入执行完整文档 schema 验证；如果业务要求 patch 也符合完整领域对象，请在 hooks、`Model.validate()` 或应用层校验中处理。
 
+### TypeScript 静态 schema 类型推断
+
+自 monSQLize 3.3.0 起提供。
+
+对于静态对象字面量 schema，`defineModel()` 会把 schema 推断出的文档类型带到 `model()`、`scopedModel()`、`use().model()` 和 `pool().model()`。描述符本身不会注册 Model，因此原有的进程级 registry 生命周期仍保持显式。
+
+```typescript
+import { defineModel, Model } from 'monsqlize';
+
+const User = defineModel('users', {
+    schema: {
+        email: 'email!',
+        age: 'number?',
+    },
+});
+
+Model.define(User);
+
+const users = msq.model(User);
+const user = await users.findOne({ email: 'ada@example.com' });
+// user?.email: string
+// user?.age: number | undefined
+```
+
+必须先调用 `Model.define(User)`，再通过 runtime accessor 绑定描述符。回调式或动态组合 schema 仍使用既有的显式泛型形式，例如 `msq.model<UserDocument>('users')`。推断类型只包含 schema 字段；timestamps、soft delete、version、relations 和 virtuals 增加的字段仍应由应用自行声明。
+
 ### 基本使用
 
 ```javascript

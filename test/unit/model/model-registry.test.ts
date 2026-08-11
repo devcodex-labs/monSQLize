@@ -43,6 +43,22 @@ describe('P3-C model registry', () => {
         assert.equal(MonSQLize.Model.has('users'), false);
     });
 
+    it('registers descriptors created by defineModel', () => {
+        const User = MonSQLize.defineModel('typed_users', {
+            schema: {
+                email: 'email!',
+                age: 'number?',
+            },
+        });
+
+        assert.equal(MonSQLize.Model.has('typed_users'), false);
+        MonSQLize.Model.define(User);
+
+        const registered = MonSQLize.Model.get('typed_users');
+        assert.equal(User.collectionName, 'typed_users');
+        assert.strictEqual(registered?.definition, User.definition);
+    });
+
     it('rejects invalid collection names and invalid relation config', () => {
         assert.throws(
             () => MonSQLize.Model.define('bad name', { defaults: {} }),

@@ -10,6 +10,7 @@ test('CJS root entry returns default class and static exports', () => {
     assert.equal(typeof MonSQLize.withCache, 'function');
     assert.equal(typeof MonSQLize.FunctionCache, 'function');
     assert.equal(typeof MonSQLize.ConnectionPoolManager, 'function');
+    assert.equal(typeof MonSQLize.defineModel, 'function');
     assert.equal(typeof MonSQLize.Model, 'function');
     assert.equal(typeof MonSQLize.DataTaskJobError, 'function');
     assert.equal(typeof MonSQLize.dataTasks?.preview, 'function');

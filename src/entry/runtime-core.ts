@@ -18,6 +18,7 @@ import { Lock, LockManager, LockAcquireError, LockOptions, LockStats, LockTimeou
 import {
     Model, ModelInstance,
     type ModelConnection,
+    type ModelDescriptor,
     type ModelDefinition,
     type PopulateConfig,
     type PopulateProxy,
@@ -124,6 +125,7 @@ import {
     requireCompatPoolManagerRecord,
     type RuntimeCompatRecord,
     type RuntimeDbInstanceLike,
+    type RuntimePoolScope,
     type RuntimePoolScopeHost,
 } from './runtime-compat-accessors';
 import { createRuntimeAdapterBridge, type RuntimeAdapterBridgeHost } from './runtime-admin-bridge';
@@ -521,21 +523,15 @@ export class MonSQLizeRuntime {
         requireCompatDbInstance(this);
         return {
             collection: (collectionName: string) => this.scopedCollection(collectionName, { database: name }),
-            model: <TDocument = Record<string, unknown>>(modelName: string) => this.scopedModel<TDocument>(modelName, { database: name }),
+            model: <TDocument = Record<string, unknown>>(model: string | ModelDescriptor<string, TDocument>) => this.scopedModel<TDocument>(model, { database: name }),
         };
     }
-
-    pool(poolName: string): {
-        collection: (name: string) => CollectionFacade;
-        model: <TDocument = Record<string, unknown>>(name: string) => ModelInstance<TDocument>;
-        use: (dbName: string) => { collection: (name: string) => CollectionFacade; model: <TDocument = Record<string, unknown>>(name: string) => ModelInstance<TDocument>; };
-    } {
+    pool(poolName: string): RuntimePoolScope {
         requireCompatDbInstance(this);
         const poolManager = requireCompatPoolManagerRecord(this);
         assertCompatPoolExists(poolManager, poolName);
         return createPoolScope(this, poolName);
     }
-
     scopedCollection(name: string, options: { database?: string; pool?: string; } = {}): CollectionFacade {
         requireCompatDbInstance(this);
         const { pool, database } = options;
@@ -561,7 +557,10 @@ export class MonSQLizeRuntime {
     }
 
     // Model accessors ---------------------------------------------------------
-    scopedModel<TDocument = Record<string, unknown>>(name: string, options: { database?: string; pool?: string; } = {}): ModelInstance<TDocument> {
+    scopedModel<TDocument = Record<string, unknown>>(model: string | ModelDescriptor<string, TDocument>,
+        options: { database?: string; pool?: string; } = {},
+    ): ModelInstance<TDocument> {
+        const name = typeof model === 'string' ? model : model.collectionName;
         const dbInstance = requireCompatDbInstance(this);
         // v2 path: use createModelInstance (handles connection and caching)
         if (this._client) {
@@ -591,7 +590,8 @@ export class MonSQLizeRuntime {
         });
     }
 
-    model<TDocument = Record<string, unknown>>(name: string): ModelInstance<TDocument> {
+    model<TDocument = Record<string, unknown>>(model: string | ModelDescriptor<string, TDocument>): ModelInstance<TDocument> {
+        const name = typeof model === 'string' ? model : model.collectionName;
         // v2 path
         if (this._client) {
             this.ensureConnected();

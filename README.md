@@ -14,7 +14,7 @@ Upgrade and security: [Migration Guide](./MIGRATION.md) · [Private Vulnerabilit
 
 The npm `latest` dist-tag and GitHub Pages are the stable channel; `main` may contain the next release. Pages deployment accepts only a versioned Git tag whose package version is already present on npm, so unpublished APIs are not promoted as stable documentation.
 
-This source tree contains the stable `3.1.0` release candidate, pinned to verified registry `schema-dsl@3.0.0`. The v3 package remains subject to the full release gate before its immutable tag and npm publication.
+This development source is pinned to verified registry `schema-dsl@3.0.4`. The v3 package remains subject to the full release gate before an immutable tag and npm publication.
 
 ```bash
 npm install monsqlize
@@ -233,6 +233,30 @@ const user = await User.insertOne({
   age: 25
 });
 ```
+
+### TypeScript Schema Inference
+
+For a static object-literal schema, `defineModel()` carries the schema-derived document type from definition through registration to runtime access. Registration remains explicit, so it does not change the process-wide Model registry behavior.
+
+```ts
+import { defineModel, Model } from 'monsqlize';
+
+const User = defineModel('users', {
+  schema: {
+    email: 'email!',
+    age: 'number?'
+  }
+});
+
+Model.define(User);
+
+const users = msq.model(User);
+const user = await users.findOne({ email: 'ada@example.com' });
+// user?.email: string
+// user?.age: number | undefined
+```
+
+Call `Model.define(User)` before `model(User)`, `use(...).model(User)`, or `pool(...).model(User)`. Callback-based or dynamically composed schemas continue to use the existing explicit generic API, such as `msq.model<UserDocument>('users')`; managed fields added by timestamps, soft delete, versioning, relations, or virtuals are not synthesized into this schema-derived type.
 
 When a service needs runtime-local custom types, messages, locale, or an already-owned schema-dsl runtime, configure `schemaDsl` on the MonSQLize instance:
 

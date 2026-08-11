@@ -22,6 +22,32 @@ describe('P3-C model features', () => {
         MonSQLize.Model._clear();
     });
 
+    it('binds a registered descriptor through direct and scoped model accessors', async () => {
+        const User = MonSQLize.defineModel('typed_descriptor_users', {
+            schema: {
+                email: 'email!',
+                age: 'number?',
+            },
+        });
+
+        const runtime = new MonSQLize({ type: 'mongodb', databaseName: 'p3c_typed_descriptor_models', config: { uri } });
+        await runtime.connect();
+
+        assert.throws(() => runtime.model(User), /MODEL_NOT_DEFINED|not defined/);
+        MonSQLize.Model.define(User);
+        const users = runtime.model(User);
+        const tenantUsers = runtime.use('typed_descriptor_tenant').model(User);
+        assert.equal(users.collectionName, 'typed_descriptor_users');
+        assert.equal(tenantUsers.dbName, 'typed_descriptor_tenant');
+
+        await users.insertOne({ email: 'ada@example.com', age: 35 });
+        const found = await users.findOne({ email: 'ada@example.com' });
+        assert.equal(found?.email, 'ada@example.com');
+        assert.equal(found?.age, 35);
+
+        await runtime.close();
+    });
+
     it('restores model registry, instance cache, relations/virtuals/populate, and scoped routing', async () => {
         MonSQLize.Model.define('comments', {
             schema: {},
