@@ -1,6 +1,9 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { ObjectId } from 'mongodb';
 import { createMemoryServerBootstrap } from '../../bootstrap/memory-server';
+import { normalizeQueryFilter } from '../../../src/adapters/mongodb/queries/query-helpers';
+import { buildAggregateCacheKey, buildFindCacheKey } from '../../../src/adapters/mongodb/queries/query-cache-keys';
 
 const MonSQLize = require('../../../dist/cjs/index.cjs');
 
@@ -26,6 +29,40 @@ describe('queries — branch coverage', () => {
     after(async () => {
         if (runtime) await runtime.close();
         await bootstrap.teardown();
+    });
+
+    it('preserves atomic BSON query values while converting eligible ObjectId strings', () => {
+        const date = new Date('2026-01-01T00:00:00.000Z');
+        const regexp = /alice/i;
+        const id = new ObjectId();
+        const normalized = normalizeQueryFilter({
+            createdAt: { $gte: date },
+            name: regexp,
+            _id: { $in: [id.toHexString()] },
+            $or: [{ createdAt: date }, { name: regexp }],
+        }, true);
+        assert.equal((normalized.createdAt as { $gte: Date }).$gte, date);
+        assert.equal(normalized.name, regexp);
+        assert.ok((normalized._id as { $in: unknown[] }).$in[0] instanceof ObjectId);
+        assert.equal(((normalized.$or as unknown[])[0] as { createdAt: Date }).createdAt, date);
+        assert.equal(((normalized.$or as unknown[])[1] as { name: RegExp }).name, regexp);
+    });
+
+    it('keeps ordered query documents, pipeline stages, and sort keys distinct in cache keys', () => {
+        const native = runtime._adapter.db.collection('qbranch');
+        const firstQuery = buildFindCacheKey(native, {}, { literal: { a: 1, b: 2 } }, { sort: { a: 1, b: -1 } });
+        const reversedLiteral = buildFindCacheKey(native, {}, { literal: { b: 2, a: 1 } }, { sort: { a: 1, b: -1 } });
+        const reversedSort = buildFindCacheKey(native, {}, { literal: { a: 1, b: 2 } }, { sort: { b: -1, a: 1 } });
+        assert.notEqual(firstQuery, reversedLiteral);
+        assert.notEqual(firstQuery, reversedSort);
+        assert.equal(
+            buildFindCacheKey(native, {}, { name: 'Alice' }, { limit: 2, sort: { score: 1 } }),
+            buildFindCacheKey(native, {}, { name: 'Alice' }, { sort: { score: 1 }, limit: 2 }),
+        );
+        assert.notEqual(
+            buildAggregateCacheKey(native, {}, [{ $sort: { a: 1, b: -1 } }]),
+            buildAggregateCacheKey(native, {}, [{ $sort: { b: -1, a: 1 } }]),
+        );
     });
 
     // ── FindChain.sort() error branch ─────────────────────────────────────────
@@ -165,6 +202,15 @@ describe('queries — branch coverage', () => {
         const result = await col.count({ score: { $gt: 0 } }, { explain: true });
         assert.equal(typeof result, 'object');
         assert.ok(result !== null);
+    });
+
+    it('count explain never reads or writes the numeric result cache', async () => {
+        const query = { name: 'Alice' };
+        assert.equal(await col.count(query, { cache: 60_000 }), 1);
+        assert.equal(typeof await col.count(query, { cache: 60_000, explain: true }), 'object');
+        const otherQuery = { name: 'Bob' };
+        assert.equal(typeof await col.count(otherQuery, { cache: 60_000, explain: true }), 'object');
+        assert.equal(await col.count(otherQuery, { cache: 60_000 }), 1);
     });
 
     it('count with maxTimeMS option executes without error', async () => {

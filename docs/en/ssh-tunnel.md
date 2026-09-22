@@ -2,6 +2,8 @@
 
 ## Function Overview
 
+`ssh.hostHash` and `ssh.hostVerifier` are optional ssh2 host-key verification settings. With `hostHash: 'sha256'`, the verifier receives a hexadecimal SHA-256 fingerprint; returning `false` rejects the handshake and closes the tunnel listener. If no verifier is configured, the previous ssh2 default behavior is retained.
+
 ## What is an SSH tunnel?
 
 SSH Tunneling, also known as SSH port forwarding, is a technology that establishes an encrypted channel between local and remote servers through the SSH protocol.

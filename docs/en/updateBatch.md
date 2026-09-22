@@ -2,6 +2,8 @@
 
 ## API parameter description
 
+Each selected document is checked against the original business filter again when its write is dispatched. Documents that no longer match are skipped. On a fatal batch error, no new batch is acquired; already running batches finish before the error is returned. For strict Model updates, `conflictCount` refers to a version mismatch, while a changed filter or concurrent deletion is counted as skipped.
+
 ## Method signature
 
 ```typescript

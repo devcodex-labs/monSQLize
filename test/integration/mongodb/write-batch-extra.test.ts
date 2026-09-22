@@ -1,8 +1,42 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryServerBootstrap } from '../../bootstrap/memory-server';
+import { insertBatchDocuments } from '../../../src/adapters/mongodb/writes/write-batch';
 
 const MonSQLize = require('../../../dist/cjs/index.cjs');
+
+describe('write-batch — concurrent fatal stop', () => {
+    it('waits for active workers and does not acquire another batch after the first fatal error', async () => {
+        const started: number[] = [];
+        let signalSecondStarted: () => void = () => undefined;
+        let releaseSecond: () => void = () => undefined;
+        const secondStarted = new Promise<void>((resolve) => { signalSecondStarted = resolve; });
+        const secondFinished = new Promise<void>((resolve) => { releaseSecond = resolve; });
+        const collection = {
+            insertMany: async (batch: Array<{ n: number }>) => {
+                const n = batch[0].n;
+                started.push(n);
+                if (n === 0) {
+                    await secondStarted;
+                    throw new Error('first batch failed');
+                }
+                if (n === 1) {
+                    signalSecondStarted();
+                    await secondFinished;
+                }
+                return { acknowledged: true, insertedCount: 1, insertedIds: { 0: n } };
+            },
+        } as any;
+        const operation = insertBatchDocuments(collection, [{ n: 0 }, { n: 1 }, { n: 2 }, { n: 3 }], {
+            batchSize: 1, concurrency: 2, onError: 'stop',
+        });
+        await secondStarted;
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        releaseSecond();
+        await assert.rejects(operation, /first batch failed/);
+        assert.deepEqual(started, [0, 1]);
+    });
+});
 
 // Covers uncovered branches in write-batch.ts:
 //   - insertBatch concurrency, onError, retryAttempts, and onProgress branches

@@ -2,6 +2,8 @@
 
 `writePathPolicy` 用于控制运行时写操作入口：允许 `collection()` 和 `model()` 两种入口同时写入，或要求指定命名空间必须经过 Model 层写入。
 
+策略查找只使用配置对象自身显式声明的规则，不会把原型继承属性当作规则；显式配置的 `toString`、`constructor` 等命名空间键仍有效。
+
 默认行为是宽松的：不配置 `writePathPolicy` 时，collection API 和 Model API 都可以写入。只有当业务希望强制写入经过 schema defaults、hooks、timestamps、乐观锁、soft delete 等 Model mutation 规则时，才需要启用该策略。
 
 ## 配置

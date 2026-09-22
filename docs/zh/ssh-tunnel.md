@@ -2,6 +2,8 @@
 
 ## 功能概述
 
+`ssh.hostHash` 与 `ssh.hostVerifier` 是可选的 ssh2 主机密钥校验配置。设置 `hostHash: 'sha256'` 时，校验函数收到十六进制 SHA-256 指纹；返回 `false` 会拒绝握手并关闭隧道监听端口。未配置校验函数时保持原有 ssh2 默认行为。
+
 ### 什么是SSH隧道？
 
 SSH隧道（SSH Tunneling）也称为SSH端口转发，是一种通过SSH协议在本地和远程服务器之间建立加密通道的技术。

@@ -5,6 +5,7 @@
  * relation utilities — decoupled from the ModelInstance class to simplify testing.
  */
 import { ErrorCodes, createError } from '../../core/errors';
+import type { Readable } from 'node:stream';
 import type {
     ModelDefinition,
     PopulateConfig,
@@ -20,6 +21,7 @@ import {
     applyModelInsertVersion,
     applyModelReplaceTimestamps,
     applyModelReplaceVersion,
+    applyModelSoftDeleteFilter,
     assertModelOptimisticLockMatched,
     assertNumericExpectedVersion,
     mapModelSchemaValidationErrors,
@@ -168,7 +170,9 @@ function projectPopulatedDocument(
         return document;
     }
     const nestedRelationFields = nestedPaths.map((path) => normalizePopulateConfig(path).path);
-    return pickFields(document, [...new Set([...select, ...nestedRelationFields])]);
+    const projected = pickFields(document, [...new Set([...select, ...nestedRelationFields])]);
+    if (!select.includes('_id')) delete projected._id;
+    return projected;
 }
 
 export async function populateModelPath<TDocument>(
@@ -198,7 +202,14 @@ export async function populateModelPath<TDocument>(
     const localValues = docs.map((doc) => getByPath(doc, relation.localField));
     const keys = unique(localValues.flatMap((value) => flattenComparableValues(value)));
 
-    if (keys.length === 0) {
+    if (config.limit !== undefined && (!Number.isSafeInteger(config.limit) || config.limit < 0)) {
+        throw createError(ErrorCodes.INVALID_ARGUMENT, 'populate limit must be a non-negative integer');
+    }
+    if (config.skip !== undefined && (!Number.isSafeInteger(config.skip) || config.skip < 0)) {
+        throw createError(ErrorCodes.INVALID_ARGUMENT, 'populate skip must be a non-negative integer');
+    }
+
+    if (keys.length === 0 || config.limit === 0) {
         for (const doc of docs) {
             (doc as Record<string, unknown>)[config.path] = relation.single ? null : [];
         }
@@ -221,42 +232,65 @@ export async function populateModelPath<TDocument>(
             ...effectiveSelect,
             relation.foreignField,
             '_id',
+            ...Object.keys(config.sort ?? {}),
             ...collectNestedLocalFields(relatedModel, nestedPaths),
+            ...(relatedModel?.softDeleteConfig?.enabled ? [relatedModel.softDeleteConfig.field] : []),
         ])]
         : [];
-    const relatedDocs = await relatedCollection.find({
-        [relation.foreignField]: { $in: keys },
-        ...(config.match ?? {}),
-    }, effectiveSelect ? {
-        projection: Object.fromEntries(projectionFields.map((field) => [field, 1])),
-    } : undefined);
-
-    let hydrated: Array<Record<string, unknown>> = relatedModel
-        ? relatedModel.hydrateDocuments(relatedDocs as Array<Record<string, unknown>>)
-        : (relatedDocs as Array<Record<string, unknown>>).map((item) => ({ ...item }));
-
-    if (nestedPaths.length > 0 && relatedModel) {
-        if (state.depth + 1 > state.maxDepth) {
-            throw createError(ErrorCodes.INVALID_ARGUMENT, `populate maxDepth exceeded: ${state.maxDepth}`);
+    const readOptions: Record<string, unknown> = {
+        ...(effectiveSelect ? { projection: Object.fromEntries(projectionFields.map((field) => [field, 1])) } : {}),
+        ...(config.sort ? { sort: config.sort } : {}),
+    };
+    const visibilityMatch = applyModelSoftDeleteFilter(config.match ?? {}, {}, relatedModel?.softDeleteConfig ?? null) as Record<string, unknown>;
+    const readForKeys = (values: unknown[], options: Record<string, unknown> = readOptions) => {
+        const keyFilter = { [relation.foreignField]: { $in: values } };
+        return readPopulateRows(relatedCollection,
+            Object.keys(visibilityMatch).length === 0 ? keyFilter : { $and: [keyFilter, visibilityMatch] },
+            options);
+    };
+    const hydrateRelated = async (rows: Array<Record<string, unknown>>): Promise<Array<Record<string, unknown>>> => {
+        let hydrated: Array<Record<string, unknown>> = relatedModel
+            ? relatedModel.hydrateDocuments(rows)
+            : rows.map((item) => ({ ...item }));
+        if (nestedPaths.length > 0 && relatedModel) {
+            if (state.depth + 1 > state.maxDepth) {
+                throw createError(ErrorCodes.INVALID_ARGUMENT, `populate maxDepth exceeded: ${state.maxDepth}`);
+            }
+            hydrated = await relatedModel.populateDocuments(hydrated, nestedPaths, {
+                depth: state.depth + 1,
+                maxDepth: state.maxDepth,
+                activeConfigs: state.activeConfigs,
+            });
         }
-        hydrated = await relatedModel.populateDocuments(hydrated, nestedPaths, {
-            depth: state.depth + 1,
-            maxDepth: state.maxDepth,
-            activeConfigs: state.activeConfigs,
-        });
-    }
+        return hydrated;
+    };
 
-    const grouped = groupBy(hydrated, (item) => getByPath(item as Record<string, unknown>, relation.foreignField));
-    for (const [index, doc] of docs.entries()) {
-        let matches = rebuildPopulateMatches(localValues[index], grouped, config.sort);
-        if (config.skip) {
-            matches = matches.slice(config.skip);
+    if (config.limit !== undefined || config.skip !== undefined) {
+        const scopedOptions = {
+            ...readOptions,
+            ...(config.skip !== undefined ? { skip: config.skip } : {}),
+            ...(config.limit !== undefined ? { limit: config.limit } : {}),
+        };
+        for (const [index, doc] of docs.entries()) {
+            const parentKeys = unique(flattenComparableValues(localValues[index]));
+            const rows = parentKeys.length > 0 ? await readForKeys(parentKeys, scopedOptions) : [];
+            const hydrated = await hydrateRelated(rows);
+            const matches = dedupeDocuments(hydrated);
+            const projectedMatches = matches.map((item) => projectPopulatedDocument(item, effectiveSelect, nestedPaths));
+            (doc as Record<string, unknown>)[config.path] = relation.single ? (projectedMatches[0] ?? null) : projectedMatches;
         }
-        if (config.limit !== undefined) {
-            matches = matches.slice(0, config.limit);
+    } else {
+        const rows: Array<Record<string, unknown>> = [];
+        for (let offset = 0; offset < keys.length; offset += 200) {
+            rows.push(...await readForKeys(keys.slice(offset, offset + 200)));
         }
-        const projectedMatches = matches.map((item) => projectPopulatedDocument(item, effectiveSelect, nestedPaths));
-        (doc as Record<string, unknown>)[config.path] = relation.single ? (projectedMatches[0] ?? null) : projectedMatches;
+        const hydrated = await hydrateRelated(rows);
+        const grouped = groupBy(hydrated, (item) => getByPath(item, relation.foreignField));
+        for (const [index, doc] of docs.entries()) {
+            const matches = rebuildPopulateMatches(localValues[index], grouped, config.sort);
+            const projectedMatches = matches.map((item) => projectPopulatedDocument(item, effectiveSelect, nestedPaths));
+            (doc as Record<string, unknown>)[config.path] = relation.single ? (projectedMatches[0] ?? null) : projectedMatches;
+        }
     }
 
     return docs;
@@ -520,10 +554,34 @@ export async function saveModelDocument<TDocument>(
 export async function removeModelDocument<TDocument>(
     collection: ModelCollectionLike<TDocument>,
     document: TDocument & Record<string, unknown>,
+    deleteOne: (filter: { _id: unknown }) => Promise<unknown> = (filter) => collection.deleteOne(filter),
 ): Promise<boolean> {
     if (document._id === undefined) {
         return false;
     }
-    const result = await collection.deleteOne({ _id: document._id });
-    return Boolean((result as { deletedCount?: number; }).deletedCount ?? (result as { acknowledged?: boolean; }).acknowledged);
+    const result = await deleteOne({ _id: document._id }) as {
+        matchedCount?: number; modifiedCount?: number; deletedCount?: number; acknowledged?: boolean;
+    };
+    if (result.matchedCount === undefined && result.modifiedCount === undefined && result.deletedCount === undefined) {
+        return result.acknowledged === true;
+    }
+    return Boolean(result.matchedCount || result.modifiedCount || result.deletedCount);
+}
+
+async function readPopulateRows<TDocument>(
+    collection: ModelCollectionLike<TDocument>,
+    query: Record<string, unknown>,
+    options: Record<string, unknown>,
+): Promise<Array<Record<string, unknown>>> {
+    if (typeof collection.stream !== 'function') {
+        return await collection.find(query, options) as Array<Record<string, unknown>>;
+    }
+    const stream = collection.stream(query, options) as Readable & AsyncIterable<Record<string, unknown>>;
+    const rows: Array<Record<string, unknown>> = [];
+    try {
+        for await (const row of stream) rows.push(row);
+    } finally {
+        stream.destroy();
+    }
+    return rows;
 }

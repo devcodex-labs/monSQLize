@@ -3,7 +3,7 @@ import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/prom
 import path from 'node:path';
 import { gzip, gunzip } from 'node:zlib';
 import { promisify } from 'node:util';
-import { BSON } from 'mongodb';
+import { BSON, Int32, Long } from 'mongodb';
 import type { DataTaskBackupRef, DataTaskConnection } from '../../../types/data-tasks';
 import {
     DEFAULT_DATA_TASK_BACKUP_MAX_BYTES,
@@ -107,6 +107,31 @@ function ejsonLine(value: unknown): string {
 
 function ejsonManifest(value: DataTaskBackupManifest): string {
     return BSON.EJSON.stringify(value, undefined, 2, { relaxed: false });
+}
+
+function manifestInteger(value: unknown, field: string, minimum: number): number {
+    const numeric = value instanceof Int32 ? value.valueOf()
+        : Long.isLong(value) ? value.toBigInt()
+            : value;
+    if (typeof numeric === 'bigint') {
+        if (numeric < BigInt(minimum) || numeric > BigInt(Number.MAX_SAFE_INTEGER)) {
+            throw new Error(`invalid backup ${field}`);
+        }
+        return Number(numeric);
+    }
+    if (typeof numeric !== 'number' || !Number.isSafeInteger(numeric) || numeric < minimum) {
+        throw new Error(`invalid backup ${field}`);
+    }
+    return numeric;
+}
+
+function decodeManifestControls(raw: unknown): DataTaskBackupManifest {
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('invalid backup manifest');
+    const manifest = raw as DataTaskBackupManifest;
+    manifest.version = manifestInteger(manifest.version, 'manifest', 1) as 1;
+    manifest.entryCount = manifestInteger(manifest.entryCount, 'entry count', 0);
+    if (manifest.maxBytes !== undefined) manifest.maxBytes = manifestInteger(manifest.maxBytes, 'max bytes', 1);
+    return manifest;
 }
 
 function sanitizeName(value: string): string {
@@ -304,10 +329,9 @@ export async function createRestoreSafetyBackup(
 
 export async function readDataTaskBackup(ref: DataTaskBackupRef): Promise<LoadedDataTaskBackup> {
     try {
-        const manifest = BSON.EJSON.parse(await readFile(ref.manifestPath, 'utf8'), { relaxed: true }) as DataTaskBackupManifest;
+        const manifest = decodeManifestControls(BSON.EJSON.parse(await readFile(ref.manifestPath, 'utf8'), { relaxed: false }));
         if (manifest.kind !== 'monsqlize-data-task-backup' || manifest.version !== 1 || manifest.runId !== ref.runId) throw new Error('invalid backup manifest');
         if (manifest.compression !== 'gzip' && manifest.compression !== 'none') throw new Error('invalid backup compression');
-        if (!Number.isSafeInteger(manifest.entryCount) || manifest.entryCount < 0) throw new Error('invalid backup entry count');
         if (typeof manifest.checksum !== 'string' || !/^[a-f0-9]{64}$/i.test(manifest.checksum)) throw new Error('invalid backup checksum');
         if (typeof manifest.dataFile !== 'string'
             || manifest.dataFile.length === 0

@@ -98,18 +98,18 @@ function toCompatDefinition<TDocument>(definition: ModelDefinition<TDocument>): 
     return definition as ModelDefinitionCompat<TDocument>;
 }
 
-function stableIndexStringify(value: unknown): string {
+function stableIndexStringify(value: unknown, mode: 'options' | 'key' = 'options'): string {
     if (value instanceof Date) {
         return JSON.stringify(value.toISOString());
     }
     if (Array.isArray(value)) {
-        return `[${value.map((item) => stableIndexStringify(item)).join(',')}]`;
+        return `[${value.map((item) => stableIndexStringify(item, mode)).join(',')}]`;
     }
     if (value && typeof value === 'object') {
         const entries = Object.entries(value as Record<string, unknown>)
-            .filter(([, current]) => current !== undefined)
-            .sort(([left], [right]) => left.localeCompare(right));
-        return `{${entries.map(([key, current]) => `${JSON.stringify(key)}:${stableIndexStringify(current)}`).join(',')}}`;
+            .filter(([, current]) => current !== undefined);
+        if (mode === 'options') entries.sort(([left], [right]) => left.localeCompare(right));
+        return `{${entries.map(([key, current]) => `${JSON.stringify(key)}:${stableIndexStringify(current, key === 'key' ? 'key' : mode)}`).join(',')}}`;
     }
     return JSON.stringify(value) ?? 'undefined';
 }
@@ -149,7 +149,7 @@ function declaredOptionEntries(options: Record<string, unknown>): Array<[string,
 }
 
 function indexOptionsMatch(existing: Record<string, unknown>, declared: ModelDeclaredIndex): boolean {
-    if (stableIndexStringify(getExistingIndexKey(existing)) !== stableIndexStringify(declared.key)) {
+    if (stableIndexStringify(getExistingIndexKey(existing), 'key') !== stableIndexStringify(declared.key, 'key')) {
         return false;
     }
     for (const [name, value] of declaredOptionEntries(declared.options)) {
@@ -176,8 +176,8 @@ function findExistingIndexByKey(
     existingIndexes: Record<string, unknown>[],
     key: unknown,
 ): Record<string, unknown> | undefined {
-    const fingerprint = stableIndexStringify(key);
-    return existingIndexes.find((index) => stableIndexStringify(getExistingIndexKey(index)) === fingerprint);
+    const fingerprint = stableIndexStringify(key, 'key');
+    return existingIndexes.find((index) => stableIndexStringify(getExistingIndexKey(index), 'key') === fingerprint);
 }
 
 function createIndexEnsureError(

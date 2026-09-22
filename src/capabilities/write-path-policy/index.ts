@@ -65,6 +65,12 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+function ownValue<T>(record: object, key: string): T | undefined {
+    return Object.prototype.hasOwnProperty.call(record, key)
+        ? (record as Record<string, unknown>)[key] as T
+        : undefined;
+}
+
 function invalidConfig(path: string, reason: string): never {
     throw createError(
         ErrorCodes.INVALID_OPERATION,
@@ -90,19 +96,19 @@ function normalizeRule(
         invalidConfig(path, 'rule must be a string mode or an object');
     }
 
-    const mode = input.mode ?? DEFAULT_RULE.mode;
+    const mode = ownValue<WritePathPolicyMode>(input, 'mode') ?? DEFAULT_RULE.mode;
     if (!ALLOWED_MODES.has(mode as WritePathPolicyMode)) {
         invalidConfig(`${path}.mode`, 'must be "allow-both" or "model-only"');
     }
-    const raw = input.raw ?? DEFAULT_RULE.raw;
+    const raw = ownValue<WritePathPolicyRawMode>(input, 'raw') ?? DEFAULT_RULE.raw;
     if (!ALLOWED_RAW.has(raw as WritePathPolicyRawMode)) {
         invalidConfig(`${path}.raw`, 'must be "inherit", "allow", or "block"');
     }
-    const management = input.management ?? DEFAULT_RULE.management;
+    const management = ownValue<WritePathPolicyManagementMode>(input, 'management') ?? DEFAULT_RULE.management;
     if (!ALLOWED_MANAGEMENT.has(management as WritePathPolicyManagementMode)) {
         invalidConfig(`${path}.management`, 'must be "inherit", "allow", or "block"');
     }
-    const onViolation = input.onViolation ?? DEFAULT_RULE.onViolation;
+    const onViolation = ownValue<WritePathPolicyViolationAction>(input, 'onViolation') ?? DEFAULT_RULE.onViolation;
     if (!ALLOWED_VIOLATION_ACTIONS.has(onViolation as WritePathPolicyViolationAction)) {
         invalidConfig(`${path}.onViolation`, 'must be "throw" or "warn"');
     }
@@ -121,16 +127,16 @@ export function validateWritePathPolicyConfig(options?: WritePathPolicyOptions):
 
 export function normalizeWritePathPolicy(options?: WritePathPolicyOptions): NormalizedWritePathPolicy {
     if (options === undefined) {
-        return { default: { ...DEFAULT_RULE }, namespaces: {}, enabled: false };
+        return { default: { ...DEFAULT_RULE }, namespaces: Object.create(null) as Record<string, NormalizedWritePathRule>, enabled: false };
     }
     if (!isPlainObject(options)) {
         invalidConfig('writePathPolicy', 'must be an object');
     }
 
     const typedOptions = options as WritePathPolicyOptions;
-    const defaultRule = normalizeRule(typedOptions.default, 'writePathPolicy.default');
-    const namespacesInput = options.namespaces;
-    const namespaces: Record<string, NormalizedWritePathRule> = {};
+    const defaultRule = normalizeRule(ownValue(typedOptions, 'default'), 'writePathPolicy.default');
+    const namespacesInput = ownValue<Record<string, WritePathPolicyMode | WritePathPolicyRule>>(options, 'namespaces');
+    const namespaces: Record<string, NormalizedWritePathRule> = Object.create(null);
     if (namespacesInput !== undefined) {
         if (!isPlainObject(namespacesInput)) {
             invalidConfig('writePathPolicy.namespaces', 'must be an object');
@@ -184,8 +190,8 @@ export function resolveWritePathRule(
         if (candidate === 'default') {
             return { key: 'default', rule: effectivePolicy.default };
         }
-        const rule = effectivePolicy.namespaces[candidate];
-        if (rule) {
+        if (Object.prototype.hasOwnProperty.call(effectivePolicy.namespaces, candidate)) {
+            const rule = effectivePolicy.namespaces[candidate];
             return { key: candidate, rule };
         }
     }

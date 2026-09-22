@@ -24,6 +24,10 @@ export interface SSHConfig {
     readyTimeout?: number;
     /** Keep-alive interval in milliseconds (default: 30000). */
     keepaliveInterval?: number;
+    /** ssh2 host-key hash algorithm; pair with hostVerifier for pinned fingerprints. */
+    hostHash?: string;
+    /** Reject untrusted SSH server host keys by returning false. */
+    hostVerifier?: (key: string | Buffer) => boolean;
     /** Target database host as seen from the SSH server (default: auto-parsed from URI). */
     dstHost?: string;
     /** Target database port as seen from the SSH server (default: auto-parsed from URI). */

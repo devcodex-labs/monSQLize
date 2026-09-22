@@ -159,6 +159,27 @@ describe('Model softDelete / versioning behavior', () => {
             const raw = await db.collection('sd_bool').findOne({ name: 'frank' });
             assert.equal(raw?.removedAt, true);
         });
+
+        it('boolean mode treats false, null and missing as visible across read paths', async () => {
+            const model = runtime.model('sd_bool');
+            const raw = runtime._adapter.db.collection('sd_bool');
+            const inserted = await raw.insertMany([
+                { name: 'false', removedAt: false, group: 'boolean-reads' },
+                { name: 'null', removedAt: null, group: 'boolean-reads' },
+                { name: 'missing', group: 'boolean-reads' },
+                { name: 'deleted', removedAt: true, group: 'boolean-reads' },
+            ]);
+            const ids = Object.values(inserted.insertedIds);
+            assert.deepEqual((await model.find({ group: 'boolean-reads' })).map((doc: any) => doc.name).sort(), ['false', 'missing', 'null']);
+            assert.equal(await model.count({ group: 'boolean-reads' }), 3);
+            assert.equal(await model.findOneById(ids[3], { projection: { name: 1 } }), null);
+            assert.equal((await model.findOneById(ids[0], { projection: { name: 1 } })).name, 'false');
+            const projected = await model.findByIds(ids, { projection: { name: 1 } });
+            assert.deepEqual(projected.map((doc: any) => doc.name).sort(), ['false', 'missing', 'null']);
+            assert.ok(projected.every((doc: any) => !Object.prototype.hasOwnProperty.call(doc, 'removedAt')));
+            assert.deepEqual((await model.findOnlyDeleted({ group: 'boolean-reads' })).map((doc: any) => doc.name), ['deleted']);
+            assert.equal((await model.findWithDeleted({ group: 'boolean-reads' })).length, 4);
+        });
     });
 
     // ── findWithDeleted / findOnlyDeleted ─────────────────────────────────────
@@ -407,9 +428,10 @@ describe('Model softDelete / versioning behavior', () => {
             let firstAttempt = true;
             const originalUpdateOne = model.collection.updateOne.bind(model.collection);
             model.collection.updateOne = async (filter: any, update: any, options: any) => {
-                if (firstAttempt && String(filter._id) === String(first.insertedId)) {
+                const candidateId = filter.$and?.find((part: any) => part._id !== undefined)?._id ?? filter._id;
+                if (firstAttempt && String(candidateId) === String(first.insertedId)) {
                     firstAttempt = false;
-                    await originalUpdateOne({ _id: filter._id }, { $inc: { version: 1 } });
+                    await originalUpdateOne({ _id: candidateId }, { $inc: { version: 1 } });
                 }
                 return originalUpdateOne(filter, update, options);
             };
@@ -420,6 +442,35 @@ describe('Model softDelete / versioning behavior', () => {
             assert.deepEqual(docs.map((doc: any) => doc.version).sort(), [1, 1]);
         });
 
+        it('strict update classifies business-filter drift as skipped rather than a version conflict', async () => {
+            const model = runtime.model('ver_items');
+            const first = await model.insertOne({ group: 'strict-drift', status: 'pending' });
+            await model.insertOne({ group: 'strict-drift', status: 'pending' });
+            const originalUpdateOne = model.collection.updateOne.bind(model.collection);
+            let drifted = false;
+            model.collection.updateOne = async (filter: any, update: any, options: any) => {
+                const candidateId = filter.$and?.find((part: any) => part._id !== undefined)?._id;
+                if (!drifted && String(candidateId) === String(first.insertedId)) {
+                    drifted = true;
+                    await originalUpdateOne({ _id: candidateId }, { $set: { status: 'cancelled' } });
+                }
+                return originalUpdateOne(filter, update, options);
+            };
+            try {
+                const result = await model.updateMany(
+                    { group: 'strict-drift', status: 'pending' },
+                    { $set: { touched: true } },
+                    { versionMode: 'strict' },
+                );
+                assert.equal(result.matchedCount, 1);
+                assert.equal((result as any).conflictCount, 0);
+                assert.equal((result as any).skippedCount, 1);
+                assert.equal((result as any).skippedIds.length, 1);
+            } finally {
+                model.collection.updateOne = originalUpdateOne;
+            }
+        });
+
         it('updateMany strict mode forwards session to the version pre-read', async () => {
             const model = runtime.model('ver_items');
             await model.insertMany([
@@ -427,14 +478,14 @@ describe('Model softDelete / versioning behavior', () => {
                 { group: 'strict-session', n: 2 },
             ]);
             const session = runtime._client.startSession();
-            const originalFind = model.collection.find.bind(model.collection);
+            const originalStream = model.collection.stream.bind(model.collection);
             let lookupOptions: any = null;
 
-            model.collection.find = async (filter: any, options: any) => {
+            model.collection.stream = (filter: any, options: any) => {
                 if (filter?.group === 'strict-session') {
                     lookupOptions = options;
                 }
-                return originalFind(filter, options);
+                return originalStream(filter, options);
             };
 
             try {
@@ -445,13 +496,40 @@ describe('Model softDelete / versioning behavior', () => {
                 );
                 assert.equal(result.matchedCount, 2);
             } finally {
-                model.collection.find = originalFind;
+                model.collection.stream = originalStream;
                 await session.endSession();
             }
 
             assert.equal(lookupOptions?.session, session);
             assert.equal(lookupOptions?.comment, 'strict-session-lookup');
             assert.deepEqual(lookupOptions?.projection, { _id: 1, version: 1 });
+            assert.deepEqual(lookupOptions?.sort, { _id: 1 });
+        });
+
+        it('updateMany strict mode visits more than the default 500 documents and closes the stream', async () => {
+            const model = runtime.model('ver_items');
+            await model.insertMany(Array.from({ length: 501 }, (_, n) => ({ group: 'strict-large', n })));
+            const originalStream = model.collection.stream.bind(model.collection);
+            let destroyed = false;
+            model.collection.stream = (filter: any, options: any) => {
+                const stream = originalStream(filter, options);
+                const originalDestroy = stream.destroy.bind(stream);
+                stream.destroy = (...args: any[]) => {
+                    destroyed = true;
+                    return originalDestroy(...args);
+                };
+                return stream;
+            };
+            try {
+                const result = await model.updateMany({ group: 'strict-large' }, { $set: { touched: true } }, { versionMode: 'strict' });
+                assert.equal(result.matchedCount, 501);
+                assert.equal(result.modifiedCount, 501);
+                assert.equal((result as any).conflictCount, 0);
+            } finally {
+                model.collection.stream = originalStream;
+            }
+            assert.equal(destroyed, true);
+            assert.equal(await model.count({ group: 'strict-large', touched: true, version: 1 }), 501);
         });
 
         it('updateBatch strict mode reports conflicting documents', async () => {
@@ -462,9 +540,10 @@ describe('Model softDelete / versioning behavior', () => {
             const progress: any[] = [];
             const originalUpdateOne = model.collection.updateOne.bind(model.collection);
             model.collection.updateOne = async (filter: any, update: any, options: any) => {
-                if (firstAttempt && String(filter._id) === String(first.insertedId)) {
+                const candidateId = filter.$and?.find((part: any) => part._id !== undefined)?._id ?? filter._id;
+                if (firstAttempt && String(candidateId) === String(first.insertedId)) {
                     firstAttempt = false;
-                    await originalUpdateOne({ _id: filter._id }, { $inc: { version: 1 } });
+                    await originalUpdateOne({ _id: candidateId }, { $inc: { version: 1 } });
                 }
                 return originalUpdateOne(filter, update, options);
             };
@@ -486,6 +565,50 @@ describe('Model softDelete / versioning behavior', () => {
 
             const docs = await model.find({ group: 'strict-batch' });
             assert.deepEqual(docs.map((doc: any) => doc.version).sort(), [1, 1]);
+        });
+
+        it('updateBatch strict mode rejects upsert and invalid batch sizes', async () => {
+            const model = runtime.model('ver_items');
+            await assert.rejects(
+                () => model.updateBatch({ group: 'strict-invalid' }, { $set: { touched: true } }, { versionMode: 'strict', upsert: true }),
+                /strict.*upsert/i,
+            );
+            await assert.rejects(
+                () => model.updateBatch({ group: 'strict-invalid' }, { $set: { touched: true } }, { versionMode: 'strict', batchSize: 0 }),
+                /batchSize must be a positive integer/,
+            );
+        });
+
+        it('updateBatch strict mode skips a candidate that leaves the original filter', async () => {
+            const model = runtime.model('ver_items');
+            const first = await model.insertOne({ group: 'strict-batch-drift', status: 'pending' });
+            await model.insertOne({ group: 'strict-batch-drift', status: 'pending' });
+            const originalUpdateOne = model.collection.updateOne.bind(model.collection);
+            const progress: any[] = [];
+            let drifted = false;
+            model.collection.updateOne = async (filter: any, update: any, options: any) => {
+                const candidateId = filter.$and?.find((part: any) => part._id !== undefined)?._id;
+                if (!drifted && String(candidateId) === String(first.insertedId)) {
+                    drifted = true;
+                    await originalUpdateOne({ _id: candidateId }, { $set: { status: 'moved' } });
+                }
+                return originalUpdateOne(filter, update, options);
+            };
+            try {
+                const result = await model.updateBatch(
+                    { group: 'strict-batch-drift', status: 'pending' },
+                    { $set: { touched: true } },
+                    { versionMode: 'strict', batchSize: 1, onProgress: (info: any) => progress.push(info) },
+                );
+                assert.equal(result.matchedCount, 1);
+                assert.equal(result.skippedCount, 1);
+                assert.equal(result.conflictCount, 0);
+                assert.deepEqual(result.skippedIds?.map(String), [String(first.insertedId)]);
+                assert.equal(progress[progress.length - 1]?.skipped, 1);
+                assert.equal(await model.count({ group: 'strict-batch-drift', status: 'moved', touched: true }), 0);
+            } finally {
+                model.collection.updateOne = originalUpdateOne;
+            }
         });
 
         it('updateOne preserves pipeline updates while advancing version', async () => {

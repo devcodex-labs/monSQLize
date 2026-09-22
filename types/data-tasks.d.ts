@@ -155,6 +155,7 @@ export interface DataTaskPreviewOptions {
 }
 
 export interface DataTaskBackupRef {
+    /** Canonical EJSON backup manifest. BSON identities and payloads remain typed when reopened. */
     runId: string;
     manifestPath: string;
     checksum: string;

@@ -58,7 +58,7 @@ export function buildFindCacheKey<TSchema extends Document = Document>(
         ...(options ?? {}),
     });
     const namespace = buildCollectionCacheNamespace(collection, defaults);
-    return `find:${namespace}:${stableCacheKeyString(normalizeQueryForCache(query, defaults))}:${stableCacheKeyString(buildResultCacheKeyOptions(executeOptions))}`;
+    return `find:${namespace}:${stableCacheKeyString(normalizeQueryForCache(query, defaults), 'document')}:${stableCacheKeyString(buildResultCacheKeyOptions(executeOptions))}`;
 }
 
 export function buildFindOneCacheKey<TSchema extends Document = Document>(
@@ -72,7 +72,7 @@ export function buildFindOneCacheKey<TSchema extends Document = Document>(
         ...(options ?? {}),
     });
     const namespace = buildCollectionCacheNamespace(collection, defaults);
-    return `findOne:${namespace}:${stableCacheKeyString(normalizeQueryForCache(query, defaults))}:${stableCacheKeyString(buildResultCacheKeyOptions(executeOptions))}`;
+    return `findOne:${namespace}:${stableCacheKeyString(normalizeQueryForCache(query, defaults), 'document')}:${stableCacheKeyString(buildResultCacheKeyOptions(executeOptions))}`;
 }
 
 export function buildCountCacheKey<TSchema extends Document = Document>(
@@ -88,7 +88,7 @@ export function buildCountCacheKey<TSchema extends Document = Document>(
     const { cache: _cache, ...keyOptions } = merged;
     void _cache;
     const namespace = buildCollectionCacheNamespace(collection, defaults);
-    return `count:${namespace}:${stableCacheKeyString(normalizeQueryForCache(query, defaults))}:${stableCacheKeyString(buildResultCacheKeyOptions(keyOptions))}`;
+    return `count:${namespace}:${stableCacheKeyString(normalizeQueryForCache(query, defaults), 'document')}:${stableCacheKeyString(buildResultCacheKeyOptions(keyOptions))}`;
 }
 
 export function buildDistinctCacheKey<TSchema extends Document = Document>(
@@ -131,7 +131,7 @@ export function buildAggregateCacheKey<TSchema extends Document = Document>(
         ...(options ?? {}),
     };
     const namespace = buildCollectionCacheNamespace(collection, defaults);
-    return `aggregate:${namespace}:${stableCacheKeyString(normalizePipelineForCache(pipeline, defaults))}:${stableCacheKeyString(buildResultCacheKeyOptions(executeOptions))}`;
+    return `aggregate:${namespace}:${stableCacheKeyString(normalizePipelineForCache(pipeline, defaults), 'document')}:${stableCacheKeyString(buildResultCacheKeyOptions(executeOptions))}`;
 }
 
 export function buildFindOneByIdCacheKey<TSchema extends Document = Document>(
@@ -165,6 +165,8 @@ export function buildFindPageCacheKey<TSchema extends Document = Document>(
     const cursorTypes = ext.cursorTypes && typeof ext.cursorTypes === 'object' && !Array.isArray(ext.cursorTypes)
         ? ext.cursorTypes as Record<string, unknown>
         : undefined;
+    const { let: nestedLet, ...nestedOptions } = (options.options ?? {}) as Record<string, unknown>;
+    const effectiveLet = ext.let !== undefined ? ext.let : nestedLet;
     const payload = {
         query: normalizeQueryForCache(options.query, defaults),
         sort: normalizeSortShape(options.sort),
@@ -187,9 +189,10 @@ export function buildFindPageCacheKey<TSchema extends Document = Document>(
         hint: ext.hint,
         collation: ext.collation,
         batchSize: ext.batchSize,
-        options: options.options,
+        let: effectiveLet,
+        options: nestedOptions,
     };
-    const keyHash = hashPayload(payload);
+    const keyHash = hashPayload(stableCacheKeyString(payload));
     const namespace = buildCollectionCacheNamespace(collection, defaults);
     return { key: `findPage:${namespace}:${keyHash}`, keyHash };
 }

@@ -2,6 +2,8 @@
 
 Read caching is opt-in per query, and write invalidation is opt-in per write or per runtime configuration.
 
+Distributed invalidation received from another instance clears local cache entries without publishing another invalidation. Locally initiated invalidation still publishes normally, so concurrent local writes and incoming messages are handled independently.
+
 ## Default Behavior
 
 Writes do not invalidate read caches by default:

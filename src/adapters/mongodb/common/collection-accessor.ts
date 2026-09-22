@@ -312,7 +312,9 @@ export class MongoCollectionAccessor<TSchema extends Document = Document> {
         const normalizedQuery = this._cvFilter(query);
         const maxTimeMS = this.management.defaults?.maxTimeMS;
         const merged: Record<string, unknown> = { ...(maxTimeMS !== undefined ? { maxTimeMS } : {}), ...((options ?? {}) as Record<string, unknown>) };
-        const cacheTTL = typeof merged.cache === 'number' ? merged.cache : 0;
+        const cacheTTL = merged.explain === undefined || merged.explain === false
+            ? (typeof merged.cache === 'number' ? merged.cache : 0)
+            : 0;
         const { cache: _cache, ...keyOptions } = merged;
         void _cache;
         const executeCount = (signal?: AbortSignal) => countDocuments(

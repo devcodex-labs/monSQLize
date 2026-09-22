@@ -15,70 +15,81 @@ const IS_FUNC_CALL_RE =
 
 export function compileInnerExpression(expression: string): unknown {
     const expr = expression.trim();
+    if (!expr) throw createError(ErrorCodes.INVALID_EXPRESSION, 'Expression cannot be empty');
+    const positions = topLevelPositions(expr);
+    const unwrapped = stripOuterParentheses(expr);
+    if (unwrapped !== expr) return compileInnerExpression(unwrapped);
+    if (/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(expr)) return Number(expr);
+
+    const conditional = findConditional(expr, positions);
+    if (conditional) {
+        return { $cond: {
+            if: compileInnerExpression(expr.slice(0, conditional.question)),
+            then: compileInnerExpression(expr.slice(conditional.question + 1, conditional.colon)),
+            else: compileInnerExpression(expr.slice(conditional.colon + 1)),
+        } };
+    }
+
+    const nullCoalParts = splitTopLevel(expr, '??', positions);
+    if (nullCoalParts.length > 1) {
+        return nullCoalParts.slice(1).reduce<unknown>(
+            (left, right) => ({ $ifNull: [left, compileInnerExpression(right)] }),
+            compileInnerExpression(nullCoalParts[0]),
+        );
+    }
+
+    const orParts = splitTopLevel(expr, '||', positions);
+    if (orParts.length > 1) {
+        return { $or: orParts.map((part) => compileInnerExpression(part)) };
+    }
+
+    const andParts = splitTopLevel(expr, '&&', positions);
+    if (andParts.length > 1) {
+        return { $and: andParts.map((part) => compileInnerExpression(part)) };
+    }
+
+    const comparison = findBinaryOperator(expr, positions, ['===', '!==', '>=', '<=', '>', '<']);
+    if (comparison) {
+        const operatorMap: Record<string, string> = {
+            '===': '$eq', '!==': '$ne', '>=': '$gte', '<=': '$lte', '>': '$gt', '<': '$lt',
+        };
+        return { [operatorMap[comparison.operator]]: [
+            compileInnerExpression(expr.slice(0, comparison.index)),
+            compileInnerExpression(expr.slice(comparison.index + comparison.operator.length)),
+        ] };
+    }
+
+    const additive = findBinaryOperator(expr, positions, ['+', '-'], true);
+    if (additive) {
+        return { [additive.operator === '+' ? '$add' : '$subtract']: [
+            compileInnerExpression(expr.slice(0, additive.index)),
+            compileInnerExpression(expr.slice(additive.index + 1)),
+        ] };
+    }
+
+    const multiplicative = findBinaryOperator(expr, positions, ['*', '/', '%'], true);
+    if (multiplicative) {
+        const operatorMap: Record<string, string> = { '*': '$multiply', '/': '$divide', '%': '$mod' };
+        return { [operatorMap[multiplicative.operator]]: [
+            compileInnerExpression(expr.slice(0, multiplicative.index)),
+            compileInnerExpression(expr.slice(multiplicative.index + 1)),
+        ] };
+    }
+
+    if (expr.startsWith('-')) {
+        return { $multiply: [-1, compileInnerExpression(expr.slice(1))] };
+    }
 
     const funcMatch = expr.match(FUNC_REGEX);
     if (funcMatch) {
-        return dispatchFunction(funcMatch[1].toUpperCase(), funcMatch[2] ?? '');
-    }
-
-    const andParts = splitTopLevel(expr, '&&');
-    if (andParts.length > 1) {
-        return { $and: andParts.map((part) => compileInnerExpression(part.trim())) };
-    }
-
-    const orParts = splitTopLevel(expr, '||');
-    if (orParts.length > 1) {
-        return { $or: orParts.map((part) => compileInnerExpression(part.trim())) };
-    }
-
-    const ternary = /^([^?]+)\s*\?\s*([^:]+)\s*:\s*(.+)$/.exec(expr);
-    if (ternary) {
-        const [, condition, thenPart, elsePart] = ternary;
-        return {
-            $cond: {
-                if: compileInnerExpression(condition.trim()),
-                then: parseThenElse(thenPart.trim()),
-                else: parseThenElse(elsePart.trim()),
-            },
-        };
-    }
-
-    const nullCoalParts = splitTopLevel(expr, '??');
-    if (nullCoalParts.length > 1) {
-        return { $ifNull: [parseValue(nullCoalParts[0].trim()), parseValue(nullCoalParts[1].trim())] };
-    }
-
-    const cmpMatch = /^(.+?)\s*(===|!==|>=|<=|>|<)\s*(.+)$/.exec(expr);
-    if (cmpMatch) {
-        const [, left, operator, right] = cmpMatch;
-        const operatorMap: Record<string, string> = {
-            '===': '$eq',
-            '!==': '$ne',
-            '>=': '$gte',
-            '<=': '$lte',
-            '>': '$gt',
-            '<': '$lt',
-        };
-        return {
-            [operatorMap[operator]]: [
-                compileInnerExpression(left.trim()),
-                compileInnerExpression(right.trim()),
-            ],
-        };
-    }
-
-    const addSubMatch = /^(.+?)\s*([+\-])\s*(.+)$/.exec(expr);
-    if (addSubMatch) {
-        const [, left, operator, right] = addSubMatch;
-        const operatorMap: Record<string, string> = { '+': '$add', '-': '$subtract' };
-        return { [operatorMap[operator]]: [parseOperand(left.trim()), parseOperand(right.trim())] };
-    }
-
-    const mulDivMatch = /^(.+?)\s*([*\/%])\s*(.+)$/.exec(expr);
-    if (mulDivMatch) {
-        const [, left, operator, right] = mulDivMatch;
-        const operatorMap: Record<string, string> = { '*': '$multiply', '/': '$divide', '%': '$mod' };
-        return { [operatorMap[operator]]: [parseOperand(left.trim()), parseOperand(right.trim())] };
+        try {
+            return dispatchFunction(funcMatch[1].toUpperCase(), funcMatch[2] ?? '');
+        } catch (error) {
+            if (error && typeof error === 'object' && 'code' in error && error.code === ErrorCodes.INVALID_EXPRESSION) {
+                throw error;
+            }
+            throw createError(ErrorCodes.INVALID_EXPRESSION, `Invalid arguments for ${funcMatch[1].toUpperCase()}`);
+        }
     }
 
     const genericFuncCallRe = /^[A-Za-z_][A-Za-z0-9_]*\s*\(.+\)$/;
@@ -88,10 +99,6 @@ export function compileInnerExpression(expression: string): unknown {
     }
 
     return parseValue(expr);
-}
-
-function parseThenElse(source: string): unknown {
-    return (source.includes('?') && source.includes(':')) ? compileInnerExpression(source) : parseValue(source);
 }
 
 function parseValue(value: string): unknown {
@@ -104,19 +111,20 @@ function parseValue(value: string): unknown {
     if (normalized === 'true') return true;
     if (normalized === 'false') return false;
     if (!isNaN(Number(normalized)) && normalized !== '') return Number(normalized);
-    if (IS_FUNC_CALL_RE.test(normalized)) {
+    if (normalized !== value.trim() || IS_FUNC_CALL_RE.test(normalized) || FUNC_REGEX.test(normalized)) {
+        return compileInnerExpression(normalized);
+    }
+    if (normalized.startsWith('[') || normalized.startsWith('{')) {
+        try { return JSON.parse(normalized); } catch {
+            throw createError(ErrorCodes.INVALID_EXPRESSION, 'Invalid array or object literal');
+        }
+    }
+    const positions = topLevelPositions(normalized);
+    if (positions.some((index) => /[?+\-*/%><&|]/.test(normalized[index]))) {
         return compileInnerExpression(normalized);
     }
     if (normalized.startsWith('$')) return normalized;
     return `$${normalized}`;
-}
-
-function parseOperand(value: string): unknown {
-    const normalized = stripOuterParentheses(value);
-    if (/[+\-*/%]/.test(normalized)) {
-        return compileInnerExpression(normalized);
-    }
-    return parseValue(normalized);
 }
 
 function dispatchFunction(name: string, argsStr: string): unknown {
@@ -339,50 +347,85 @@ function compileMapExpression(exprStr: string, varName: string): unknown {
 }
 
 function splitArgsStr(argsStr: string): string[] {
-    const args: string[] = [];
-    let current = '';
-    let inString = false;
-    let stringChar = '';
-    let parenDepth = 0;
-
-    for (let index = 0; index < argsStr.length; index++) {
-        const ch = argsStr[index];
-        if ((ch === '"' || ch === "'") && (index === 0 || argsStr[index - 1] !== '\\')) {
-            if (!inString) { inString = true; stringChar = ch; }
-            else if (ch === stringChar) { inString = false; stringChar = ''; }
-            current += ch;
-        } else if (ch === '(' && !inString) { parenDepth++; current += ch; }
-        else if (ch === ')' && !inString) { parenDepth--; current += ch; }
-        else if (ch === ',' && !inString && parenDepth === 0) { args.push(current.trim()); current = ''; }
-        else { current += ch; }
-    }
-    if (current.trim()) args.push(current.trim());
-    return args;
+    if (!argsStr.trim()) return [];
+    return splitTopLevel(argsStr, ',');
 }
 
-function splitTopLevel(source: string, separator: string): string[] {
-    const parts: string[] = [];
-    let current = '';
-    let parenDepth = 0;
-    let inString = false;
-    let stringChar = '';
-
+function topLevelPositions(source: string): number[] {
+    const positions: number[] = [];
+    const stack: string[] = [];
+    let quote: string | null = null;
     for (let index = 0; index < source.length; index++) {
         const ch = source[index];
-        if ((ch === '"' || ch === "'") && (index === 0 || source[index - 1] !== '\\')) {
-            if (!inString) { inString = true; stringChar = ch; }
-            else if (ch === stringChar) { inString = false; stringChar = ''; }
-            current += ch;
-        } else if (!inString && ch === '(') { parenDepth++; current += ch; }
-        else if (!inString && ch === ')') { parenDepth--; current += ch; }
-        else if (!inString && parenDepth === 0 && source.startsWith(separator, index)) {
-            parts.push(current);
-            current = '';
-            index += separator.length - 1;
-        } else { current += ch; }
+        if (quote) {
+            if (ch === quote && source[index - 1] !== '\\') quote = null;
+            continue;
+        }
+        if (ch === '"' || ch === "'") { quote = ch; continue; }
+        if (ch === '(' || ch === '[' || ch === '{') { stack.push(ch); continue; }
+        if (ch === ')' || ch === ']' || ch === '}') {
+            const opening = stack.pop();
+            if ((ch === ')' && opening !== '(') || (ch === ']' && opening !== '[') || (ch === '}' && opening !== '{')) {
+                throw createError(ErrorCodes.INVALID_EXPRESSION, 'Unbalanced expression delimiters');
+            }
+            continue;
+        }
+        if (stack.length === 0) positions.push(index);
     }
-    parts.push(current);
+    if (quote || stack.length > 0) {
+        throw createError(ErrorCodes.INVALID_EXPRESSION, 'Unbalanced expression delimiters');
+    }
+    return positions;
+}
+
+function splitTopLevel(source: string, separator: string, positions = topLevelPositions(source)): string[] {
+    const parts: string[] = [];
+    let start = 0;
+    for (const index of positions) {
+        if (index < start || !source.startsWith(separator, index)) continue;
+        parts.push(source.slice(start, index).trim());
+        start = index + separator.length;
+    }
+    if (parts.length === 0) return [source];
+    parts.push(source.slice(start).trim());
+    if (parts.some((part) => !part)) {
+        throw createError(ErrorCodes.INVALID_EXPRESSION, `Missing operand around ${separator}`);
+    }
     return parts;
+}
+
+function findConditional(source: string, positions: number[]): { question: number; colon: number } | null {
+    const question = positions.find((index) => source[index] === '?'
+        && source[index - 1] !== '?' && source[index + 1] !== '?');
+    if (question === undefined) return null;
+    let nested = 0;
+    for (const index of positions) {
+        if (index <= question) continue;
+        if (source[index] === '?' && source[index - 1] !== '?' && source[index + 1] !== '?') nested++;
+        if (source[index] === ':') {
+            if (nested === 0) return { question, colon: index };
+            nested--;
+        }
+    }
+    throw createError(ErrorCodes.INVALID_EXPRESSION, 'Conditional expression is missing a branch');
+}
+
+function findBinaryOperator(
+    source: string,
+    positions: number[],
+    operators: string[],
+    rightmost = false,
+): { index: number; operator: string } | null {
+    let match: { index: number; operator: string } | null = null;
+    for (const index of positions) {
+        const operator = operators.find((candidate) => source.startsWith(candidate, index));
+        if (!operator) continue;
+        if ((operator === '+' || operator === '-') && !source.slice(0, index).trim()) continue;
+        if ((operator === '+' || operator === '-') && /[+\-*/%<>=!?&|:,]$/.test(source.slice(0, index).trimEnd())) continue;
+        match = { index, operator };
+        if (!rightmost) break;
+    }
+    return match;
 }
 
 function stripOuterParentheses(source: string): string {

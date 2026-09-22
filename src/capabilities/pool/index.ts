@@ -119,6 +119,9 @@ export class ConnectionPoolManager {
     readonly _fallback: { enabled: boolean; fallbackStrategy: FallbackStrategy; retryDelay: number; maxRetries: number; };
     readonly _pools: Map<string, ManagedPool>;
     private readonly _pendingAdds = new Set<string>();
+    private readonly _pendingAddTasks = new Set<Promise<void>>();
+    private _generation = 0;
+    private _closePromise: Promise<void> | null = null;
 
     constructor(options: InternalPoolManagerOptions = {}) {
         this.logger = options.logger ?? null;
@@ -152,35 +155,21 @@ export class ConnectionPoolManager {
      */
     async addPool(config: PoolConfig): Promise<void> {
         validatePoolConfig(config as unknown as Record<string, unknown>);
+        if (this._closed) {
+            throw createError(ErrorCodes.INVALID_OPERATION, 'Connection pool manager is closed');
+        }
         if (this.pools.has(config.name) || this._pendingAdds.has(config.name)) {
             throw createError(ErrorCodes.INVALID_CONFIG, `Pool '${config.name}' already exists`);
         }
-        if (this.maxPoolsCount > 0 && this.pools.size >= this.maxPoolsCount) {
+        if (this.maxPoolsCount > 0 && this.pools.size + this._pendingAdds.size >= this.maxPoolsCount) {
             throw createError(ErrorCodes.INVALID_CONFIG, `Maximum pool count (${this.maxPoolsCount}) reached`);
         }
         this._pendingAdds.add(config.name);
+        const generation = this._generation;
+        const task = this._finishAddPool(config, generation);
+        this._pendingAddTasks.add(task);
         try {
-            const client = await this.clientFactory(config);
-            if (this.pools.has(config.name)) {
-                await client.close().catch(() => { });
-                throw createError(ErrorCodes.INVALID_CONFIG, `Pool '${config.name}' already exists`);
-            }
-            this.pools.set(config.name, {
-                client,
-                config,
-                createdAt: Date.now(),
-            });
-            this.healthStatus.set(config.name, {
-                status: 'up',
-                consecutiveFailures: 0,
-                lastCheckTime: null,
-                lastError: null,
-                uptime: 0,
-            });
-            this.stats.set(config.name, createEmptyPoolStats(config.name));
-            // v1 compat
-            this._configs.set(config.name, config);
-            this._healthChecker.register(config.name, (config.healthCheck ?? {}) as Record<string, unknown>);
+            await task;
         } catch (err) {
             // v1 compat: ensure connection-level errors include 'connect'/'ETIMEDOUT'/'ECONNREFUSED'
             // so callers can detect network failures. MongoDB driver v6 wraps socket errors in
@@ -198,7 +187,28 @@ export class ConnectionPoolManager {
             throw err;
         } finally {
             this._pendingAdds.delete(config.name);
+            this._pendingAddTasks.delete(task);
         }
+    }
+
+    private async _finishAddPool(config: PoolConfig, generation: number): Promise<void> {
+        const client = await this.clientFactory(config);
+        if (this._closed || generation !== this._generation || this.pools.has(config.name)) {
+            await client.close().catch(() => { });
+            throw createError(
+                this._closed || generation !== this._generation ? ErrorCodes.INVALID_OPERATION : ErrorCodes.INVALID_CONFIG,
+                this._closed || generation !== this._generation
+                    ? 'Connection pool manager closed while adding a pool'
+                    : `Pool '${config.name}' already exists`,
+            );
+        }
+        this.pools.set(config.name, { client, config, createdAt: Date.now() });
+        this.healthStatus.set(config.name, {
+            status: 'up', consecutiveFailures: 0, lastCheckTime: null, lastError: null, uptime: 0,
+        });
+        this.stats.set(config.name, createEmptyPoolStats(config.name));
+        this._configs.set(config.name, config);
+        this._healthChecker.register(config.name, (config.healthCheck ?? {}) as Record<string, unknown>);
     }
 
     /**
@@ -388,16 +398,25 @@ export class ConnectionPoolManager {
      * @since v1.0.8
      */
     async close(): Promise<void> {
+        if (this._closePromise) return this._closePromise;
+        this._closed = true;
+        this._generation += 1;
+        this._closePromise = this._closeAllPools();
+        return this._closePromise;
+    }
+
+    private async _closeAllPools(): Promise<void> {
         this.stopHealthCheck();
         this._healthChecker.stop();
         this._stats.close();
+        await Promise.allSettled([...this._pendingAddTasks]);
         for (const pool of this.pools.values()) {
             await pool.client.close();
         }
         this.pools.clear();
         this.healthStatus.clear();
         this.stats.clear();
-        this._closed = true;
+        this._configs.clear();
     }
 
     // ─── v1 compat methods ───────────────────────────────────────────────────────────

@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { BSON, ObjectId } from 'mongodb';
+import { BSON, Long, ObjectId } from 'mongodb';
 import { createMemoryServerBootstrap } from '../../bootstrap/memory-server';
 
 const MonSQLize = require('../../../dist/cjs/index.cjs');
@@ -15,6 +15,44 @@ describe('dataTasks job facade integration', () => {
 
     before(async () => { uri = (await bootstrap.setup()).uri; });
     after(async () => { await bootstrap.teardown(); });
+
+    it('preserves an unsafe-range Long identity through apply, reopen, and restore', async () => {
+        const backupDir = await fs.mkdtemp(path.join(os.tmpdir(), 'monsqlize-job-long-'));
+        const source = new MonSQLize({ type: 'mongodb', databaseName: 'job_long_source', config: { uri } });
+        const target = new MonSQLize({ type: 'mongodb', databaseName: 'job_long_target', config: { uri } });
+        const code = Long.fromString('9007199254740993');
+        try {
+            await Promise.all([source.connect(), target.connect()]);
+            await source.collection('items').insertOne({ code, value: 'new' });
+            await target.collection('items').insertOne({ code, value: 'old' });
+            const job = {
+                name: 'long-identity', source, target, targetEnvironment: 'test',
+                collections: [{ name: 'items',
+                    indexes: [{ key: { code: 1 }, options: { unique: true } }],
+                    data: { all: true, identity: { mode: 'fields' as const, fields: ['code'] } } }],
+                backup: { dir: backupDir, compression: 'none' as const },
+            };
+            const preview = await MonSQLize.dataTasks.preview(job);
+            assert.equal(preview.passed, true, preview.errors.join('\n'));
+            const applied = await MonSQLize.dataTasks.apply(job, { approval: preview.approval });
+            assert.equal(applied.passed, true, applied.errors.join('\n'));
+            const reopened = { runId: applied.backup.runId, manifestPath: applied.backup.manifestPath,
+                checksum: applied.backup.checksum };
+            const manifest = BSON.EJSON.parse(await fs.readFile(reopened.manifestPath, 'utf8'), { relaxed: false });
+            assert.ok(manifest.appliedOperations[0].identity.code instanceof Long);
+            assert.equal(manifest.appliedOperations[0].identity.code.toString(), code.toString());
+            const restorePreview = await MonSQLize.dataTasks.previewRestore(reopened, { target });
+            assert.equal(restorePreview.passed, true, restorePreview.errors.join('\n'));
+            const restored = await MonSQLize.dataTasks.restore(reopened, { target, approval: restorePreview.approval });
+            assert.equal(restored.passed, true, restored.errors.join('\n'));
+            const document = await target.collection('items').findOne({ code });
+            assert.equal(document.value, 'old');
+            assert.ok(document.code instanceof Long);
+        } finally {
+            await Promise.allSettled([source.close(), target.close()]);
+            await fs.rm(backupDir, { recursive: true, force: true });
+        }
+    });
 
     it('plans more than the public find default without exceeding maxDocuments', async () => {
         const source = new MonSQLize({ type: 'mongodb', databaseName: 'job_bounded_source', config: { uri } });

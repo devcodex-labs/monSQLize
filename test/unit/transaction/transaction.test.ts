@@ -1,5 +1,7 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { insertOneDocument } from '../../../src/adapters/mongodb/writes/write-basic';
+import { insertBatchDocuments } from '../../../src/adapters/mongodb/writes/write-batch';
 
 const MonSQLize = require('../../../dist/cjs/index.cjs');
 
@@ -122,6 +124,70 @@ describe('P4-A transaction', () => {
 
         assert.equal(commits, 2);
         assert.equal(transaction.getInfo().status, 'committed');
+        await transaction.end();
+    });
+
+    it('retries a wrapped transient transaction error through its cause chain', async () => {
+        const manager = new MonSQLize.TransactionManager({ client: createFakeClient(), maxRetries: 1, retryDelay: 0 });
+        let callbacks = 0;
+        const result = await manager.withTransaction(async () => {
+            callbacks += 1;
+            if (callbacks === 1) {
+                const wrapped = new Error('write adapter failed') as Error & { cause?: unknown };
+                wrapped.cause = { code: 112, errorLabels: ['TransientTransactionError'] };
+                throw wrapped;
+            }
+            return 'recovered';
+        });
+        assert.equal(result, 'recovered');
+        assert.equal(callbacks, 2);
+    });
+
+    it('retries only commit for a wrapped unknown commit result with a transient cause', async () => {
+        let callbacks = 0;
+        let commits = 0;
+        const client = {
+            startSession() {
+                return {
+                    ...createFakeSession(),
+                    commitTransaction() {
+                        commits += 1;
+                        if (commits === 1) {
+                            const wrapped = new Error('commit outcome unknown') as Error & { cause?: unknown };
+                            wrapped.cause = { code: 112, errorLabels: ['UnknownTransactionCommitResult'] };
+                            return Promise.reject(wrapped);
+                        }
+                        return Promise.resolve();
+                    },
+                };
+            },
+        };
+        const manager = new MonSQLize.TransactionManager({ client, maxRetries: 2, retryDelay: 0 });
+        await manager.withTransaction(async () => { callbacks += 1; });
+        assert.equal(callbacks, 1);
+        assert.equal(commits, 2);
+    });
+
+    it('rejects late wrapped writes while abort is in progress, including batch subwrites', async () => {
+        let releaseAbort: () => void = () => undefined;
+        const abortPending = new Promise<void>((resolve) => { releaseAbort = resolve; });
+        const session = {
+            ...createFakeSession(),
+            abortTransaction: () => abortPending,
+        };
+        const transaction = new MonSQLize.Transaction(session);
+        await transaction.start();
+        let driverWrites = 0;
+        const collection = {
+            insertOne: async () => { driverWrites += 1; return { acknowledged: true, insertedId: 1 }; },
+            insertMany: async () => { driverWrites += 1; return { acknowledged: true, insertedCount: 1, insertedIds: { 0: 1 } }; },
+        } as any;
+        const aborting = transaction.abort();
+        await assert.rejects(() => insertOneDocument(collection, { n: 1 }, { session } as any), /no longer accepting writes/);
+        await assert.rejects(() => insertBatchDocuments(collection, [{ n: 1 }], { session, batchSize: 1 } as any), /no longer accepting writes/);
+        assert.equal(driverWrites, 0);
+        releaseAbort();
+        await aborting;
         await transaction.end();
     });
 

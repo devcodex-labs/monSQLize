@@ -460,7 +460,7 @@ describe('ChangeStreamSyncManager — filter and transform', () => {
         await mgr.stop();
 
         assert.equal(applied.length, 0, 'filter=false: no targets should receive events');
-        assert.equal(savedToken, null, 'filter=false: no token saved');
+        assert.deepEqual(savedToken, { token: 1 }, 'filter=false: the filtered event advances its own resume token');
     });
 
     it('transform is called when provided', async () => {

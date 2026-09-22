@@ -40,6 +40,39 @@ describe('P4-B pool manager', () => {
         // no-op, isolated instances per test
     });
 
+    it('reserves capacity while a client is opening', async () => {
+        let finish!: (client: FakeClient) => void;
+        const manager = new MonSQLize.ConnectionPoolManager({
+            maxPoolsCount: 1,
+            clientFactory: () => new Promise<FakeClient>((resolve) => { finish = resolve; }),
+        });
+        const first = manager.addPool({ name: 'first', uri: 'mongodb://first' });
+        await assert.rejects(
+            () => manager.addPool({ name: 'second', uri: 'mongodb://second' }),
+            /Maximum pool count/,
+        );
+        finish(createFakeClient('first'));
+        await first;
+        await manager.close();
+    });
+
+    it('closes a late client before close resolves and never publishes it', async () => {
+        let finish!: (client: FakeClient) => void;
+        let closed = 0;
+        const manager = new MonSQLize.ConnectionPoolManager({
+            clientFactory: () => new Promise<FakeClient>((resolve) => { finish = resolve; }),
+        });
+        const adding = manager.addPool({ name: 'late', uri: 'mongodb://late' });
+        const closing = manager.close();
+        await assert.rejects(() => manager.addPool({ name: 'after', uri: 'mongodb://after' }), /closed/);
+        finish({ ...createFakeClient('late'), close: async () => { closed += 1; return true; } });
+        await assert.rejects(() => adding, /closed/);
+        await closing;
+        assert.equal(closed, 1);
+        assert.equal(manager.getPool('late'), null);
+        assert.deepEqual(manager.getPoolNames(), []);
+    });
+
     it('supports minimal add/remove/select/stats/health round trip', async () => {
         let unhealthy = false;
         const manager = new MonSQLize.ConnectionPoolManager({

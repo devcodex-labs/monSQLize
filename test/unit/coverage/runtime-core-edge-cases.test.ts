@@ -164,8 +164,32 @@ describe('MonSQLize pre-connect method calls', () => {
         assert.equal(h.connected, false);
         assert.equal(h.status, 'down');
         assert.equal(h.checks?.driver?.status, 'down');
-        assert.equal(h.checks?.cache?.status, 'up');
+        assert.equal(h.checks?.cache?.status, 'unknown');
         assert.ok(h.capabilities);
+    });
+
+    it('health() reports disabled cache and does not infer pool health from a manager object', async () => {
+        const r = new MonSQLize({
+            type: 'mongodb', databaseName: 'test', config: { uri: 'mongodb://localhost:27999' },
+            cache: { enabled: false },
+        });
+        r._poolManager = { getHealthStatus: () => ({}) };
+        const health = await r.health();
+        assert.equal(health.cache.enabled, false);
+        assert.equal(health.checks.cache.status, 'unknown');
+        assert.equal(health.checks.pools.status, 'unknown');
+    });
+
+    it('health() reports explicit pool failures without changing driver connectivity status', async () => {
+        const r = makeRuntime();
+        r._connected = true;
+        r._adapterBridge = { ping: async () => true };
+        r._poolManager = { getHealthStatus: () => ({ primary: { status: 'down' } }) };
+        const health = await r.health();
+        assert.equal(health.checks.pools.status, 'down');
+        assert.equal(health.checks.pools.health.primary.status, 'down');
+        assert.equal(health.status, 'up');
+        assert.equal(health.checks.driver.status, 'up');
     });
 
     it('emit("error") with no listener logs instead of throwing', () => {

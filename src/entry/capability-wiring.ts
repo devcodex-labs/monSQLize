@@ -11,6 +11,7 @@
 import type { MonSQLizeOptions } from '../../types/monsqlize';
 import type { RuntimeDefaults } from '../types/internal/query';
 import type { LoggerLike } from '../core/logger';
+import { ErrorCodes } from '../core/errors';
 import type { ModelDefinition } from '../capabilities/model';
 import { Model } from '../capabilities/model';
 import { CountQueue } from '../capabilities/count-queue';
@@ -183,6 +184,7 @@ export async function initializeDistributedCacheInvalidator(
             logger,
         });
     } catch (err) {
+        if ((err as { code?: unknown } | null)?.code === ErrorCodes.INVALID_CONFIG) throw err;
         logger.warn?.('[Cache] Failed to initialize distributed cache invalidator — check Redis config or package installation completeness.', err);
         return null;
     }

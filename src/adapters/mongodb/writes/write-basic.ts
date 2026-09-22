@@ -7,6 +7,7 @@
 import { Collection, Document, FindOneAndDeleteOptions, FindOneAndReplaceOptions, FindOneAndUpdateOptions } from 'mongodb';
 import { normalizeProjection } from '../../../utils/normalize';
 import { createError, ErrorCodes } from '../../../core/errors';
+import { assertManagedTransactionWriteAllowed } from '../../../capabilities/transaction';
 import type { IncrementOneOptions } from '../../../../types/collection';
 import { createIncrementUpdate, stripWriteCacheControlOptions } from './write-utils';
 
@@ -15,6 +16,7 @@ export async function insertOneDocument<TSchema extends Document = Document>(
     collection: Collection<TSchema>,
     ...args: Parameters<Collection<TSchema>['insertOne']>
 ): ReturnType<Collection<TSchema>['insertOne']> {
+    assertManagedTransactionWriteAllowed(args[1]);
     return collection.insertOne(...args);
 }
 
@@ -23,6 +25,7 @@ export async function insertManyDocuments<TSchema extends Document = Document>(
     collection: Collection<TSchema>,
     ...args: Parameters<Collection<TSchema>['insertMany']>
 ): ReturnType<Collection<TSchema>['insertMany']> {
+    assertManagedTransactionWriteAllowed(args[1]);
     return collection.insertMany(...args);
 }
 
@@ -31,6 +34,7 @@ export async function updateOneDocument<TSchema extends Document = Document>(
     collection: Collection<TSchema>,
     ...args: Parameters<Collection<TSchema>['updateOne']>
 ): ReturnType<Collection<TSchema>['updateOne']> {
+    assertManagedTransactionWriteAllowed(args[2]);
     return collection.updateOne(...args);
 }
 
@@ -39,6 +43,7 @@ export async function updateManyDocuments<TSchema extends Document = Document>(
     collection: Collection<TSchema>,
     ...args: Parameters<Collection<TSchema>['updateMany']>
 ): ReturnType<Collection<TSchema>['updateMany']> {
+    assertManagedTransactionWriteAllowed(args[2]);
     return collection.updateMany(...args);
 }
 
@@ -47,6 +52,7 @@ export async function replaceOneDocument<TSchema extends Document = Document>(
     collection: Collection<TSchema>,
     ...args: Parameters<Collection<TSchema>['replaceOne']>
 ): ReturnType<Collection<TSchema>['replaceOne']> {
+    assertManagedTransactionWriteAllowed(args[2]);
     return collection.replaceOne(...args);
 }
 
@@ -57,6 +63,7 @@ export async function findOneAndUpdateDocument<TSchema extends Document = Docume
     update: Parameters<Collection<TSchema>['findOneAndUpdate']>[1],
     options?: unknown,
 ): ReturnType<Collection<TSchema>['findOneAndUpdate']> {
+    assertManagedTransactionWriteAllowed(options);
     if (options !== undefined) {
         return collection.findOneAndUpdate(filter, update, options as FindOneAndUpdateOptions);
     }
@@ -70,6 +77,7 @@ export async function findOneAndReplaceDocument<TSchema extends Document = Docum
     replacement: Parameters<Collection<TSchema>['findOneAndReplace']>[1],
     options?: unknown,
 ): ReturnType<Collection<TSchema>['findOneAndReplace']> {
+    assertManagedTransactionWriteAllowed(options);
     if (options !== undefined) {
         return collection.findOneAndReplace(filter, replacement, options as FindOneAndReplaceOptions);
     }
@@ -82,6 +90,7 @@ export async function findOneAndDeleteDocument<TSchema extends Document = Docume
     filter: Parameters<Collection<TSchema>['findOneAndDelete']>[0],
     options?: unknown,
 ): ReturnType<Collection<TSchema>['findOneAndDelete']> {
+    assertManagedTransactionWriteAllowed(options);
     if (options !== undefined) {
         return collection.findOneAndDelete(filter, options as FindOneAndDeleteOptions);
     }
@@ -95,6 +104,7 @@ export async function upsertOneDocument<TSchema extends Document = Document>(
     update: Parameters<Collection<TSchema>['updateOne']>[1],
     options: NonNullable<Parameters<Collection<TSchema>['updateOne']>[2]> = {},
 ): ReturnType<Collection<TSchema>['updateOne']> {
+    assertManagedTransactionWriteAllowed(options);
     return collection.updateOne(filter, update, {
         ...options,
         upsert: true,
@@ -106,6 +116,7 @@ export async function deleteOneDocument<TSchema extends Document = Document>(
     collection: Collection<TSchema>,
     ...args: Parameters<Collection<TSchema>['deleteOne']>
 ): ReturnType<Collection<TSchema>['deleteOne']> {
+    assertManagedTransactionWriteAllowed(args[1]);
     return collection.deleteOne(...args);
 }
 
@@ -114,6 +125,7 @@ export async function deleteManyDocuments<TSchema extends Document = Document>(
     collection: Collection<TSchema>,
     ...args: Parameters<Collection<TSchema>['deleteMany']>
 ): ReturnType<Collection<TSchema>['deleteMany']> {
+    assertManagedTransactionWriteAllowed(args[1]);
     return collection.deleteMany(...args);
 }
 
@@ -158,6 +170,7 @@ export async function incrementOneDocument<TSchema extends Document = Document>(
     };
     if (normalizedProjection) findOptions.projection = normalizedProjection;
 
+    assertManagedTransactionWriteAllowed(findOptions);
     const rawResult = await (collection as unknown as Collection<TSchema>).findOneAndUpdate(
         filter as Parameters<Collection<TSchema>['findOneAndUpdate']>[0],
         updateDocument as Parameters<Collection<TSchema>['findOneAndUpdate']>[1],

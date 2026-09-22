@@ -2,6 +2,8 @@
 
 ## API parameter description
 
+The original business filter is checked again for each selected document at write time. A document that changed before deletion is skipped. After a fatal batch error, workers stop acquiring new batches and wait for in-flight batches to settle before returning the error.
+
 ## Method signature
 
 ```typescript

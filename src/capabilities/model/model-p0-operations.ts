@@ -177,7 +177,7 @@ export async function executeProtectedRelationDelete<TDocument>(
     try {
         const targetFilter = force || !host.softDeleteConfig?.enabled
             ? filter
-            : { ...filter, [host.softDeleteConfig.field]: null };
+            : applyModelSoftDeleteFilter(filter, undefined, host.softDeleteConfig);
         const rawTarget = await host.collection.findOne(
             targetFilter,
             relationTargetReadOptions(options, buildRelationUsageTargetProjection(host.modelName)),

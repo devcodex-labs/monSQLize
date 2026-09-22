@@ -71,6 +71,7 @@ interface QueueEntry {
     reject: (err: Error) => void;
     timer: ReturnType<typeof setTimeout>;
     startTime: number;
+    cleanup: () => void;
 }
 
 /**
@@ -120,8 +121,10 @@ export class CountQueue {
      * @returns The result of fn
      * @throws A controlled error when the queue is full or the wait times out
      */
-    async execute<T>(fn: CountQueueTask<T>): Promise<T> {
+    async execute<T>(fn: CountQueueTask<T>, options: { signal?: AbortSignal } = {}): Promise<T> {
         const startTime = Date.now();
+        const signal = options.signal;
+        if (signal?.aborted) throw createError(ErrorCodes.INVALID_OPERATION, 'Count operation aborted');
 
         if (this.running >= this.concurrency) {
             if (this.queue.length >= this.maxQueueSize) {
@@ -129,20 +132,20 @@ export class CountQueue {
                 throw createError(ErrorCodes.INVALID_OPERATION, `Count queue is full (${this.maxQueueSize})`);
             }
             this.stats.queued += 1;
-            await this._waitInQueue(startTime);
+            await this._waitInQueue(startTime, signal);
         }
+
+        if (signal?.aborted) throw createError(ErrorCodes.INVALID_OPERATION, 'Count operation aborted');
 
         this.running += 1;
         this.stats.executed += 1;
 
-        try {
-            const elapsed = Date.now() - startTime;
-            const remainingMs = Math.max(1, this.timeout - elapsed);
-            return await this._executeWithTimeout(fn, remainingMs);
-        } finally {
+        const elapsed = Date.now() - startTime;
+        const remainingMs = Math.max(1, this.timeout - elapsed);
+        return this._executeWithTimeout(fn, remainingMs, signal, () => {
             this.running -= 1;
             this._wakeNext();
-        }
+        });
     }
 
     /**
@@ -180,18 +183,29 @@ export class CountQueue {
             const entry = this.queue.shift();
             if (entry) {
                 clearTimeout(entry.timer);
+                entry.cleanup();
                 entry.reject(createError(ErrorCodes.INVALID_OPERATION, 'Count queue was cleared before execution'));
             }
         }
     }
 
-    private _waitInQueue(startTime: number): Promise<void> {
+    private _waitInQueue(startTime: number, signal?: AbortSignal): Promise<void> {
         return new Promise<void>((resolve, reject) => {
             let entry: QueueEntry;
+            const onAbort = () => {
+                const index = this.queue.indexOf(entry);
+                if (index !== -1) {
+                    this.queue.splice(index, 1);
+                    clearTimeout(entry.timer);
+                    entry.cleanup();
+                    reject(createError(ErrorCodes.INVALID_OPERATION, 'Count operation aborted'));
+                }
+            };
             const timer = setTimeout(() => {
                 const index = this.queue.indexOf(entry);
                 if (index !== -1) {
                     this.queue.splice(index, 1);
+                    entry.cleanup();
                     this.stats.timeout += 1;
                     reject(createError(ErrorCodes.OPERATION_TIMEOUT, `Count queue wait timeout (${this.timeout}ms)`));
                 }
@@ -206,8 +220,11 @@ export class CountQueue {
                 reject,
                 timer,
                 startTime,
+                cleanup: () => signal?.removeEventListener('abort', onAbort),
             };
             this.queue.push(entry);
+            signal?.addEventListener('abort', onAbort, { once: true });
+            if (signal?.aborted) onAbort();
         });
     }
 
@@ -216,6 +233,7 @@ export class CountQueue {
             const entry = this.queue.shift();
             if (entry) {
                 clearTimeout(entry.timer);
+                entry.cleanup();
                 entry.resolve();
             }
         }
@@ -235,10 +253,14 @@ export class CountQueue {
         return value;
     }
 
-    private _executeWithTimeout<T>(fn: CountQueueTask<T>, timeoutMs = this.timeout): Promise<T> {
+    private _executeWithTimeout<T>(
+        fn: CountQueueTask<T>, timeoutMs: number, signal: AbortSignal | undefined, release: () => void,
+    ): Promise<T> {
         let timer: ReturnType<typeof setTimeout> | null = null;
         const controller = new AbortController();
-        const timeoutPromise = new Promise<never>((_, reject) => {
+        let rejectCancellation!: (error: Error) => void;
+        const cancellation = new Promise<never>((_, reject) => {
+            rejectCancellation = reject;
             timer = setTimeout(
                 () => {
                     controller.abort();
@@ -248,14 +270,22 @@ export class CountQueue {
                 timeoutMs,
             );
         });
+        const onAbort = () => {
+            controller.abort();
+            rejectCancellation(createError(ErrorCodes.INVALID_OPERATION, 'Count operation aborted'));
+        };
+        signal?.addEventListener('abort', onAbort, { once: true });
         let taskPromise: Promise<T>;
         try {
             taskPromise = Promise.resolve(fn(controller.signal));
         } catch (error) {
             taskPromise = Promise.reject(error);
         }
-        return Promise.race([taskPromise, timeoutPromise]).finally(() => {
+        void taskPromise.then(release, release);
+        if (signal?.aborted) onAbort();
+        return Promise.race([taskPromise, cancellation]).finally(() => {
             if (timer !== null) clearTimeout(timer);
+            signal?.removeEventListener('abort', onAbort);
         });
     }
 

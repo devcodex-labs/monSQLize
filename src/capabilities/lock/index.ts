@@ -430,18 +430,19 @@ export class DistributedCacheLockManager {
         retryDelay?: number;
         fallbackToNoLock?: boolean;
     } = {}): Promise<T> {
+        let lock: Lock;
         try {
-            const lock = await this.acquireLock(key, options);
-            try {
-                return await callback();
-            } finally {
-                await lock.release().catch(() => { });
-            }
+            lock = await this.acquireLock(key, options);
         } catch (error) {
             if (this._isRedisConnectionError(error as Error) && options.fallbackToNoLock) {
                 return callback();
             }
             throw error;
+        }
+        try {
+            return await callback();
+        } finally {
+            await lock.release().catch(() => { });
         }
     }
 

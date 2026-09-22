@@ -5,6 +5,7 @@
  */
 import { Collection, Document, FindOptions } from 'mongodb';
 import { createError, ErrorCodes } from '../../../core/errors';
+import { assertManagedTransactionWriteAllowed } from '../../../capabilities/transaction';
 import type {
     BatchWriteOptions,
     DeleteBatchResult,
@@ -161,14 +162,25 @@ async function runWithConcurrency<T>(
     }
 
     let nextIndex = 0;
+    let stopAcquiring = false;
+    let firstFatal: unknown;
     const workerCount = Math.min(concurrency, items.length);
     await Promise.all(Array.from({ length: workerCount }, async () => {
-        while (nextIndex < items.length) {
+        while (!stopAcquiring && nextIndex < items.length) {
             const item = items[nextIndex];
             nextIndex += 1;
-            await worker(item);
+            try {
+                await worker(item);
+            } catch (error) {
+                if (!stopAcquiring) {
+                    firstFatal = error;
+                    stopAcquiring = true;
+                }
+                break;
+            }
         }
     }));
+    if (stopAcquiring) throw firstFatal;
 }
 
 export async function insertBatchDocuments<TSchema extends Document = Document>(
@@ -234,6 +246,7 @@ export async function insertBatchDocuments<TSchema extends Document = Document>(
         retries: [],
     };
 
+    assertManagedTransactionWriteAllowed(driverOptions);
     await runWithConcurrency(batchPlans, effectiveConcurrency, async ({ batchIndex, batch, batchOffset }) => {
         let pendingBatch = batch;
         let pendingIndexes = batch.map((_, index) => index);
@@ -241,6 +254,7 @@ export async function insertBatchDocuments<TSchema extends Document = Document>(
 
         while (true) {
             try {
+                assertManagedTransactionWriteAllowed(driverOptions);
                 const batchResult = await collection.insertMany(pendingBatch as unknown as Parameters<Collection<TSchema>['insertMany']>[0], {
                     ...driverOptions,
                     ordered,
@@ -260,6 +274,7 @@ export async function insertBatchDocuments<TSchema extends Document = Document>(
                 });
                 break;
             } catch (cause) {
+                assertManagedTransactionWriteAllowed(driverOptions);
                 const errorRecord = {
                     batchIndex,
                     message: cause instanceof Error ? cause.message : String(cause),
@@ -338,6 +353,13 @@ export async function insertBatchDocuments<TSchema extends Document = Document>(
     return result;
 }
 
+function batchWriteFilter(filter: Record<string, unknown>, batch: unknown[]): Record<string, unknown> {
+    const ids = { _id: { $in: batch } };
+    return Object.prototype.hasOwnProperty.call(filter, '_id')
+        ? { $and: [filter, ids] }
+        : { ...filter, ...ids };
+}
+
 export async function updateBatchDocuments<TSchema extends Document = Document>(
     collection: Collection<TSchema>,
     filter: Parameters<Collection<TSchema>['find']>[0],
@@ -393,6 +415,7 @@ export async function updateBatchDocuments<TSchema extends Document = Document>(
             'updateBatch retry requires an idempotent update; non-idempotent operators such as $inc/$push cannot be safely replayed',
         );
     }
+    assertManagedTransactionWriteAllowed(driverOptions);
     const estimatedTotal = await estimateBatchTotal(collection, filter, driverOptions, estimateProgress);
     const totalBatches = estimatedTotal === null ? null : Math.ceil(estimatedTotal / batchSize);
     const result: UpdateBatchResult = {
@@ -410,8 +433,9 @@ export async function updateBatchDocuments<TSchema extends Document = Document>(
         let attempts = 0;
         while (true) {
             try {
+                assertManagedTransactionWriteAllowed(driverOptions);
                 const batchResult = await collection.updateMany(
-                    { _id: { $in: batch } } as Parameters<Collection<TSchema>['updateMany']>[0],
+                    batchWriteFilter(filter, batch) as Parameters<Collection<TSchema>['updateMany']>[0],
                     update,
                     driverOptions,
                 );
@@ -429,6 +453,7 @@ export async function updateBatchDocuments<TSchema extends Document = Document>(
                 });
                 break;
             } catch (cause) {
+                assertManagedTransactionWriteAllowed(driverOptions);
                 const errorRecord = {
                     batchIndex,
                     message: cause instanceof Error ? cause.message : String(cause),
@@ -506,6 +531,7 @@ export async function deleteBatchDocuments<TSchema extends Document = Document>(
         throw createError(ErrorCodes.INVALID_ARGUMENT, 'retryAttempts must be a non-negative integer');
     }
 
+    assertManagedTransactionWriteAllowed(driverOptions);
     const estimatedTotal = await estimateBatchTotal(collection, filter, driverOptions, estimateProgress);
     const totalBatches = estimatedTotal === null ? null : Math.ceil(estimatedTotal / batchSize);
     const result: DeleteBatchResult & {
@@ -524,8 +550,9 @@ export async function deleteBatchDocuments<TSchema extends Document = Document>(
         let attempts = 0;
         while (true) {
             try {
+                assertManagedTransactionWriteAllowed(driverOptions);
                 const batchResult = await collection.deleteMany(
-                    { _id: { $in: batch } } as Parameters<Collection<TSchema>['deleteMany']>[0],
+                    batchWriteFilter(filter, batch) as Parameters<Collection<TSchema>['deleteMany']>[0],
                     driverOptions,
                 );
                 result.deletedCount += batchResult.deletedCount;
@@ -540,6 +567,7 @@ export async function deleteBatchDocuments<TSchema extends Document = Document>(
                 });
                 break;
             } catch (cause) {
+                assertManagedTransactionWriteAllowed(driverOptions);
                 const errorRecord = {
                     batchIndex,
                     message: cause instanceof Error ? cause.message : String(cause),

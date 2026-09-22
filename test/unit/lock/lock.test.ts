@@ -1,5 +1,6 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { DistributedCacheLockManager } from '../../../src/capabilities/lock';
 
 const MonSQLize = require('../../../dist/cjs/index.cjs');
 
@@ -65,5 +66,28 @@ describe('P4-A lock', () => {
 
         await held.release();
         manager.close();
+    });
+});
+
+describe('DistributedCacheLockManager.withLock', () => {
+    it('does not replay a callback that throws a Redis-like connection error', async () => {
+        let calls = 0;
+        let releases = 0;
+        const manager = new DistributedCacheLockManager({
+            redis: {
+                on: () => undefined,
+                set: async () => 'OK',
+                eval: async () => { releases += 1; return 1; },
+            },
+        });
+        await assert.rejects(
+            () => manager.withLock('once', async () => {
+                calls += 1;
+                throw new Error('ETIMEDOUT from business callback');
+            }, { fallbackToNoLock: true, retryTimes: 0 }),
+            /ETIMEDOUT from business callback/,
+        );
+        assert.equal(calls, 1);
+        assert.equal(releases, 1);
     });
 });

@@ -2,6 +2,8 @@
 
 Model 层在 MongoDB runtime 之上提供 schema 校验、自定义方法、生命周期钩子、relations 和 Model 作用域写入能力。它不会隐藏 collection 访问，而是把重复的文档工作流收口到稳定的 Model 表面。
 
+3.3.0 修复迁移说明：文档实例的 `remove()` 现在遵循 Model 删除 hook 和软删除规则。boolean 软删除仅把 `true` 视为已删除；`false`、`null`、字段缺失均可见。严格版本更新会枚举全部匹配候选，不受公开 `find` 默认上限影响；业务条件变化或文档被并发删除计为 skipped，而不是版本冲突。populate 的 `skip`/`limit` 按每个父文档执行；不限量关联结果仍可能占用较多内存。
+
 **特性**：Schema 验证 · 自定义方法 · 生命周期钩子 · 自动索引 · 数据源绑定
 
 ---
@@ -133,7 +135,7 @@ Model.define('users', {
             username: 'string:3-32!',
             email: 'email!',
             password: 'string!',
-            role: this.enums.role.default('user')
+            role: s(this.enums.role).default('user')
         });
     },
     methods: (model) => ({
@@ -806,7 +808,7 @@ schema: function(s) {
         username: 'string:3-32!',
         email: 'email!',
         age: 'number:0-120',
-        role: this.enums.role.default('user')  // 引用 enums
+        role: s(this.enums.role).default('user')  // 引用 enums
     });
 }
 
@@ -986,7 +988,7 @@ enums: {
 // schema 中引用
 schema: function(s) {
     return s({
-        role: this.enums.role.default('user')
+        role: s(this.enums.role).default('user')
     });
 }
 ```
@@ -1009,10 +1011,10 @@ Model.define('users', {
         return s({
             username: 'string:3-32!',
             email: 'email!',
-            password: 'string!'.pattern(/^[a-zA-Z0-9]{6,30}$/),
-            role: this.enums.role.default('user'),
-            status: this.enums.status.default('active'),
-            loginCount: 'number'.default(0),
+            password: s('string!').pattern(/^[a-zA-Z0-9]{6,30}$/),
+            role: s(this.enums.role).default('user'),
+            status: s(this.enums.status).default('active'),
+            loginCount: s('number').default(0),
             lastLoginAt: 'date',
             createdAt: 'date!',
             updatedAt: 'date!'

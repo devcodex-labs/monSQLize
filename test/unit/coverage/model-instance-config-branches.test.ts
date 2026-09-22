@@ -10,6 +10,7 @@ import {
     attachModelStatics,
     isModelValidationEnabled,
     buildModelSchemaState,
+    ensureModelIndexesForCollection,
 } from '../../../src/capabilities/model/model-instance-config';
 
 describe('resolveModelTimestampsConfig — branch coverage', () => {
@@ -237,5 +238,25 @@ describe('buildModelSchemaState — branch coverage', () => {
         const result = buildModelSchemaState({ name: 'M', collection: 'c', schema: (dsl: unknown) => ({ type: 'object' }) } as any);
         // When no schema-dsl engine is available, returns null cache
         assert.equal(result.schemaError, null);
+    });
+});
+
+describe('ensureModelIndexesForCollection — ordered key comparison', () => {
+    it('does not mistake a reversed compound index for the declared key', async () => {
+        const existing = [{ name: 'b_1_a_1', key: { b: 1, a: 1 }, unique: true }];
+        const collection = {
+            getNamespace: () => ({ db: 'test', collection: 'ordered_keys' }),
+            listIndexes: async () => existing,
+            createIndex: async () => { throw new Error('dry run must not create an index'); },
+        } as any;
+        const definition = {
+            name: 'OrderedIndex',
+            collection: 'ordered_keys',
+            indexes: [{ key: { a: 1, b: 1 }, unique: true }],
+        } as any;
+        const result = await ensureModelIndexesForCollection(collection, definition, null, { dryRun: true });
+        assert.equal(result.existing.length, 0);
+        assert.equal(result.missing.length, 1);
+        assert.deepEqual(result.missing[0].key, { a: 1, b: 1 });
     });
 });

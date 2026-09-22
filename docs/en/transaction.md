@@ -4,6 +4,8 @@
 
 monSQLize wraps MongoDB driver sessions with `withTransaction()` and `startSession()` helpers. The ACID boundary is MongoDB's transaction/session boundary; monSQLize adds retry, timeout, statistics, and cache-invalidation coordination around that driver behavior.
 
+Managed transaction writes stop being accepted as soon as commit or abort begins, including lazy aggregate writes and batch subwrites. An unknown commit result retries commit without rerunning the business callback; errors after a successful commit also do not rerun it. Native sessions passed directly to the MongoDB driver keep their native behavior.
+
 
 ## Core Features
 

@@ -62,6 +62,16 @@ export class MultiLevelCache extends BaseMultiLevelCache {
         this._localCompat.setLockManager?.(lockManager);
         this._remoteCompat?.setLockManager?.(lockManager);
     }
+
+    async invalidateFromRemote(kind: 'pattern' | 'key', value: string): Promise<void> {
+        if (kind === 'pattern') {
+            await this._localCompat.delPattern(value);
+            await this._remoteCompat?.delPattern(value);
+        } else {
+            await this._localCompat.del(value);
+            await this._remoteCompat?.del(value);
+        }
+    }
 }
 
 /**

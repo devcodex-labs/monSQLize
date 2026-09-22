@@ -103,6 +103,53 @@ describe('CountQueue', () => {
         assert.equal(q.getStats().timeout, 1);
     });
 
+    it('holds the running slot until a timed-out task actually settles', async () => {
+        const q = new CountQueue({ concurrency: 1, timeout: 20 });
+        const work = deferred<number>();
+        let secondStarted = false;
+        await assert.rejects(() => q.execute(() => work.promise), /timeout/);
+        const second = q.execute(() => { secondStarted = true; return Promise.resolve(2); });
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        assert.equal(q.getStats().running, 1);
+        assert.equal(q.getStats().queuedNow, 1);
+        assert.equal(secondStarted, false);
+        work.resolve(1);
+        assert.equal(await second, 2);
+        assert.equal(secondStarted, true);
+        assert.equal(q.getStats().running, 0);
+    });
+
+    it('removes an aborted queued caller without starting its task', async () => {
+        const q = new CountQueue({ concurrency: 1 });
+        const work = deferred<number>();
+        const first = q.execute(() => work.promise);
+        const controller = new AbortController();
+        let started = false;
+        const second = q.execute(() => { started = true; return Promise.resolve(2); }, { signal: controller.signal });
+        assert.equal(q.getStats().queuedNow, 1);
+        controller.abort();
+        await assert.rejects(() => second, /aborted/);
+        assert.equal(q.getStats().queuedNow, 0);
+        assert.equal(started, false);
+        work.resolve(1);
+        await first;
+    });
+
+    it('propagates caller abort to a running task but retains its slot until settlement', async () => {
+        const q = new CountQueue({ concurrency: 1 });
+        const work = deferred<number>();
+        const controller = new AbortController();
+        let observed: AbortSignal | undefined;
+        const first = q.execute((signal?: AbortSignal) => { observed = signal; return work.promise; }, { signal: controller.signal });
+        controller.abort();
+        await assert.rejects(() => first, /aborted/);
+        assert.equal(observed?.aborted, true);
+        assert.equal(q.getStats().running, 1);
+        work.resolve(1);
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        assert.equal(q.getStats().running, 0);
+    });
+
     // ── stats tracking ────────────────────────────────────────────────────────
 
     it('getStats().executed increments per completed task', async () => {

@@ -2,6 +2,8 @@
 
 The Model layer adds schema validation, custom methods, lifecycle hooks, relations, and model-scoped write helpers on top of the MongoDB runtime. It keeps collection access explicit while giving repeated document workflows a consistent Model surface.
 
+Migration note for 3.3.0 fixes: hydrated `remove()` now follows Model delete hooks and soft-delete rules. Boolean soft delete treats only `true` as deleted; `false`, `null`, and a missing field remain visible. Strict versioned updates enumerate all matching candidates without the public `find` limit, and classify a changed business filter or removed document as skipped rather than a version conflict. Populate `skip`/`limit` is applied per parent; an unlimited populate can retain a large result in memory.
+
 **Features**: Schema validation · Custom methods · Lifecycle hooks · Automatic indexing · Data source binding
 
 ---
@@ -134,7 +136,7 @@ Model.define('users', {
             username: 'string:3-32!',
             email: 'email!',
             password: 'string!',
-            role: this.enums.role.default('user')
+            role: s(this.enums.role).default('user')
         });
     },
     methods: (model) => ({
@@ -843,7 +845,7 @@ schema: function(s) {
         username: 'string:3-32!',
         email: 'email!',
         age: 'number:0-120',
-        role: this.enums.role.default('user')  //Reference enums
+        role: s(this.enums.role).default('user')  //Reference enums
     });
 }
 
@@ -1029,7 +1031,7 @@ enums: {
 //Referenced in schema
 schema: function(s) {
     return s({
-        role: this.enums.role.default('user')
+        role: s(this.enums.role).default('user')
     });
 }
 ```
@@ -1052,10 +1054,10 @@ Model.define('users', {
         return s({
             username: 'string:3-32!',
             email: 'email!',
-            password: 'string!'.pattern(/^[a-zA-Z0-9]{6,30}$/),
-            role: this.enums.role.default('user'),
-            status: this.enums.status.default('active'),
-            loginCount: 'number'.default(0),
+            password: s('string!').pattern(/^[a-zA-Z0-9]{6,30}$/),
+            role: s(this.enums.role).default('user'),
+            status: s(this.enums.status).default('active'),
+            loginCount: s('number').default(0),
             lastLoginAt: 'date',
             createdAt: 'date!',
             updatedAt: 'date!'

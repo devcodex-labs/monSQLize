@@ -332,6 +332,14 @@ Relative model paths are resolved from `process.cwd()`. In production services, 
 Model-declared indexes are still created automatically by default for backward compatibility. Production services can turn off automatic indexing and run an explicit preflight before creating missing indexes:
 
 ```js
+const MonSQLize = require('monsqlize');
+
+async function main() {
+MonSQLize.Model.define('users', {
+  schema: { email: 'email!' },
+  indexes: [{ key: { email: 1 }, unique: true }]
+});
+
 const msq = new MonSQLize({
   type: 'mongodb',
   databaseName: 'mydb',
@@ -339,11 +347,18 @@ const msq = new MonSQLize({
   autoIndex: false
 });
 
-const plan = await msq.ensureModelIndexes({ models: ['users'], dryRun: true });
-
-if (plan.totals.conflicts === 0) {
-  await msq.ensureModelIndexes({ models: ['users'], throwOnError: true });
+try {
+  await msq.connect();
+  const plan = await msq.ensureModelIndexes({ models: ['users'], dryRun: true });
+  if (plan.totals.conflicts === 0) {
+    await msq.ensureModelIndexes({ models: ['users'], throwOnError: true });
+  }
+} finally {
+  await msq.close();
 }
+}
+
+main().catch((error) => { console.error(error); process.exitCode = 1; });
 ```
 
 `ensureModelIndexes()` creates only missing indexes. It does not drop, rename, or rebuild conflicting indexes.
@@ -449,6 +464,8 @@ Transaction cache invalidations are recorded during the transaction and flushed 
 ### Connection Pools
 
 ```js
+const MonSQLize = require('monsqlize');
+async function main() {
 const msq = new MonSQLize({
   type: 'mongodb',
   databaseName: 'main',
@@ -458,7 +475,16 @@ const msq = new MonSQLize({
   ]
 });
 
-const reports = msq.pool('analytics').collection('reports');
+try {
+  await msq.connect();
+  const reports = msq.pool('analytics').collection('reports');
+  console.log(await reports.countDocuments({}));
+} finally {
+  await msq.close();
+}
+}
+
+main().catch((error) => { console.error(error); process.exitCode = 1; });
 ```
 
 ### Change Streams

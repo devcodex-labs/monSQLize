@@ -1,7 +1,10 @@
 import { randomBytes } from 'crypto';
 import { createError, ErrorCodes } from '../../core/errors';
+import { MemoryCache as BaseMemoryCache } from 'cache-hub';
 
 export interface DistributedCacheLike {
+    /** Explicit receive-only invalidation; must not publish another message. */
+    invalidateFromRemote?(kind: 'pattern' | 'key', value: string): Promise<unknown> | unknown;
     delPattern?(pattern: string): Promise<unknown> | unknown;
     del?(key: string): Promise<unknown> | unknown;
     delete?(key: string): Promise<unknown> | unknown;
@@ -58,6 +61,11 @@ export class DistributedCacheInvalidator {
         }
 
         this._cache = options.cache;
+        const safeMemoryCache = this._cache instanceof BaseMemoryCache
+            || (this._cache.local instanceof BaseMemoryCache && this._cache.remote === undefined);
+        if (!safeMemoryCache && typeof this._cache.invalidateFromRemote !== 'function') {
+            throw createError(ErrorCodes.INVALID_CONFIG, 'DistributedCacheInvalidator requires receive-only cache invalidation');
+        }
         this._logger = options.logger ?? null;
         this.channel = options.channel ?? 'monsqlize:cache:invalidate';
         this.instanceId = options.instanceId ?? `instance-${Date.now()}-${randomBytes(4).toString('hex')}`;
@@ -114,18 +122,10 @@ export class DistributedCacheInvalidator {
 
             try {
                 if (isPatternInvalidation) {
-                    for (const targetCache of this._getPatternTargetCaches()) {
-                        await targetCache.delPattern?.(String(message.pattern));
-                    }
+                    await this._invalidateFromRemote('pattern', String(message.pattern));
                     this._logger?.debug?.(`[DistributedCacheInvalidator] Invalidated cache targets: ${String(message.pattern)}`);
                 } else {
-                    for (const targetCache of this._getKeyTargetCaches()) {
-                        if (typeof targetCache.del === 'function') {
-                            await targetCache.del(String(message.key));
-                        } else {
-                            await targetCache.delete?.(String(message.key));
-                        }
-                    }
+                    await this._invalidateFromRemote('key', String(message.key));
                     this._logger?.debug?.(`[DistributedCacheInvalidator] Invalidated cache key targets: ${String(message.key)}`);
                 }
                 this._stats.invalidationsTriggered++;
@@ -136,38 +136,18 @@ export class DistributedCacheInvalidator {
         });
     }
 
-    private _getPatternTargetCaches(): DistributedCacheLike[] {
-        const targets = new Set<DistributedCacheLike>();
-
-        if (typeof this._cache?.delPattern === 'function') {
-            targets.add(this._cache);
+    private async _invalidateFromRemote(kind: 'pattern' | 'key', value: string): Promise<void> {
+        if (this._cache instanceof BaseMemoryCache) {
+            if (kind === 'pattern') await this._cache.delPattern(value);
+            else await this._cache.del(value);
+            return;
         }
-        if (this._cache?.local && typeof this._cache.local.delPattern === 'function') {
-            targets.add(this._cache.local);
+        if (this._cache.local instanceof BaseMemoryCache && this._cache.remote === undefined) {
+            if (kind === 'pattern') await this._cache.local.delPattern(value);
+            else await this._cache.local.del(value);
+            return;
         }
-        if (this._cache?.remote && typeof this._cache.remote.delPattern === 'function') {
-            targets.add(this._cache.remote);
-        }
-
-        return [...targets];
-    }
-
-    private _getKeyTargetCaches(): DistributedCacheLike[] {
-        const targets = new Set<DistributedCacheLike>();
-        const supportsKeyDelete = (cache: DistributedCacheLike | undefined): cache is DistributedCacheLike =>
-            typeof cache?.del === 'function' || typeof cache?.delete === 'function';
-
-        if (supportsKeyDelete(this._cache)) {
-            targets.add(this._cache);
-        }
-        if (supportsKeyDelete(this._cache?.local)) {
-            targets.add(this._cache.local);
-        }
-        if (supportsKeyDelete(this._cache?.remote)) {
-            targets.add(this._cache.remote);
-        }
-
-        return [...targets];
+        await this._cache.invalidateFromRemote?.(kind, value);
     }
 
     async invalidate(pattern: string): Promise<void> {

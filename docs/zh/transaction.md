@@ -4,6 +4,8 @@
 
 monSQLize 在 MongoDB driver session 之上提供 `withTransaction()` 与 `startSession()` 辅助方法。ACID 边界来自 MongoDB 事务/session；monSQLize 额外负责重试、超时、统计和缓存失效协调。
 
+受管事务一旦开始 commit 或 abort，就不再接收新写入，包括惰性聚合写和批次子写。提交结果未知时只重试 commit，不重跑业务回调；成功提交后的错误也不重跑回调。直接传给 MongoDB driver 的原生 session 保持原有行为。
+
 ### 核心特性
 
 - ✅ **自动事务管理**（withTransaction - 推荐）

@@ -332,8 +332,8 @@ export interface FindPageOptions<TSchema = any> {
     hint?: Document | string;
     collation?: Document;
     batchSize?: number;
-    /** Cache TTL in milliseconds for the non-stream/non-explain page result */
-    cache?: number;
+    /** MongoDB expression variables; overrides `options.let` when both are supplied. */ let?: Document;
+    /** Cache TTL in milliseconds for the non-stream/non-explain page result */ cache?: number;
     /** Include timing/meta info in result — pass true or MetaOptions for sub-step detail */
     meta?: boolean | MetaOptions;
 }
@@ -504,10 +504,10 @@ export interface UpdateBatchResult {
     errors: BatchErrorRecord[];
     /** Per-batch retry records. */
     retries: BatchRetryRecord[];
-    /** Number of documents skipped by strict model version conflict handling. */
-    conflictCount?: number;
-    /** Document ids skipped by strict model version conflict handling. */
-    conflictedIds?: unknown[];
+    /** Number of documents skipped by strict model version conflict handling. */ conflictCount?: number;
+    /** Document ids skipped by strict model version conflict handling. */ conflictedIds?: unknown[];
+    /** Selected model candidates that no longer match the filter or were removed before writing. */ skippedCount?: number;
+    skippedIds?: unknown[];
 }
 
 export interface DeleteBatchResult {

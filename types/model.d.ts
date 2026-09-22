@@ -206,6 +206,9 @@ export type ModelUpdateManyOptions = ModelWriteOptions & {
 export type ModelStrictUpdateManyResult = UpdateResult & {
     conflictCount: number;
     conflictedIds: unknown[];
+    /** Selected candidates no longer matching the business filter or removed before the write. */
+    skippedCount: number;
+    skippedIds: unknown[];
 };
 
 export type ModelIndexSource = 'definition' | 'softDelete';

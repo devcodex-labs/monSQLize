@@ -2,6 +2,8 @@
 
 ## Overview
 
+For direct `CountQueue.execute(task, { signal })` calls, an aborted queued task is removed before execution. Timeout or caller abort rejects the caller and aborts the task signal, but the running slot remains occupied until the underlying task actually settles. Tasks that ignore abort can therefore keep a slot occupied.
+
 Count queue control is an advanced feature of monSQLize that limits the number of `countDocuments` operations that can be executed simultaneously.
 
 

@@ -106,6 +106,7 @@ import {
     initializeDistributedCacheInvalidator,
     loadModelFiles,
 } from './capability-wiring';
+import { summarizeRuntimeHealth } from './runtime-health';
 import { buildPublicDefaults, buildPublicSnapshot, createRuntimeDbFacade, createRuntimeModelInstance, ensureRuntimeModelIndexes, resolveDatabaseName, shouldWarnTransactionDistributedLock, shouldWarnUnsignedCursorSecret, validateRuntimeNumericOptions } from './runtime-helpers';
 import {
     createRuntimeCoreAccessors,
@@ -406,9 +407,8 @@ export class MonSQLizeRuntime {
                 driverError = error instanceof Error ? error.message : String(error);
             }
         }
-        const cacheStats = (this._cache as { getStats?: () => unknown }).getStats?.();
-        const poolHealth = this._poolManager?.getHealthStatus();
-        const distributedStats = this._distributedInvalidator?.getStats() ?? null;
+        const health = summarizeRuntimeHealth(this.options.cache, this._cache, this._poolManager, this._distributedInvalidator);
+        const { cacheStats, poolHealth, distributedStats, cacheEnabled, distributedEnabled, cacheProbeStatus, distributedStatus, poolsStatus } = health;
         const connected = this._connected && driverConnected;
         return {
             status: connected ? 'up' : 'down',
@@ -416,7 +416,7 @@ export class MonSQLizeRuntime {
             driver: { connected: driverConnected, ...(driverError ? { error: driverError } : {}) },
             defaults: this.getDefaults(),
             cache: {
-                enabled: true,
+                enabled: cacheEnabled,
                 stats: cacheStats,
                 pools: poolHealth,
                 distributed: distributedStats,
@@ -428,18 +428,18 @@ export class MonSQLizeRuntime {
                     ...(driverError ? { error: driverError } : {}),
                 },
                 cache: {
-                    status: 'up',
-                    enabled: true,
+                    status: cacheProbeStatus,
+                    enabled: cacheEnabled,
                     hasStats: cacheStats !== undefined,
                 },
                 distributedCacheInvalidator: {
-                    status: distributedStats ? 'up' : 'unknown',
-                    enabled: distributedStats !== null,
+                    status: distributedStatus,
+                    enabled: distributedEnabled,
                     stats: distributedStats,
                 },
                 pools: {
-                    status: poolHealth ? 'up' : 'unknown',
-                    enabled: poolHealth !== undefined,
+                    status: poolsStatus,
+                    enabled: this._poolManager !== null,
                     health: poolHealth,
                 },
             },

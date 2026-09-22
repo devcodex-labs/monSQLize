@@ -29,6 +29,13 @@ export type {
     TransactionStats,
 } from '../../../types/transaction';
 
+/** Rejects a write against a managed session once commit or abort has begun. */
+export function assertManagedTransactionWriteAllowed(options: unknown): void {
+    const session = (options as { session?: { __monSQLizeTransaction?: Transaction } } | null | undefined)?.session;
+    const managed = session?.__monSQLizeTransaction;
+    if (typeof managed?.assertAcceptingWrites === 'function') managed.assertAcceptingWrites();
+}
+
 function toPublicTransactionStatus(state: Transaction['state']): TransactionInfo['status'] {
     return state === 'active' ? 'started' : state;
 }
@@ -153,6 +160,7 @@ export class CacheLockManager {
 export class Transaction {
     readonly id = `tx_${randomBytes(8).toString('hex')}`;
     state: 'pending' | 'active' | 'committed' | 'aborted' = 'pending';
+    private acceptingWrites = false;
     private startedAt: number | null = null;
     private timeoutTimer: NodeJS.Timeout | null = null;
     readonly pendingInvalidations = new Set<string>();
@@ -183,6 +191,7 @@ export class Transaction {
         }
         this.session.startTransaction(this.options.transactionOptions);
         this.state = 'active';
+        this.acceptingWrites = true;
         this.startedAt = Date.now();
         const timeout = this.options.timeout ?? 30000;
         if (timeout > 0) {
@@ -206,6 +215,7 @@ export class Transaction {
         if (this.state !== 'active') {
             throw createError(ErrorCodes.INVALID_OPERATION, `Cannot commit transaction in state: ${this.state}`);
         }
+        this.acceptingWrites = false;
         if (typeof (this.session as unknown as Record<string, unknown>).commitTransaction === 'function') {
             await commitTransactionWithRetry(this.session, this.options.logger);
         }
@@ -232,6 +242,7 @@ export class Transaction {
      * @since v1.4.0
      */
     async abort(): Promise<void> {
+        this.acceptingWrites = false;
         if (this.state !== 'pending' && this.state !== 'active') {
             return;
         }
@@ -257,9 +268,16 @@ export class Transaction {
      * @since v1.4.0
      */
     async end(): Promise<void> {
+        this.acceptingWrites = false;
         this.clearTimeout();
         this.options.lockManager?.releaseLocks(this.id);
         await this.session.endSession();
+    }
+
+    assertAcceptingWrites(): void {
+        if (this.state !== 'active' || !this.acceptingWrites) {
+            throw createError(ErrorCodes.INVALID_OPERATION, `Managed transaction ${this.id} is no longer accepting writes.`);
+        }
     }
 
     /**
@@ -532,12 +550,12 @@ export class TransactionManager {
                 return result;
             } catch (error) {
                 lastError = error;
-                await transaction.abort();
-                this.recordStats(transaction, Date.now() - startedAt, false);
                 if (transaction.state === 'committed') {
                     throw error;
                 }
-                if (!enableRetry || attempt === maxRetries || !isTransientTransactionError(error)) {
+                await transaction.abort();
+                this.recordStats(transaction, Date.now() - startedAt, false);
+                if (!enableRetry || attempt === maxRetries || isUnknownTransactionCommitResult(error) || !isTransientTransactionError(error)) {
                     throw error;
                 }
                 await sleep(retryDelay * Math.pow(retryBackoff, attempt));
@@ -652,23 +670,41 @@ function stringifySessionId(id: unknown): string {
     return String(id);
 }
 
-function isTransientTransactionError(error: unknown): boolean {
-    if (!error || typeof error !== 'object') {
-        return false;
+function transactionErrorChain(error: unknown): Array<Record<string, unknown>> {
+    const chain: Array<Record<string, unknown>> = [];
+    const seen = new Set<object>();
+    let current = error;
+    while (current && typeof current === 'object' && chain.length < 8 && !seen.has(current)) {
+        seen.add(current);
+        const candidate = current as Record<string, unknown>;
+        chain.push(candidate);
+        current = candidate.cause;
     }
-    const candidate = error as { code?: number; hasErrorLabel?: (label: string) => boolean; };
-    if (typeof candidate.hasErrorLabel === 'function' && candidate.hasErrorLabel('TransientTransactionError')) {
-        return true;
+    return chain;
+}
+
+function hasTransactionErrorLabel(candidate: Record<string, unknown>, label: string): boolean {
+    if (Array.isArray(candidate.errorLabels) && candidate.errorLabels.includes(label)) return true;
+    if (typeof candidate.hasErrorLabel === 'function') {
+        try {
+            return Boolean((candidate.hasErrorLabel as (value: string) => boolean).call(candidate, label));
+        } catch { /* fall through to code and cause */ }
     }
-    return candidate.code === 112 || candidate.code === 117;
+    return false;
 }
 
 function isUnknownTransactionCommitResult(error: unknown): boolean {
-    if (!error || typeof error !== 'object') {
-        return false;
-    }
-    const candidate = error as { hasErrorLabel?: (label: string) => boolean; };
-    return typeof candidate.hasErrorLabel === 'function' && candidate.hasErrorLabel('UnknownTransactionCommitResult');
+    return transactionErrorChain(error).some((candidate) => hasTransactionErrorLabel(candidate, 'UnknownTransactionCommitResult'));
+}
+
+function isTransientTransactionError(error: unknown): boolean {
+    if (isUnknownTransactionCommitResult(error)) return false;
+    return transactionErrorChain(error).some((candidate) =>
+        hasTransactionErrorLabel(candidate, 'TransientTransactionError')
+        || candidate.code === 112
+        || candidate.code === 117
+        || candidate.codeName === 'WriteConflict'
+        || candidate.codeName === 'LockTimeout');
 }
 
 async function commitTransactionWithRetry(session: MongoSession, logger?: LoggerLike | null): Promise<void> {

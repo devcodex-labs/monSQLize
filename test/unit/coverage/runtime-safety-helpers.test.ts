@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { generateKeyPairSync } from 'node:crypto';
+import { createServer, type AddressInfo, type Server } from 'node:net';
 import { describe, it } from 'node:test';
 import { isProductionEnvironment } from '../../../src/adapters/mongodb/common/drop-database-safety';
 import { Logger } from '../../../src/core/logger';
@@ -12,6 +14,7 @@ import {
 import { createRuntimeAccessors, createRuntimeDbFacade } from '../../../src/entry/runtime-db-facade';
 import { disposeRuntimeSchemaDslEngine } from '../../../src/entry/runtime-schema-dsl';
 import { prepareSshTunnelConnectConfig } from '../../../src/entry/runtime-ssh';
+import { SSHTunnelSSH2 } from '../../../src/capabilities/ssh';
 
 describe('runtime safety helpers', () => {
     it('normalizes production-like environment names', () => {
@@ -96,6 +99,60 @@ describe('runtime safety helpers', () => {
             connectConfig: config,
             tunnel: null,
         });
+    });
+
+    it('rejects a wrong SSH host fingerprint and closes the local listener', async () => {
+        const { privateKey } = generateKeyPairSync('rsa', {
+            modulusLength: 2048,
+            privateKeyEncoding: { type: 'pkcs1', format: 'pem' },
+            publicKeyEncoding: { type: 'spki', format: 'pem' },
+        });
+        interface ServerClient {
+            on(event: 'authentication', handler: (context: { accept(): void }) => void): this;
+            on(event: 'error', handler: (error: Error) => void): this;
+        }
+        const SshServer = (require('ssh2') as {
+            Server: new (options: object, handler: (client: ServerClient) => void) => Server;
+        }).Server;
+        const sshServer = new SshServer({ hostKeys: [privateKey] }, (client) => {
+            client.on('authentication', (context) => context.accept()).on('error', () => undefined);
+        });
+        await new Promise<void>((resolve) => sshServer.listen(0, '127.0.0.1', resolve));
+        const port = (sshServer.address() as AddressInfo).port;
+        let verifierCalled = false;
+        const tunnel = new SSHTunnelSSH2({
+            host: '127.0.0.1', port, username: 'user', password: 'password', readyTimeout: 3000,
+            hostHash: 'sha256', hostVerifier: () => { verifierCalled = true; return false; },
+        }, '127.0.0.1', 27017);
+        try {
+            const error = await tunnel.connect().then(() => null, (cause: unknown) => cause);
+            assert.ok(error instanceof Error);
+            assert.equal(verifierCalled, true, error.message);
+            assert.equal(tunnel.isConnected, false);
+            assert.equal(tunnel.localPort, null);
+            assert.equal(tunnel.server, null);
+        } finally {
+            await tunnel.close();
+            await new Promise<void>((resolve) => sshServer.close(() => resolve()));
+        }
+    });
+
+    it('cleans up after the SSH socket closes during handshake', async () => {
+        const sshServer = createServer((socket) => socket.destroy());
+        await new Promise<void>((resolve) => sshServer.listen(0, '127.0.0.1', resolve));
+        const port = (sshServer.address() as AddressInfo).port;
+        const tunnel = new SSHTunnelSSH2({
+            host: '127.0.0.1', port, username: 'user', password: 'password', readyTimeout: 1000,
+        }, '127.0.0.1', 27017);
+        try {
+            await assert.rejects(() => tunnel.connect());
+            assert.equal(tunnel.isConnected, false);
+            assert.equal(tunnel.localPort, null);
+            assert.equal(tunnel.server, null);
+        } finally {
+            await tunnel.close();
+            await new Promise<void>((resolve) => sshServer.close(() => resolve()));
+        }
     });
 
     it('normalizes cache auto-invalidation options for database facades', () => {

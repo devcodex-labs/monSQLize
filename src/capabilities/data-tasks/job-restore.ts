@@ -1,3 +1,4 @@
+import { Int32, Long } from 'mongodb';
 import type {
     DataTaskApproval,
     DataTaskBackupRef,
@@ -63,14 +64,23 @@ function restoreApproval(hashes: DataTaskRestorePlan['hashes']): DataTaskApprova
     return { ...payload, token: hashDataTaskValue(payload) };
 }
 
+function comparableIndexKey(key: GenericRecord): GenericRecord {
+    return Object.fromEntries(Object.entries(key).map(([field, value]) => {
+        if (value instanceof Int32) return [field, value.valueOf()];
+        if (Long.isLong(value) && value.toBigInt() <= BigInt(Number.MAX_SAFE_INTEGER)
+            && value.toBigInt() >= BigInt(Number.MIN_SAFE_INTEGER)) return [field, Number(value.toBigInt())];
+        return [field, value];
+    }));
+}
+
 function exactIndex(index: CreatedDataTaskIndex, current: GenericRecord[]): boolean {
-    return classifyDataTaskIndexes([{ key: index.key, name: index.name, options: index.options }], current)[0]?.status === 'existing';
+    return classifyDataTaskIndexes([{ key: comparableIndexKey(index.key), name: index.name, options: index.options }], current)[0]?.status === 'existing';
 }
 
 function pendingIndexMatches(index: PendingDataTaskIndex, current: GenericRecord[]): GenericRecord[] {
     return current.filter((candidate) => {
         if (index.name && candidate.name !== index.name) return false;
-        return classifyDataTaskIndexes([{ key: index.key, options: index.options }], [candidate])[0]?.status === 'existing';
+        return classifyDataTaskIndexes([{ key: comparableIndexKey(index.key), options: index.options }], [candidate])[0]?.status === 'existing';
     });
 }
 
@@ -367,7 +377,7 @@ export async function restoreDataTaskPlan(
             await updateDataTaskBackup(safety, (manifest) => {
                 manifest.pendingIndexes = [...(manifest.pendingIndexes ?? []), pending];
             });
-            await collection.createIndex(index.key, { ...index.options, name: index.name });
+            await collection.createIndex(comparableIndexKey(index.key), { ...index.options, name: index.name });
             if (!exactIndex(index, await collection.listIndexes())) {
                 throw new DataTaskJobError('RESTORE_FAILED', `index "${index.name}" failed immediate readback.`, 'restore');
             }

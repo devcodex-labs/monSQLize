@@ -388,6 +388,81 @@ describe('P4-C sync', () => {
         assert.equal(stats.errorCount, 1);
     });
 
+    it('saves tokens for filtered events and events with no eligible target', async () => {
+        const stream = new EventEmitter() as EventEmitter & { close(): Promise<boolean> };
+        stream.close = async () => true;
+        const saved: number[] = [];
+        const manager = new MonSQLize.ChangeStreamSyncManager({
+            db: {
+                databaseName: 'source_db',
+                watch(_pipeline: unknown[], options: Record<string, unknown>) {
+                    return options?.maxAwaitTimeMS === 1 ? { close: async () => true } : stream;
+                },
+            },
+            config: {
+                enabled: true,
+                filter: (event: ChangeEvent) => event._id.token !== 1,
+                targets: [{ name: 'orders-only', collections: ['orders'], apply: async () => undefined }],
+            },
+            tokenStore: {
+                load: async () => null,
+                save: async (token: ChangeEvent['_id']) => { saved.push(token.token); },
+                clear: async () => undefined,
+            },
+        });
+        await manager.start();
+        for (const token of [1, 2]) {
+            stream.emit('change', {
+                _id: { token }, operationType: 'insert', ns: { db: 'source_db', coll: 'users' },
+                documentKey: { _id: token }, fullDocument: { _id: token, name: 'skip' },
+            });
+        }
+        await manager.stop();
+        assert.deepEqual(saved, [1, 2]);
+        assert.equal(manager.getStats().syncedCount, 2);
+    });
+
+    it('cleans staged owned clients after a partial target failure and retries every target', async () => {
+        const closed: string[] = [];
+        let secondFails = true;
+        const manager = new MonSQLize.ChangeStreamSyncManager({
+            db: {
+                databaseName: 'source_db',
+                watch(_pipeline: unknown[], options: Record<string, unknown>) {
+                    if (options?.maxAwaitTimeMS === 1) return { close: async () => true };
+                    const stream = new EventEmitter() as EventEmitter & { close(): Promise<boolean> };
+                    stream.close = async () => true;
+                    return stream;
+                },
+            },
+            config: {
+                enabled: true,
+                targets: [
+                    { name: 'first', uri: 'mongodb://first' },
+                    { name: 'second', uri: 'mongodb://second' },
+                ],
+            },
+            clientFactory: async (uri: string) => {
+                if (uri.endsWith('second') && secondFails) {
+                    secondFails = false;
+                    throw new Error('second target unavailable');
+                }
+                return {
+                    db: () => ({ collection: () => ({}) }),
+                    close: async () => { closed.push(uri); },
+                } as any;
+            },
+            tokenStore: { load: async () => null, save: async () => undefined, clear: async () => undefined },
+        });
+        await assert.rejects(() => manager.start(), /second target unavailable/);
+        assert.deepEqual(closed, ['mongodb://first']);
+        assert.equal(manager.getStats().targets.length, 0);
+        await manager.start();
+        assert.deepEqual(manager.getStats().targets.map((target: any) => target.name), ['first', 'second']);
+        await manager.stop();
+        assert.deepEqual(closed.sort(), ['mongodb://first', 'mongodb://first', 'mongodb://second']);
+    });
+
     it('waits for a fatal stream close before starting the replacement stream', async () => {
         const streams: Array<EventEmitter & { close(): Promise<boolean> }> = [];
         let releaseFirstClose: (() => void) | undefined;
@@ -458,6 +533,54 @@ describe('P4-C sync', () => {
         await wait(20);
         assert.equal(manager.getStats().syncedCount, 1);
         await manager.stop();
+    });
+
+    it('does not let a queued token pass a transform failure during immediate restart', async () => {
+        const streams: Array<EventEmitter & { close(): Promise<boolean> }> = [];
+        const saved: number[] = [];
+        const manager = new MonSQLize.ChangeStreamSyncManager({
+            db: {
+                databaseName: 'source_db',
+                watch(_pipeline: unknown[], options: Record<string, unknown>) {
+                    if (options?.maxAwaitTimeMS === 1) return { close: async () => true };
+                    const stream = new EventEmitter() as EventEmitter & { close(): Promise<boolean> };
+                    stream.close = async () => true;
+                    streams.push(stream);
+                    return stream;
+                },
+            },
+            config: {
+                enabled: true,
+                transform: (_document: unknown, event: ChangeEvent) => {
+                    if (event._id.token === 1) throw new Error('transform A failed');
+                    return event.fullDocument;
+                },
+                targets: [{ name: 'sink', apply: async () => undefined }],
+            },
+            tokenStore: {
+                load: async () => null,
+                save: async (token: ChangeEvent['_id']) => { saved.push(token.token); },
+                clear: async () => undefined,
+            },
+            logger: { error: () => undefined, warn: () => undefined, info: () => undefined, debug: () => undefined },
+        });
+        await manager.start();
+        for (const token of [1, 2]) {
+            streams[0].emit('change', {
+                _id: { token }, operationType: 'insert', ns: { db: 'source_db', coll: 'users' },
+                documentKey: { _id: token }, fullDocument: { _id: token, name: 'event' },
+            });
+        }
+        await wait(5);
+        assert.equal(manager.getStats().isRunning, false);
+        await manager.start();
+        assert.deepEqual(saved, []);
+        streams[1].emit('change', {
+            _id: { token: 3 }, operationType: 'insert', ns: { db: 'source_db', coll: 'users' },
+            documentKey: { _id: 3 }, fullDocument: { _id: 3, name: 'recovered' },
+        });
+        await manager.stop();
+        assert.deepEqual(saved, [3]);
     });
 
     it('skips already applied targets with sync idempotency on replay', async () => {

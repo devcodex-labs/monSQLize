@@ -17,6 +17,10 @@ import {
     applyModelUpdateTimestamps,
     applyModelUpsertTimestamps,
     applyModelVersionIncrement,
+    applyModelSoftDeleteFilter,
+    buildStrictCandidateFilter,
+    isModelVersionConflict,
+    iterateModelCandidateBatches,
     assertModelOptimisticLockDocument,
     assertModelOptimisticLockMatched,
     assertNumericExpectedVersion,
@@ -39,6 +43,8 @@ type HookPhase = 'before' | 'after';
 type StrictUpdateManyResult = UpdateResult & {
     conflictCount: number;
     conflictedIds: unknown[];
+    skippedCount: number;
+    skippedIds: unknown[];
 };
 
 export type ModelMutationContext<TDocument = Record<string, unknown>> = {
@@ -53,6 +59,7 @@ export type ModelMutationContext<TDocument = Record<string, unknown>> = {
     validateEnabled: boolean;
     schemaCache: unknown;
     schemaValidateFn: ModelSchemaValidateFn;
+    schemaError?: Error | null;
     hooksFactory: ModelV1HooksFactory;
     runHook(hookName: string, context: HookContext): Promise<void>;
 };
@@ -110,29 +117,30 @@ async function runStrictUpdateMany<TDocument>(
     if (rawOptions.upsert === true) {
         throw createError(ErrorCodes.INVALID_ARGUMENT, 'versionMode "strict" does not support upsert.');
     }
-    const docs = await context.collection.find(filter, {
-        ...buildModelVersionLookupOptions(rawOptions, {
-            _id: 1,
-            [context.versionConfig.field]: 1,
-        }),
-    }) as Array<Record<string, unknown>>;
     let matchedCount = 0;
     let modifiedCount = 0;
     const conflictedIds: unknown[] = [];
-    for (const doc of docs) {
-        const id = doc._id;
-        const expectedVersion = assertNumericExpectedVersion(doc[context.versionConfig.field], 'updateMany');
-        const result = await context.collection.updateOne(
-            { _id: id, [context.versionConfig.field]: expectedVersion },
-            update,
-            options,
-        );
-        if ((result?.matchedCount ?? 0) === 0) {
-            conflictedIds.push(id);
-            continue;
+    const skippedIds: unknown[] = [];
+    for await (const batch of iterateModelCandidateBatches(context, filter, rawOptions, 200)) {
+        for (const doc of batch) {
+            const id = doc._id;
+            const expectedVersion = assertNumericExpectedVersion(doc[context.versionConfig.field], 'updateMany');
+            const result = await context.collection.updateOne(
+                buildStrictCandidateFilter(filter, id, context.versionConfig.field, expectedVersion),
+                update,
+                options,
+            );
+            if ((result?.matchedCount ?? 0) === 0) {
+                if (await isModelVersionConflict(context, id, context.versionConfig.field, expectedVersion, options)) {
+                    conflictedIds.push(id);
+                } else {
+                    skippedIds.push(id);
+                }
+                continue;
+            }
+            matchedCount += result.matchedCount ?? 0;
+            modifiedCount += result.modifiedCount ?? 0;
         }
-        matchedCount += result.matchedCount ?? 0;
-        modifiedCount += result.modifiedCount ?? 0;
     }
     return {
         acknowledged: true,
@@ -142,6 +150,8 @@ async function runStrictUpdateMany<TDocument>(
         upsertedId: null,
         conflictCount: conflictedIds.length,
         conflictedIds,
+        skippedCount: skippedIds.length,
+        skippedIds,
     };
 }
 
@@ -170,7 +180,7 @@ async function runStrictUpdateBatch<TDocument>(
         retryAttempts: _retryAttempts,
         retryDelay: _retryDelay,
         onRetry: _onRetry,
-        sort = { _id: 1 },
+        sort: _sort,
         ...driverOptions
     } = rawOptions;
     void _batchSize;
@@ -179,39 +189,43 @@ async function runStrictUpdateBatch<TDocument>(
     void _retryAttempts;
     void _retryDelay;
     void _onRetry;
+    void _sort;
 
-    const docs = await context.collection.find(filter, {
-        ...buildModelVersionLookupOptions(driverOptions, {
-            _id: 1,
-            [context.versionConfig.field]: 1,
-        }),
-        sort,
-    }) as Array<Record<string, unknown>>;
+    const countOptions = buildModelVersionLookupOptions(driverOptions, {});
+    delete countOptions.projection;
+    const totalCount = await context.collection.count(filter, countOptions);
     const result: UpdateBatchResult = {
         acknowledged: true,
-        totalCount: docs.length,
+        totalCount,
         matchedCount: 0,
         modifiedCount: 0,
         upsertedCount: 0,
-        batchCount: Math.ceil(docs.length / batchSize),
+        batchCount: 0,
         errors: [],
         retries: [],
         conflictCount: 0,
         conflictedIds: [],
+        skippedCount: 0,
+        skippedIds: [],
     };
-    for (let offset = 0; offset < docs.length; offset += batchSize) {
-        const batch = docs.slice(offset, offset + batchSize);
+    for await (const batch of iterateModelCandidateBatches(context, filter, driverOptions, batchSize)) {
+        result.batchCount++;
         for (const doc of batch) {
             const id = doc._id;
             const expectedVersion = assertNumericExpectedVersion(doc[context.versionConfig.field], 'updateBatch');
             const updateResult = await context.collection.updateOne(
-                { _id: id, [context.versionConfig.field]: expectedVersion },
+                buildStrictCandidateFilter(filter, id, context.versionConfig.field, expectedVersion),
                 update,
                 driverOptions,
             );
             if ((updateResult?.matchedCount ?? 0) === 0) {
-                result.conflictCount = (result.conflictCount ?? 0) + 1;
-                result.conflictedIds?.push(id);
+                if (await isModelVersionConflict(context, id, context.versionConfig.field, expectedVersion, driverOptions)) {
+                    result.conflictCount = (result.conflictCount ?? 0) + 1;
+                    result.conflictedIds?.push(id);
+                } else {
+                    result.skippedCount = (result.skippedCount ?? 0) + 1;
+                    result.skippedIds?.push(id);
+                }
                 continue;
             }
             result.matchedCount += updateResult.matchedCount ?? 0;
@@ -219,15 +233,16 @@ async function runStrictUpdateBatch<TDocument>(
         }
         if (typeof onProgress === 'function') {
             onProgress({
-                currentBatch: Math.floor(offset / batchSize) + 1,
-                totalBatches: result.batchCount,
+                currentBatch: result.batchCount,
+                totalBatches: Math.ceil(totalCount / batchSize),
                 modified: result.modifiedCount,
                 matched: result.matchedCount,
-                total: docs.length,
-                percentage: docs.length > 0 ? Math.round((result.modifiedCount / docs.length) * 100) : null,
+                total: totalCount,
+                percentage: totalCount > 0 ? Math.round((result.modifiedCount / totalCount) * 100) : null,
                 errors: result.errors.length,
                 retries: result.retries.length,
                 conflicts: result.conflictCount ?? 0,
+                skipped: result.skippedCount ?? 0,
             });
         }
     }
@@ -242,10 +257,7 @@ function buildSoftDeletePatch(config: ModelSoftDeleteConfig, now: Date): Record<
 }
 
 function buildSoftDeleteFilter(filter: unknown, config: ModelSoftDeleteConfig): Record<string, unknown> {
-    return {
-        ...((filter as Record<string, unknown>) ?? {}),
-        ...(config?.enabled ? { [config.field]: null } : {}),
-    };
+    return applyModelSoftDeleteFilter(filter, {}, config) as Record<string, unknown>;
 }
 
 function applyModelIncrementVersion(
@@ -298,6 +310,7 @@ export async function orchestrateModelInsertOne<TDocument = Record<string, unkno
         validateEnabled: context.validateEnabled,
         schemaCache: context.schemaCache,
         schemaValidateFn: context.schemaValidateFn,
+        schemaError: context.schemaError,
     }, payload, options as Record<string, unknown> | undefined);
 
     payload = applyModelInsertTimestamps(payload, context.timestampsConfig, () => context.nowDate());
@@ -340,6 +353,7 @@ export async function orchestrateModelInsertMany<TDocument = Record<string, unkn
             validateEnabled: context.validateEnabled,
             schemaCache: context.schemaCache,
             schemaValidateFn: context.schemaValidateFn,
+            schemaError: context.schemaError,
         }, doc, resolvedOptions, { index });
         doc = applyModelInsertTimestamps(doc, context.timestampsConfig, () => context.nowDate());
         doc = applyModelInsertVersion(doc, context.versionConfig);
@@ -444,6 +458,7 @@ export async function orchestrateModelReplaceOne<TDocument = Record<string, unkn
         validateEnabled: context.validateEnabled,
         schemaCache: context.schemaCache,
         schemaValidateFn: context.schemaValidateFn,
+        schemaError: context.schemaError,
     }, replacement as Record<string, unknown>, options as Record<string, unknown> | undefined);
     nextReplacement = preserveModelReplaceCreatedAt(
         replacement as Record<string, unknown>,
@@ -509,6 +524,7 @@ export async function orchestrateModelFindOneAndReplace<TDocument = Record<strin
         validateEnabled: context.validateEnabled,
         schemaCache: context.schemaCache,
         schemaValidateFn: context.schemaValidateFn,
+        schemaError: context.schemaError,
     }, replacement as Record<string, unknown>, options as Record<string, unknown> | undefined);
     nextReplacement = preserveModelReplaceCreatedAt(
         replacement as Record<string, unknown>,
@@ -634,6 +650,7 @@ export async function orchestrateModelInsertBatch<TDocument = Record<string, unk
             validateEnabled: context.validateEnabled,
             schemaCache: context.schemaCache,
             schemaValidateFn: context.schemaValidateFn,
+            schemaError: context.schemaError,
         }, record, resolvedOptions, { index });
         record = applyModelInsertTimestamps(record, context.timestampsConfig, () => context.nowDate());
         record = applyModelInsertVersion(record, context.versionConfig) as Record<string, unknown>;
@@ -726,7 +743,7 @@ export async function orchestrateModelDeleteOne<TDocument = Record<string, unkno
     let result: unknown;
     if (softDeleteConfig?.enabled && !resolvedOptions._forceDelete) {
         result = await context.collection.updateOne(
-            { ...((filter as Record<string, unknown>) ?? {}), [softDeleteConfig.field]: null },
+            buildSoftDeleteFilter(filter, softDeleteConfig),
             { $set: { [softDeleteConfig.field]: softDeleteConfig.type === 'boolean' ? true : context.nowDate() } },
             options,
         );

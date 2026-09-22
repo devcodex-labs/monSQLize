@@ -4,11 +4,12 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { BSON, Binary, Decimal128, Int32, Long, ObjectId, Timestamp } from 'mongodb';
 import { validateDataTaskApproval } from '../../../src/capabilities/data-tasks/job-apply';
 import { probeDataTaskBackupDirectory, readDataTaskBackup } from '../../../src/capabilities/data-tasks/job-backup';
 import { acquireDataTaskLease } from '../../../src/capabilities/data-tasks/job-lock';
 import { hashDataTaskValue } from '../../../src/capabilities/data-tasks/job-normalizer';
-import { validateRestoreApproval } from '../../../src/capabilities/data-tasks/job-restore';
+import { planDataTaskRestore, validateRestoreApproval } from '../../../src/capabilities/data-tasks/job-restore';
 import { DataTaskJobService } from '../../../src/capabilities/data-tasks/job-service';
 import type { DataTaskApproval } from '../../../types/data-tasks';
 
@@ -233,6 +234,67 @@ describe('dataTasks job defensive branches', () => {
             );
         } finally {
             await fs.rm(temporary, { recursive: true, force: true });
+        }
+    });
+
+    it('decodes only manifest controls and preserves canonical BSON identities and payloads', async () => {
+        const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'monsqlize-job-bson-'));
+        const manifestPath = path.join(directory, 'manifest.json');
+        const dataPath = path.join(directory, 'backup.ejsonl');
+        const identity = {
+            id: Long.fromString('9007199254740993'),
+            objectId: new ObjectId(),
+        };
+        const payload = {
+            decimal: Decimal128.fromString('123.456'),
+            timestamp: new Timestamp({ t: 42, i: 7 }),
+            binary: new Binary(Buffer.from([1, 2, 3])),
+            date: new Date('2020-01-02T03:04:05.000Z'),
+        };
+        const entry = { collection: 'items', targetCollection: 'items', identity, before: payload, after: payload };
+        const line = `${BSON.EJSON.stringify(entry, { relaxed: false })}\n`;
+        const checksum = createHash('sha256').update(line).digest('hex');
+        const manifest = {
+            version: new Int32(1), kind: 'monsqlize-data-task-backup', runId: 'run',
+            compression: 'none', dataFile: 'backup.ejsonl', checksum,
+            entryCount: Long.fromNumber(1), maxBytes: Long.fromNumber(4096),
+            appliedOperations: [{ collection: 'items', targetCollection: 'items', identity,
+                operation: 'update', targetId: identity.id, afterHash: 'hash' }],
+            beforeIndexes: [{ collection: 'items', indexes: [{ name: 'ordered', key: { first: 1, second: -1 } }] }],
+        };
+        try {
+            await fs.writeFile(dataPath, line, 'utf8');
+            await fs.writeFile(manifestPath, BSON.EJSON.stringify(manifest, undefined, 2, { relaxed: false }), 'utf8');
+            const loaded = await readDataTaskBackup({ runId: 'run', manifestPath, checksum });
+            assert.equal(loaded.manifest.entryCount, 1);
+            assert.equal(loaded.manifest.maxBytes, 4096);
+            assert.equal((loaded.manifest.appliedOperations[0].identity.id as Long).toString(), '9007199254740993');
+            assert.ok(loaded.manifest.appliedOperations[0].targetId instanceof Long);
+            assert.ok(loaded.entries[0].identity.objectId instanceof ObjectId);
+            assert.ok(loaded.entries[0].before?.decimal instanceof Decimal128);
+            assert.ok(loaded.entries[0].before?.timestamp instanceof Timestamp);
+            assert.ok(loaded.entries[0].before?.binary instanceof Binary);
+            assert.ok(loaded.entries[0].before?.date instanceof Date);
+            assert.deepEqual(Object.keys(loaded.manifest.beforeIndexes[0].indexes[0].key as object), ['first', 'second']);
+            const indexManifest = {
+                ...manifest,
+                jobHash: 'job-hash',
+                appliedOperations: [],
+                createdIndexes: [{ collection: 'items', name: 'ordered',
+                    key: { first: Long.fromNumber(1), second: new Int32(-1) }, options: {} }],
+            };
+            await fs.writeFile(manifestPath, BSON.EJSON.stringify(indexManifest, undefined, 2, { relaxed: false }), 'utf8');
+            const restorePlan = await planDataTaskRestore({ runId: 'run', manifestPath, checksum }, hostWithCollection({
+                listIndexes: async () => [{ name: 'ordered', key: { first: 1, second: -1 } }],
+            }));
+            assert.equal(restorePlan.passed, true, restorePlan.errors.join('\n'));
+            assert.equal(restorePlan.dropIndexes, 1);
+            for (const value of [Long.fromString('9007199254740993'), Decimal128.fromString('1.5')]) {
+                await fs.writeFile(manifestPath, BSON.EJSON.stringify({ ...manifest, entryCount: value }, undefined, 2, { relaxed: false }), 'utf8');
+                await assert.rejects(() => readDataTaskBackup({ runId: 'run', manifestPath, checksum }), /invalid backup entry count/);
+            }
+        } finally {
+            await fs.rm(directory, { recursive: true, force: true });
         }
     });
 });

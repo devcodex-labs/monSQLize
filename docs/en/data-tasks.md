@@ -2,6 +2,8 @@
 
 `dataTasks` uses one `DataTaskJob` configuration for release-scoped index checks, filtered data synchronization, local field edits, reviewed preview, affected-scope backup, and restore.
 
+Backup manifests and data rows are read as canonical EJSON. Only manifest control fields (`version`, `entryCount`, `maxBytes`) are converted from safe numeric BSON values to JavaScript numbers. Identity, target IDs, before/after images, and index keys retain their BSON types and key order. An unsafe or ambiguous legacy control value fails backup validation instead of being guessed.
+
 Start with [Production Data Migration](./production-data-migration.md) to choose the right tool. See [Production Rollout](./production-rollout.md) for the complete release sequence.
 
 ## Entry Point and Four Methods

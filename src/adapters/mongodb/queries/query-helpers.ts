@@ -6,7 +6,7 @@
  */
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
-import { Collection, Document, ObjectId, Sort } from 'mongodb';
+import { BSON, Collection, Document, ObjectId, Sort } from 'mongodb';
 
 import { createError, ErrorCodes } from '../../../core/errors';
 import {
@@ -127,6 +127,12 @@ function shouldConvertQueryField(autoConvert: ObjectIdConversionOptions, path: s
     return shouldConvertObjectIdPath(path, config);
 }
 
+function isPlainQueryRecord(value: unknown): value is Record<string, unknown> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
+}
+
 function normalizeQueryArray(
     value: unknown[],
     autoConvert: ObjectIdConversionOptions,
@@ -137,8 +143,8 @@ function normalizeQueryArray(
         if (typeof item === 'string' && item.length === 24 && ObjectId.isValid(item) && shouldConvertQueryField(autoConvert, path, depth)) {
             return new ObjectId(item);
         }
-        if (item && typeof item === 'object' && !Array.isArray(item) && !(item instanceof ObjectId)) {
-            return normalizeQueryFilter(item as Record<string, unknown>, autoConvert, `${path}[${index}]`, depth + 1);
+        if (isPlainQueryRecord(item)) {
+            return normalizeQueryFilter(item, autoConvert, `${path}[${index}]`, depth + 1);
         }
         return item;
     });
@@ -170,8 +176,8 @@ export function normalizeQueryFilter(
     for (const [key, value] of Object.entries(filter)) {
         if (key === '$and' || key === '$or' || key === '$nor') {
             result[key] = Array.isArray(value)
-                ? value.map((item) => item && typeof item === 'object'
-                    ? normalizeQueryFilter(item as Record<string, unknown>, autoConvert, fieldPath, depth + 1)
+                ? value.map((item) => isPlainQueryRecord(item)
+                    ? normalizeQueryFilter(item, autoConvert, fieldPath, depth + 1)
                     : item)
                 : value;
             continue;
@@ -184,8 +190,8 @@ export function normalizeQueryFilter(
             result[key] = shouldConvert ? new ObjectId(value) : value;
         } else if (Array.isArray(value)) {
             result[key] = shouldConvert ? normalizeQueryArray(value, autoConvert, currentPath, depth + 1) : value;
-        } else if (value && typeof value === 'object' && !Array.isArray(value) && !(value instanceof ObjectId)) {
-            const nested = value as Record<string, unknown>;
+        } else if (isPlainQueryRecord(value)) {
+            const nested = value;
             const hasOperators = Object.keys(nested).some((k) => k.startsWith('$'));
 
             if (hasOperators) {
@@ -199,8 +205,8 @@ export function normalizeQueryFilter(
                         );
                     } else if (shouldConvert && QUERY_OBJECTID_SCALAR_OPERATORS.has(op) && typeof opVal === 'string' && opVal.length === 24 && ObjectId.isValid(opVal)) {
                         nestedResult[op] = new ObjectId(opVal);
-                    } else if (op === '$elemMatch' && opVal && typeof opVal === 'object' && !Array.isArray(opVal)) {
-                        nestedResult[op] = normalizeQueryFilter(opVal as Record<string, unknown>, autoConvert, currentPath, depth + 1);
+                    } else if (op === '$elemMatch' && isPlainQueryRecord(opVal)) {
+                        nestedResult[op] = normalizeQueryFilter(opVal, autoConvert, currentPath, depth + 1);
                     } else {
                         nestedResult[op] = opVal;
                     }
@@ -415,37 +421,34 @@ export async function isCollectionCacheBarrierActive<TSchema extends Document = 
     );
 }
 
-function normalizeCacheKeyValue(value: unknown): unknown {
-    if (value === undefined || typeof value === 'function' || typeof value === 'symbol') {
-        return undefined;
+type CacheKeyMode = 'document' | 'options';
+
+const ORDERED_OPTION_FIELDS = new Set(['query', 'filter', 'pipeline', 'sort', 'hint', 'projection', 'min', 'max']);
+
+function normalizeCacheKeyValue(value: unknown, mode: CacheKeyMode): unknown {
+    if (value === null) return ['null'];
+    if (value === undefined) return ['undefined'];
+    if (typeof value === 'number') return ['number', String(value)];
+    if (typeof value === 'bigint') return ['bigint', value.toString()];
+    if (typeof value !== 'object') return [typeof value, value];
+    if (value instanceof Date) return ['date', String(value.getTime())];
+    if (value instanceof RegExp) return ['regexp', value.source, value.flags];
+    if (Array.isArray(value)) return ['array', value.map((item) => normalizeCacheKeyValue(item, mode))];
+    const bsonType = (value as { _bsontype?: unknown })._bsontype;
+    if (typeof bsonType === 'string') {
+        return ['bson', bsonType, BSON.EJSON.serialize(value, { relaxed: false })];
     }
-    if (value instanceof Date) {
-        return { $date: value.toISOString() };
-    }
-    if (value instanceof ObjectId) {
-        return { $oid: value.toHexString() };
-    }
-    if (value instanceof RegExp) {
-        return { $regex: value.source, $flags: value.flags };
-    }
-    if (Array.isArray(value)) {
-        return value.map((item) => normalizeCacheKeyValue(item));
-    }
-    if (value && typeof value === 'object') {
-        const sorted: Record<string, unknown> = {};
-        for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-            const normalized = normalizeCacheKeyValue((value as Record<string, unknown>)[key]);
-            if (normalized !== undefined) {
-                sorted[key] = normalized;
-            }
-        }
-        return sorted;
-    }
-    return value;
+    const entries = Object.entries(value as Record<string, unknown>)
+        .filter(([, item]) => item !== undefined && typeof item !== 'function' && typeof item !== 'symbol');
+    if (mode === 'options') entries.sort(([left], [right]) => left.localeCompare(right));
+    return ['object', entries.map(([key, item]) => [
+        key,
+        normalizeCacheKeyValue(item, mode === 'options' && ORDERED_OPTION_FIELDS.has(key) ? 'document' : mode),
+    ])];
 }
 
-export function stableCacheKeyString(value: unknown): string {
-    return JSON.stringify(normalizeCacheKeyValue(value));
+export function stableCacheKeyString(value: unknown, mode: CacheKeyMode = 'options'): string {
+    return `v2:${JSON.stringify(normalizeCacheKeyValue(value, mode))}`;
 }
 
 export function buildResultCacheKeyOptions(options: Record<string, unknown> = {}): Record<string, unknown> {

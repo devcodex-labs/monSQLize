@@ -16,6 +16,7 @@
 import { ChangeStream, Collection, Document, FindOptions, Sort } from 'mongodb';
 
 import { createError, ErrorCodes } from '../../../core/errors';
+import { assertManagedTransactionWriteAllowed } from '../../../capabilities/transaction';
 import { compilePipelineExpressions, hasExpressionInPipeline } from '../../../core/expression';
 import type { QueryCacheLike, RuntimeDefaults } from '../../../types/internal/query';
 import type {
@@ -396,6 +397,7 @@ class AggregateChain<TResult = unknown, TSchema extends Document = Document> imp
     }
 
     stream(): NodeJS.ReadableStream {
+        if (this.writePipelineHooks) assertManagedTransactionWriteAllowed(this.buildExecuteOptions());
         const stream = this.collection.aggregate(this.pipeline, buildAggregateDriverOptions<TSchema>(this.buildExecuteOptions())).stream();
         const onWriteComplete = this.writePipelineHooks?.onWriteComplete;
         if (onWriteComplete) {
@@ -415,6 +417,7 @@ class AggregateChain<TResult = unknown, TSchema extends Document = Document> imp
             throw createError(ErrorCodes.INVALID_OPERATION, 'Query already executed.');
         }
         this.executed = true;
+        if (this.writePipelineHooks) assertManagedTransactionWriteAllowed(this.buildExecuteOptions());
         return this.collection.aggregate(this.pipeline, buildAggregateDriverOptions<TSchema>(this.buildExecuteOptions()))
             .toArray()
             .then(async (result) => {

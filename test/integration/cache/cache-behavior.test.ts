@@ -253,3 +253,56 @@ describe('cache hit / miss / invalidation behavior', () => {
         });
     });
 });
+
+describe('distributed cache invalidation over Redis', () => {
+    it('converges between two instances without re-publishing an inbound message', {
+        skip: !process.env.MONSQLIZE_TEST_REDIS_URL,
+    }, async () => {
+        const Redis = require('ioredis');
+        const channel = `monsqlize:test:invalidate:${process.pid}:${Date.now()}`;
+        const connectionA = new Redis(process.env.MONSQLIZE_TEST_REDIS_URL);
+        const connectionB = new Redis(process.env.MONSQLIZE_TEST_REDIS_URL);
+        const localA = new MonSQLize.MemoryCache();
+        const localB = new MonSQLize.MemoryCache();
+        const cacheA = new MonSQLize.MultiLevelCache({ local: localA });
+        const cacheB = new MonSQLize.MultiLevelCache({ local: localB });
+        let invalidatorA: any;
+        let invalidatorB: any;
+        try {
+            invalidatorA = new MonSQLize.DistributedCacheInvalidator({ cache: cacheA, redis: connectionA, channel, instanceId: 'instance-a' });
+            invalidatorB = new MonSQLize.DistributedCacheInvalidator({ cache: cacheB, redis: connectionB, channel, instanceId: 'instance-b' });
+            cacheA.setPublish((message: any) => {
+                if (message.type === 'delPattern') void invalidatorA.invalidate(message.pattern);
+                else if (message.key) void invalidatorA.invalidateKey(message.key);
+            });
+            cacheB.setPublish((message: any) => {
+                if (message.type === 'delPattern') void invalidatorB.invalidate(message.pattern);
+                else if (message.key) void invalidatorB.invalidateKey(message.key);
+            });
+            const subscriptionDeadline = Date.now() + 3000;
+            let subscribersReady = false;
+            while (Date.now() < subscriptionDeadline) {
+                const subscribers = await connectionA.pubsub('NUMSUB', channel);
+                if (Number(subscribers[1]) >= 2) { subscribersReady = true; break; }
+                await new Promise<void>((resolve) => setTimeout(resolve, 25));
+            }
+            assert.equal(subscribersReady, true, 'both Redis subscribers must be ready');
+            await localA.set('shared:key', 'a');
+            await localB.set('shared:key', 'b');
+            await cacheA.delPattern('shared:*');
+            const invalidationDeadline = Date.now() + 3000;
+            while (Date.now() < invalidationDeadline && await localB.get('shared:key') !== undefined) {
+                await new Promise<void>((resolve) => setTimeout(resolve, 25));
+            }
+            assert.equal(await localB.get('shared:key'), undefined);
+            assert.equal(invalidatorA.getStats().messagesSent, 1);
+            assert.equal(invalidatorB.getStats().messagesReceived, 1);
+            assert.equal(invalidatorB.getStats().messagesSent, 0);
+        } finally {
+            await invalidatorA?.close();
+            await invalidatorB?.close();
+            await localA.close?.();
+            await localB.close?.();
+        }
+    });
+});

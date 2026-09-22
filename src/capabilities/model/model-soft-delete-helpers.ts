@@ -7,6 +7,7 @@
 import { PopulatePromise } from './populate-promise';
 import type { PopulatePath, ModelCollectionLike } from './populate-promise';
 import type { UpdateResult } from '../../../types/collection';
+import { applyModelSoftDeleteFilter } from './model-write-helpers';
 
 type SoftDeleteConfig = { enabled: boolean; field: string; type: string; ttl: number | null } | null;
 type RestoreResult = Pick<UpdateResult, 'modifiedCount'> & Partial<UpdateResult>;
@@ -24,7 +25,59 @@ function deletedFilter(filter: unknown, softDeleteConfig: SoftDeleteConfig): unk
     if (!softDeleteConfig) {
         return filter ?? {};
     }
-    return { ...(filter as Record<string, unknown> ?? {}), [softDeleteConfig.field]: { $ne: null } };
+    return applyModelSoftDeleteFilter(filter, { onlyDeleted: true }, softDeleteConfig);
+}
+
+export function filterVisibleBySoftDelete<TDocument>(
+    docs: Array<TDocument | null | undefined>, options: unknown, config: SoftDeleteConfig,
+): TDocument[] {
+    if (!config?.enabled) return docs.filter((doc): doc is TDocument => Boolean(doc));
+    const rawOptions = (options ?? {}) as Record<string, unknown>;
+    applyModelSoftDeleteFilter({}, rawOptions, config);
+    if (rawOptions.withDeleted) return docs.filter((doc): doc is TDocument => Boolean(doc));
+    return docs.filter((doc): doc is TDocument => {
+        if (!doc) return false;
+        const value = (doc as Record<string, unknown>)[config.field];
+        const deleted = config.type === 'boolean' ? value === true : value !== undefined && value !== null;
+        return rawOptions.onlyDeleted ? deleted : !deleted;
+    });
+}
+
+export function withSoftDeleteProjection(options: unknown, config: SoftDeleteConfig): { options: unknown; stripField: boolean } {
+    if (!config?.enabled) return { options, stripField: false };
+    const rawOptions = (options ?? {}) as Record<string, unknown>;
+    const field = config.field;
+    const projection = rawOptions.projection ?? rawOptions.project;
+    if (Array.isArray(projection)) {
+        if (projection.includes(field)) return { options, stripField: false };
+        return { options: { ...rawOptions, projection: [...projection, field] }, stripField: true };
+    }
+    if (!projection || typeof projection !== 'object') return { options, stripField: false };
+    const projectionRecord = projection as Record<string, unknown>;
+    if (projectionRecord[field] === 1 || projectionRecord[field] === true) return { options, stripField: false };
+    const inclusion = Object.entries(projectionRecord).some(([key, value]) => key !== '_id' && (value === 1 || value === true));
+    const nextProjection = { ...projectionRecord };
+    if (inclusion) nextProjection[field] = 1;
+    else delete nextProjection[field];
+    return { options: { ...rawOptions, projection: nextProjection }, stripField: true };
+}
+
+export function applySoftDeleteFindPageOptions(options: unknown, config: SoftDeleteConfig): unknown {
+    const rawOptions = (options ?? {}) as Record<string, unknown>;
+    return { ...rawOptions, query: applyModelSoftDeleteFilter(rawOptions.query, rawOptions, config) };
+}
+
+export function applySoftDeleteAggregatePipeline(pipeline: unknown[] | undefined, options: unknown, config: SoftDeleteConfig): unknown[] {
+    if (!config?.enabled) return pipeline ?? [];
+    const rawOptions = (options ?? {}) as Record<string, unknown>;
+    if (rawOptions.withDeleted) return pipeline ?? [];
+    const softDeleteMatch = applyModelSoftDeleteFilter({}, rawOptions, config) as Record<string, unknown>;
+    const matchStage = { $match: softDeleteMatch };
+    const stages = [...(pipeline ?? [])];
+    if (stages.length > 0 && stages[0] && typeof stages[0] === 'object' && '$geoNear' in (stages[0] as Record<string, unknown>)) {
+        return [stages[0], matchStage, ...stages.slice(1)];
+    }
+    return [matchStage, ...stages];
 }
 
 export function findWithDeletedDocuments<TDocument>(
@@ -102,7 +155,7 @@ export function restoreSoftDeletedDocuments<TDocument>(
         return Promise.resolve({ modifiedCount: 0 });
     }
     return context.collection.updateOne(
-        { ...(filter as Record<string, unknown> ?? {}), [softDeleteConfig.field]: { $ne: null } },
+        deletedFilter(filter, softDeleteConfig),
         { $unset: { [softDeleteConfig.field]: 1 } },
         options,
     );
@@ -118,7 +171,7 @@ export function restoreManySoftDeletedDocuments<TDocument>(
         return Promise.resolve({ modifiedCount: 0 });
     }
     return context.collection.updateMany(
-        { ...(filter as Record<string, unknown> ?? {}), [softDeleteConfig.field]: { $ne: null } },
+        deletedFilter(filter, softDeleteConfig),
         { $unset: { [softDeleteConfig.field]: 1 } },
         options,
     );

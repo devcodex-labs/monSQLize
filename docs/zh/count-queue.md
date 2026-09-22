@@ -2,6 +2,8 @@
 
 ## 概述
 
+直接调用 `CountQueue.execute(task, { signal })` 时，排队任务在调用方取消后会从队列移除。超时或调用方取消会拒绝调用并中止任务 signal，但并发槽会一直占用到底层任务真正结束；忽略取消的任务仍会占用该槽位。
+
 Count 队列控制是 monSQLize 的高级特性，用于限制同时执行的 `countDocuments` 操作数量。
 
 ### 核心功能

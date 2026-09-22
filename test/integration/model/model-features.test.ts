@@ -1,4 +1,4 @@
-import { after, before, beforeEach, describe, it } from 'node:test';
+import { after, afterEach, before, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryServerBootstrap } from '../../bootstrap/memory-server';
 
@@ -6,6 +6,7 @@ const MonSQLize = require('../../../dist/cjs/index.cjs');
 
 describe('P3-C model features', () => {
     const bootstrap = createMemoryServerBootstrap();
+    const activeRuntimes = new Set<{ close(): Promise<void> }>();
     let uri = '';
 
     before(async () => {
@@ -22,6 +23,12 @@ describe('P3-C model features', () => {
         MonSQLize.Model._clear();
     });
 
+    afterEach(async () => {
+        const runtimes = [...activeRuntimes];
+        activeRuntimes.clear();
+        await Promise.all(runtimes.map((runtime) => runtime.close()));
+    });
+
     it('binds a registered descriptor through direct and scoped model accessors', async () => {
         const User = MonSQLize.defineModel('typed_descriptor_users', {
             schema: {
@@ -31,6 +38,7 @@ describe('P3-C model features', () => {
         });
 
         const runtime = new MonSQLize({ type: 'mongodb', databaseName: 'p3c_typed_descriptor_models', config: { uri } });
+        activeRuntimes.add(runtime);
         await runtime.connect();
 
         assert.throws(() => runtime.model(User), /MODEL_NOT_DEFINED|not defined/);
@@ -45,7 +53,6 @@ describe('P3-C model features', () => {
         assert.equal(found?.email, 'ada@example.com');
         assert.equal(found?.age, 35);
 
-        await runtime.close();
     });
 
     it('restores model registry, instance cache, relations/virtuals/populate, and scoped routing', async () => {
@@ -99,6 +106,7 @@ describe('P3-C model features', () => {
         });
 
         const runtime = new MonSQLize({ type: 'mongodb', databaseName: 'p3c_models', config: { uri } });
+        activeRuntimes.add(runtime);
         await runtime.connect();
 
         const users = runtime.model('users');
@@ -131,7 +139,7 @@ describe('P3-C model features', () => {
 
         const byIds = await posts.findByIds([compiler.insertedId, engine.insertedId]).populate({ path: 'comments', select: ['body'] });
         assert.equal(byIds[0].comments[0].body.includes('comment'), true);
-        assert.equal(Object.prototype.hasOwnProperty.call(byIds[0].comments[0], '_id'), true);
+        assert.equal(Object.prototype.hasOwnProperty.call(byIds[0].comments[0], '_id'), false);
 
         assert.equal(typeof users.findOneById, 'function');
         const byId = await users.findOneById(adaId).populate('posts');
@@ -170,7 +178,6 @@ describe('P3-C model features', () => {
         const refreshedDoc = await refreshedUsers.findOneById(adaId);
         assert.equal(refreshedDoc.displayName, 'Lovelace, Ada');
 
-        await runtime.close();
     });
 
     it('keeps model config initialization and v1-compatible injection stable', async () => {
@@ -184,7 +191,7 @@ describe('P3-C model features', () => {
             schema(this: any, dsl: any) {
                 return dsl({
                     name: 'string!',
-                    role: this.enums.role.default('user'),
+                    role: dsl(this.enums.role).default('user'),
                 });
             },
             options: {
@@ -227,6 +234,7 @@ describe('P3-C model features', () => {
         });
 
         const runtime = new MonSQLize({ type: 'mongodb', databaseName: 'p3c_model_wiring', config: { uri } });
+        activeRuntimes.add(runtime);
         await runtime.connect();
 
         const accounts = runtime.model('accounts');
@@ -241,12 +249,12 @@ describe('P3-C model features', () => {
         assert.equal(beforeInsertCalls, 1);
         assert.equal(afterInsertCalls, 1);
         assert.equal(stored.hooked, true);
+        assert.equal(stored.role, 'user');
         assert.equal(stored.version, 0);
         assert.equal(typeof stored.isHooked, 'function');
         assert.equal(stored.isHooked(), true);
         assert.equal(stored.createdAt instanceof Date, true);
         assert.equal(stored.updatedAt instanceof Date, true);
 
-        await runtime.close();
     });
 });

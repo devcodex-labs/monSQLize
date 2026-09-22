@@ -27,13 +27,17 @@ export async function prepareSshTunnelConnectConfig(
     const tunnel = new SSHTunnelSSH2(sshCfg as any, remoteHost, remotePort, { name: databaseName });
 
     logger.info?.(`[SSH] Establishing tunnel to ${remoteHost}:${remotePort} via ${String(cfg['host'])}`);
-    await tunnel.connect();
-    logger.info?.(`[SSH] Tunnel ready — local address: ${tunnel.getLocalAddress()}`);
-
-    return {
-        tunnel,
-        connectConfig: connectConfig?.uri
-            ? { ...connectConfig, uri: tunnel.getTunnelUri('mongodb', connectConfig.uri) }
-            : connectConfig,
-    };
+    try {
+        await tunnel.connect();
+        logger.info?.(`[SSH] Tunnel ready — local address: ${tunnel.getLocalAddress()}`);
+        return {
+            tunnel,
+            connectConfig: connectConfig?.uri
+                ? { ...connectConfig, uri: tunnel.getTunnelUri('mongodb', connectConfig.uri) }
+                : connectConfig,
+        };
+    } catch (error) {
+        await tunnel.close();
+        throw error;
+    }
 }

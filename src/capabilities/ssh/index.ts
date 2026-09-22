@@ -59,6 +59,10 @@ export interface SSHConfigInput {
     readyTimeout?: number;
     /** Keep-alive interval in milliseconds (default: 30000). */
     keepaliveInterval?: number;
+    /** ssh2 host-key hash algorithm; pair with hostVerifier for pinned fingerprints. */
+    hostHash?: string;
+    /** Return false to reject a server host key during the SSH handshake. */
+    hostVerifier?: (key: string | Buffer) => boolean;
     /** Target remote host as seen from the SSH server (overrides URI auto-parse). */
     dstHost?: string;
     /** Target remote port as seen from the SSH server (overrides URI auto-parse). */
@@ -76,6 +80,8 @@ interface SshAuthConfig {
     passphrase?: string;
     readyTimeout: number;
     keepaliveInterval: number;
+    hostHash?: string;
+    hostVerifier?: (key: string | Buffer) => boolean;
 }
 
 export class SSHTunnelSSH2 {
@@ -114,6 +120,8 @@ export class SSHTunnelSSH2 {
             port = 22,
             readyTimeout = 20000,
             keepaliveInterval = 30000,
+            hostHash,
+            hostVerifier,
         } = this._sshConfig;
 
         if (!host || !username) {
@@ -124,6 +132,8 @@ export class SSHTunnelSSH2 {
         }
 
         const config: SshAuthConfig = { host, port, username, readyTimeout, keepaliveInterval };
+        if (hostHash !== undefined) config.hostHash = hostHash;
+        if (hostVerifier !== undefined) config.hostVerifier = hostVerifier;
 
         if (password) {
             config.password = password;
@@ -147,6 +157,22 @@ export class SSHTunnelSSH2 {
         return new Promise<void>((resolve, reject) => {
             const ssh = new SshClient();
             let settled = false;
+            const fail = (err: Error) => {
+                if (settled) {
+                    this.markDisconnected();
+                    return;
+                }
+                settled = true;
+                this.isConnected = false;
+                this.localPort = null;
+                this.server = null;
+                this.sshClient = null;
+                for (const socket of this._activeSockets) socket.destroy();
+                this._activeSockets.clear();
+                void closeServer(server);
+                try { ssh.end(); } catch { /* failed handshake may already be closed */ }
+                reject(err);
+            };
 
             const server = net.createServer((socket) => {
                 this._activeSockets.add(socket);
@@ -167,12 +193,7 @@ export class SSHTunnelSSH2 {
                 );
             });
 
-            server.on('error', (err) => {
-                if (!settled) {
-                    settled = true;
-                    reject(err);
-                }
-            });
+            server.on('error', fail);
 
             server.listen(this._sshConfig.localPort ?? 0, '127.0.0.1', () => {
                 this.server = server;
@@ -190,18 +211,14 @@ export class SSHTunnelSSH2 {
 
                 ssh.on('error', (err) => {
                     if (!settled) {
-                        settled = true;
-                        server.close();
-                        reject(err);
+                        fail(err);
                         return;
                     }
                     this.markDisconnected();
                 });
                 const handleDisconnect = () => {
                     if (!settled) {
-                        settled = true;
-                        server.close();
-                        reject(createError(ErrorCodes.CONNECTION_FAILED, 'SSH connection closed before the tunnel became ready'));
+                        fail(createError(ErrorCodes.CONNECTION_FAILED, 'SSH connection closed before the tunnel became ready'));
                         return;
                     }
                     this.markDisconnected();
@@ -209,7 +226,7 @@ export class SSHTunnelSSH2 {
                 ssh.on('close', handleDisconnect);
                 ssh.on('end', handleDisconnect);
 
-                ssh.connect(authConfig);
+                try { ssh.connect(authConfig); } catch (err) { fail(err as Error); }
             });
         });
     }
@@ -247,6 +264,7 @@ export class SSHTunnelSSH2 {
     }
 
     private markDisconnected(): void {
+        const ssh = this.sshClient;
         this.isConnected = false;
         this.localPort = null;
         this.sshClient = null;
@@ -257,6 +275,7 @@ export class SSHTunnelSSH2 {
         }
         this._activeSockets.clear();
         void closeServer(server);
+        try { ssh?.end(); } catch { /* already disconnected */ }
     }
 }
 

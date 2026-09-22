@@ -2,6 +2,8 @@
 
 `writePathPolicy` lets a runtime decide whether writes may use both `collection()` and `model()`, or whether a namespace must be written through the Model layer.
 
+Policy lookup uses only rules explicitly owned by the configuration object. Inherited prototype properties never become rules; explicit namespace keys such as `toString` and `constructor` remain valid.
+
 The default is intentionally permissive: when `writePathPolicy` is omitted, collection APIs and Model APIs are both allowed. Enable this policy only for applications that want the runtime to enforce a stronger write boundary around schema defaults, hooks, timestamps, optimistic locking, soft delete, and other Model mutation rules.
 
 ## Configuration

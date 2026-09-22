@@ -6,16 +6,12 @@
  * - Public and shared types are managed by `types/sync.d.ts`; only runtime implementation and internal helper types are kept here.
  */
 
-import { copyFile, mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
-import path from 'node:path';
 import type { ChangeStream, Db, Document, MongoClient, MongoClientOptions } from 'mongodb';
 import { MongoClient as MongoDriverClient } from 'mongodb';
 import { ErrorCodes, createError } from '../../core/errors';
 import type { LoggerLike } from '../../core/logger';
 import type { ConnectionPoolManager } from '../pool';
 import type {
-    ResumeTokenConfig,
-    ResumeTokenRedisLike,
     SyncChangeEvent,
     SyncConfig,
     SyncIdempotencyConfig,
@@ -33,6 +29,8 @@ import {
     type SyncIdempotencyRuntime,
     validateSyncIdempotencyConfig,
 } from './idempotency';
+import { normalizeError, ResumeTokenStore, validateResumeTokenConfig, type ResumeTokenStoreLike } from './resume-token-store';
+export { ResumeTokenStore, validateResumeTokenConfig } from './resume-token-store';
 
 export type {
     ResumeTokenConfig,
@@ -61,12 +59,6 @@ interface ResolvedTarget {
     };
 }
 
-interface ResumeTokenStoreLike {
-    load(): Promise<unknown | null>;
-    save(token: unknown): Promise<void>;
-    clear(): Promise<void>;
-}
-
 interface ChangeStreamSyncManagerOptions {
     db: Db;
     poolManager?: ConnectionPoolManager | null;
@@ -76,38 +68,11 @@ interface ChangeStreamSyncManagerOptions {
     clientFactory?: (uri: string, options?: MongoClientOptions) => Promise<MongoClient>;
 }
 
-function normalizeError(error: unknown): Error {
-    return error instanceof Error ? error : new Error(String(error));
-}
-
-function delay(ms: number): Promise<void> {
-    if (ms <= 0) {
-        return Promise.resolve();
-    }
-    return new Promise((resolve) => {
-        const timer = setTimeout(resolve, ms);
-        timer.unref?.();
-    });
-}
-
 function normalizeCollectionFilter(collections: string[] | undefined): Set<string> | null {
     if (!collections?.length || collections.includes('*')) {
         return null;
     }
     return new Set(collections);
-}
-
-async function syncDirectory(directory: string): Promise<void> {
-    try {
-        const handle = await open(directory, 'r');
-        try {
-            await handle.sync();
-        } finally {
-            await handle.close();
-        }
-    } catch {
-        // Directory fsync is best-effort and unsupported on some platforms.
-    }
 }
 
 /**
@@ -144,43 +109,6 @@ export function validateTargetConfig(target: SyncTargetConfig | null | undefined
     }
     if (target.apply !== undefined && typeof target.apply !== 'function') {
         throw createError(ErrorCodes.INVALID_CONFIG, `[Sync] targets[${index}].apply must be a function when provided.`);
-    }
-}
-
-/**
- * Validates a resume token configuration object.
- * @param config - Resume token config to validate.
- * @throws {MonSQLizeError} When the configuration is invalid.
- * @since v1.7.0
- */
-export function validateResumeTokenConfig(config: ResumeTokenConfig | null | undefined): void {
-    if (!config || typeof config !== 'object') {
-        throw createError(ErrorCodes.INVALID_CONFIG, '[Sync] resumeToken must be an object.');
-    }
-    const storage = config.storage ?? 'file';
-    if (!['file', 'redis'].includes(storage)) {
-        throw createError(ErrorCodes.INVALID_CONFIG, '[Sync] resumeToken.storage must be file or redis.');
-    }
-    if (storage === 'file' && config.path !== undefined && typeof config.path !== 'string') {
-        throw createError(ErrorCodes.INVALID_CONFIG, '[Sync] resumeToken.path must be a string.');
-    }
-    if (storage === 'redis' && !config.redis) {
-        throw createError(ErrorCodes.INVALID_CONFIG, '[Sync] resumeToken.redis is required when storage is redis.');
-    }
-    if (storage === 'redis' && config.redis && typeof config.redis !== 'object') {
-        throw createError(ErrorCodes.INVALID_CONFIG, '[Sync] resumeToken.redis must be an object.');
-    }
-    if (config.strictSave !== undefined && typeof config.strictSave !== 'boolean') {
-        throw createError(ErrorCodes.INVALID_CONFIG, '[Sync] resumeToken.strictSave must be a boolean.');
-    }
-    if (config.strictLoad !== undefined && typeof config.strictLoad !== 'boolean') {
-        throw createError(ErrorCodes.INVALID_CONFIG, '[Sync] resumeToken.strictLoad must be a boolean.');
-    }
-    if (config.saveRetries !== undefined && (!Number.isInteger(config.saveRetries) || config.saveRetries < 0)) {
-        throw createError(ErrorCodes.INVALID_CONFIG, '[Sync] resumeToken.saveRetries must be a non-negative integer.');
-    }
-    if (config.saveRetryDelayMs !== undefined && (!Number.isInteger(config.saveRetryDelayMs) || config.saveRetryDelayMs < 0)) {
-        throw createError(ErrorCodes.INVALID_CONFIG, '[Sync] resumeToken.saveRetryDelayMs must be a non-negative integer.');
     }
 }
 
@@ -227,146 +155,6 @@ export function validateSyncConfig(config: SyncConfig): void {
 }
 
 /**
- * Persists and retrieves change-stream resume tokens using either the file system
- * or a Redis key-value store.
- * @since v1.7.0
- */
-export class ResumeTokenStore implements ResumeTokenStoreLike {
-    private readonly storage: 'file' | 'redis';
-    public readonly path: string;
-    private readonly redis?: ResumeTokenRedisLike;
-    private readonly redisKey: string;
-    private readonly logger: LoggerLike | null;
-    private readonly strictLoad: boolean;
-    private readonly strictSave: boolean;
-    private readonly saveRetries: number;
-    private readonly saveRetryDelayMs: number;
-
-    constructor(options: ResumeTokenConfig & { logger?: LoggerLike | null; } = {}) {
-        this.storage = options.storage ?? 'file';
-        this.path = options.path ?? './.sync-resume-token';
-        this.redis = options.redis;
-        this.redisKey = options.key ?? 'monsqlize:sync:resume-token';
-        this.logger = options.logger ?? null;
-        this.strictSave = options.strictSave ?? true;
-        this.strictLoad = options.strictLoad ?? this.strictSave;
-        this.saveRetries = options.saveRetries ?? 0;
-        this.saveRetryDelayMs = options.saveRetryDelayMs ?? 100;
-        validateResumeTokenConfig(options);
-    }
-
-    async load(): Promise<unknown | null> {
-        try {
-            if (this.storage === 'redis' && this.redis) {
-                const payload = await Promise.resolve(this.redis.get(this.redisKey));
-                return payload ? JSON.parse(String(payload)) : null;
-            }
-            const payload = await readFile(this.path, 'utf8');
-            return JSON.parse(payload);
-        } catch (error) {
-            const code = (error as NodeJS.ErrnoException)?.code;
-            if (code !== 'ENOENT') {
-                this.logger?.warn?.('[Sync] failed to load resume token', error);
-            }
-            if (code !== 'ENOENT' && this.strictLoad) {
-                throw createError(
-                    ErrorCodes.DATABASE_ERROR,
-                    '[Sync] failed to load resume token',
-                    undefined,
-                    normalizeError(error),
-                );
-            }
-            return null;
-        }
-    }
-
-    async save(token: unknown): Promise<void> {
-        const payload = JSON.stringify(token, null, 2);
-        let lastError: Error | null = null;
-
-        for (let attempt = 0; attempt <= this.saveRetries; attempt += 1) {
-            try {
-                await this.writePayload(payload);
-                return;
-            } catch (error) {
-                lastError = normalizeError(error);
-                if (attempt < this.saveRetries) {
-                    this.logger?.warn?.('[Sync] failed to save resume token; retrying', {
-                        attempt: attempt + 1,
-                        retries: this.saveRetries,
-                        error: lastError,
-                    });
-                    await delay(this.saveRetryDelayMs);
-                }
-            }
-        }
-
-        this.logger?.error?.('[Sync] failed to save resume token', lastError);
-        if (this.strictSave) {
-            throw createError(
-                ErrorCodes.DATABASE_ERROR,
-                '[Sync] failed to save resume token',
-                undefined,
-                lastError ?? undefined,
-            );
-        }
-    }
-
-    private async writePayload(payload: string): Promise<void> {
-        if (this.storage === 'redis' && this.redis) {
-            await Promise.resolve(this.redis.set(this.redisKey, payload));
-            return;
-        }
-        const directory = path.dirname(this.path);
-        const basename = path.basename(this.path);
-        const tempPath = path.join(directory, `.${basename}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`);
-
-        await mkdir(directory, { recursive: true });
-        try {
-            const handle = await open(tempPath, 'w');
-            try {
-                await handle.writeFile(payload, 'utf8');
-                await handle.sync();
-            } finally {
-                await handle.close();
-            }
-            await this.backupCurrentFile();
-            await rename(tempPath, this.path);
-            await syncDirectory(directory);
-        } catch (error) {
-            await unlink(tempPath).catch(() => undefined);
-            throw error;
-        }
-    }
-
-    private async backupCurrentFile(): Promise<void> {
-        try {
-            await copyFile(this.path, `${this.path}.bak`);
-        } catch (error) {
-            const code = (error as NodeJS.ErrnoException)?.code;
-            if (code !== 'ENOENT') {
-                throw error;
-            }
-        }
-    }
-
-    async clear(): Promise<void> {
-        try {
-            if (this.storage === 'redis' && this.redis) {
-                await Promise.resolve(this.redis.del?.(this.redisKey));
-                return;
-            }
-            await unlink(this.path);
-        } catch (error) {
-            const code = (error as NodeJS.ErrnoException)?.code;
-            if (code !== 'ENOENT') {
-                this.logger?.warn?.('[Sync] failed to clear resume token', error);
-            }
-        }
-    }
-}
-
-/**
  * Watches a MongoDB change stream and fans out change events to configured
  * sync targets (remote MongoDB, Redis pub/sub, or custom callbacks).
  * @since v1.7.0
@@ -385,7 +173,10 @@ export class ChangeStreamSyncManager {
     private closingStreamPromise: Promise<void> | null = null;
     private changeQueue: Promise<void> = Promise.resolve();
     private running = false;
+    private stopping = false;
+    private stopPromise: Promise<void> | null = null;
     private fatalSyncError: Error | null = null;
+    private generation = 0;
     private readonly stats = {
         eventCount: 0,
         syncedCount: 0,
@@ -421,45 +212,67 @@ export class ChangeStreamSyncManager {
      * @since v1.0.9
      */
     async start(): Promise<void> {
+        if (this.stopPromise) await this.stopPromise;
         if (this.running || !this.config.enabled) return;
         if (this.startPromise) return this.startPromise;
 
+        const generation = ++this.generation;
         const startup = (async () => {
             await this.closingStreamPromise;
+            await this.changeQueue.catch(() => undefined);
+            this.assertCurrentGeneration(generation, true);
             if (this.running) return;
             this.fatalSyncError = null;
 
-            await this.validateEnvironment();
-            await this.initializeTargets();
+            await this.closeTargets();
+            let stagedTargets: ResolvedTarget[] = [];
+            let stream: ChangeStream | null = null;
+            try {
+                await this.validateEnvironment();
+                this.assertCurrentGeneration(generation);
+                stagedTargets = await this.initializeTargets();
+                this.assertCurrentGeneration(generation);
 
-            const resumeAfter = await this.tokenStore.load();
-            const options: Record<string, unknown> = { fullDocument: 'updateLookup' };
-            if (resumeAfter) options.resumeAfter = resumeAfter;
+                const resumeAfter = await this.tokenStore.load();
+                this.assertCurrentGeneration(generation);
+                const options: Record<string, unknown> = { fullDocument: 'updateLookup' };
+                if (resumeAfter) options.resumeAfter = resumeAfter;
 
-            const stream = this.db.watch(this.buildPipeline(), options as Parameters<Db['watch']>[1]);
-            stream.on('change', (event) => this.enqueueChange(event as SyncChangeEvent<Document>));
-            stream.on('error', (error) => {
-                const normalized = normalizeError(error);
-                this.stats.errorCount += 1;
-                this.stats.lastError = normalized;
-                this.logger?.error?.('[Sync] change stream error', normalized);
-            });
-            stream.on('close', () => {
-                if (!this.running || this.changeStream !== stream) {
-                    this.logger?.debug?.('[Sync] change stream closed');
-                    return;
-                }
-                const error = createError(ErrorCodes.CONNECTION_CLOSED, '[Sync] change stream closed unexpectedly');
-                this.running = false;
-                this.changeStream = null;
-                this.stats.errorCount += 1;
-                this.stats.lastError = error;
-                this.logger?.warn?.('[Sync] change stream closed unexpectedly', error);
-            });
+                stream = this.db.watch(this.buildPipeline(), options as Parameters<Db['watch']>[1]);
+                const activeStream = stream;
+                activeStream.on('change', (event) => this.enqueueChange(event as SyncChangeEvent<Document>, generation));
+                activeStream.on('error', (error) => {
+                    if (generation !== this.generation) return;
+                    const normalized = normalizeError(error);
+                    this.stats.errorCount += 1;
+                    this.stats.lastError = normalized;
+                    this.logger?.error?.('[Sync] change stream error', normalized);
+                    this.stopAfterFatalSyncError(normalized, generation);
+                });
+                activeStream.on('close', () => {
+                    if (generation !== this.generation || !this.running || this.changeStream !== activeStream) {
+                        this.logger?.debug?.('[Sync] change stream closed');
+                        return;
+                    }
+                    const error = createError(ErrorCodes.CONNECTION_CLOSED, '[Sync] change stream closed unexpectedly');
+                    this.stats.errorCount += 1;
+                    this.stats.lastError = error;
+                    this.logger?.warn?.('[Sync] change stream closed unexpectedly', error);
+                    this.stopAfterFatalSyncError(error, generation);
+                });
 
-            this.changeStream = stream;
-            this.running = true;
-            this.stats.startTime = new Date();
+                this.assertCurrentGeneration(generation);
+                this.targets.push(...stagedTargets);
+                stagedTargets = [];
+                this.changeStream = activeStream;
+                stream = null;
+                this.running = true;
+                this.stats.startTime = new Date();
+            } catch (error) {
+                if (stream) await this.closeChangeStream(stream).catch(() => undefined);
+                for (const target of stagedTargets.reverse()) await target.close().catch(() => undefined);
+                throw error;
+            }
         })();
         this.startPromise = startup;
         try {
@@ -474,16 +287,39 @@ export class ChangeStreamSyncManager {
      * @since v1.0.9
      */
     async stop(): Promise<void> {
-        this.running = false;
-        await this.startPromise;
-        const stream = this.changeStream;
-        this.changeStream = null;
-        if (stream) await this.closeChangeStream(stream);
-        else await this.closingStreamPromise;
-        await this.changeQueue.catch(() => undefined);
+        if (this.stopPromise) return this.stopPromise;
+        this.stopping = true;
+        const cleanup = (async () => {
+            if (this.startPromise && !this.running) this.generation += 1;
+            await this.startPromise?.catch(() => undefined);
+            await this.changeQueue.catch(() => undefined);
+            this.generation += 1;
+            this.running = false;
+            const stream = this.changeStream;
+            this.changeStream = null;
+            if (stream) await this.closeChangeStream(stream);
+            else await this.closingStreamPromise;
+            await this.closeTargets();
+        })();
+        this.stopPromise = cleanup;
+        try {
+            await cleanup;
+        } finally {
+            if (this.stopPromise === cleanup) this.stopPromise = null;
+            this.stopping = false;
+        }
+    }
+
+    private assertCurrentGeneration(generation: number, allowPreviousFatal = false): void {
+        if (generation !== this.generation) {
+            throw createError(ErrorCodes.CONNECTION_CLOSED, '[Sync] startup was superseded by stop or restart');
+        }
+        if (!allowPreviousFatal && this.fatalSyncError) throw this.fatalSyncError;
+    }
+
+    private async closeTargets(): Promise<void> {
         while (this.targets.length > 0) {
-            const target = this.targets.pop();
-            await target?.close();
+            await this.targets.pop()?.close();
         }
     }
 
@@ -555,12 +391,14 @@ export class ChangeStreamSyncManager {
         return pipeline;
     }
 
-    private async initializeTargets(): Promise<void> {
-        if (this.targets.length > 0) {
-            return;
-        }
-        for (const target of this.config.targets) {
-            this.targets.push(await this.resolveTarget(target));
+    private async initializeTargets(): Promise<ResolvedTarget[]> {
+        const staged: ResolvedTarget[] = [];
+        try {
+            for (const target of this.config.targets) staged.push(await this.resolveTarget(target));
+            return staged;
+        } catch (error) {
+            for (const target of staged.reverse()) await target.close().catch(() => undefined);
+            throw error;
         }
     }
 
@@ -601,8 +439,8 @@ export class ChangeStreamSyncManager {
         return createMongoTarget(target.name, collections, client, target.databaseName ?? this.db.databaseName, true);
     }
 
-    private async handleChange(event: SyncChangeEvent<Document>): Promise<void> {
-        if (this.fatalSyncError) {
+    private async handleChange(event: SyncChangeEvent<Document>, generation = this.generation): Promise<void> {
+        if (generation !== this.generation || !this.running || this.fatalSyncError) {
             this.logger?.warn?.('[Sync] skipping queued change after fatal sync error', this.fatalSyncError);
             return;
         }
@@ -610,6 +448,7 @@ export class ChangeStreamSyncManager {
         this.stats.lastEventTime = new Date();
 
         if (this.config.filter && !this.config.filter(event)) {
+            await this.saveProcessedToken(event, generation);
             return;
         }
 
@@ -623,6 +462,7 @@ export class ChangeStreamSyncManager {
         let duplicateTargets = 0;
         const targetErrors: Error[] = [];
         for (const target of this.targets) {
+            if (generation !== this.generation || this.fatalSyncError || !this.running) return;
             if (target.collections && !target.collections.has(event.ns.coll)) {
                 continue;
             }
@@ -639,11 +479,13 @@ export class ChangeStreamSyncManager {
                 if (idempotencyKey && this.idempotency.markMode === 'start') {
                     await this.markTargetEventApplied(idempotencyKey, event, target.name, 'start');
                 }
+                if (generation !== this.generation || this.fatalSyncError || !this.running) return;
                 await target.apply(event, document, {
                     targetName: target.name,
                     ...(idempotencyKey ? { idempotencyKey } : {}),
                 });
                 if (idempotencyKey && this.idempotency.markMode === 'success') {
+                    if (generation !== this.generation || this.fatalSyncError || !this.running) return;
                     await this.markTargetEventApplied(idempotencyKey, event, target.name, 'success');
                 }
                 target.stats.syncCount += 1;
@@ -665,26 +507,31 @@ export class ChangeStreamSyncManager {
         }
 
         if (targetErrors.length > 0) {
-            this.stopAfterFatalSyncError(targetErrors[0] as Error);
+            this.stopAfterFatalSyncError(targetErrors[0] as Error, generation);
             return;
         }
 
-        if (eligibleTargets > 0 && succeeded === eligibleTargets) {
-            try {
-                await this.tokenStore.save(event._id);
-            } catch (error) {
-                const normalized = normalizeError(error);
-                this.stats.tokenSaveErrorCount += 1;
-                this.stats.lastTokenSaveError = normalized;
-                this.stats.lastError = normalized;
-                this.stopAfterFatalSyncError(normalized);
-                throw normalized;
-            }
-            this.stats.syncedCount += 1;
+        if (succeeded === eligibleTargets) {
+            await this.saveProcessedToken(event, generation);
             if (duplicateTargets > 0 && duplicateTargets === eligibleTargets) {
                 this.stats.duplicateEventCount += 1;
             }
         }
+    }
+
+    private async saveProcessedToken(event: SyncChangeEvent<Document>, generation: number): Promise<void> {
+        if (generation !== this.generation || this.fatalSyncError || !this.running) return;
+        try {
+            await this.tokenStore.save(event._id);
+        } catch (error) {
+            const normalized = normalizeError(error);
+            this.stats.tokenSaveErrorCount += 1;
+            this.stats.lastTokenSaveError = normalized;
+            this.stats.lastError = normalized;
+            this.stopAfterFatalSyncError(normalized, generation);
+            throw normalized;
+        }
+        if (generation === this.generation && !this.fatalSyncError && this.running) this.stats.syncedCount += 1;
     }
 
     private buildTargetIdempotencyKey(targetName: string, event: SyncChangeEvent<Document>): string | null {
@@ -719,7 +566,8 @@ export class ChangeStreamSyncManager {
         }, this.idempotency.ttl));
     }
 
-    private stopAfterFatalSyncError(error: Error): void {
+    private stopAfterFatalSyncError(error: Error, generation: number): void {
+        if (generation !== this.generation) return;
         this.fatalSyncError = error;
         this.running = false;
         const stream = this.changeStream;
@@ -739,14 +587,16 @@ export class ChangeStreamSyncManager {
         });
     }
 
-    private enqueueChange(event: SyncChangeEvent<Document>): void {
+    private enqueueChange(event: SyncChangeEvent<Document>, generation: number): void {
+        if (generation !== this.generation || !this.running || this.stopping || this.fatalSyncError) return;
         this.changeQueue = this.changeQueue
-            .then(() => this.handleChange(event))
+            .then(() => this.handleChange(event, generation))
             .catch((error) => {
                 const normalized = normalizeError(error);
                 this.stats.errorCount += 1;
                 this.stats.lastError = normalized;
                 this.logger?.error?.('[Sync] change handling failed', normalized);
+                this.stopAfterFatalSyncError(normalized, generation);
             });
     }
 }

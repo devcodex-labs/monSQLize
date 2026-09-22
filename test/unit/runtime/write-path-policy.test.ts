@@ -176,6 +176,28 @@ describe('writePathPolicy runtime enforcement', () => {
         assert.deepEqual(calls, [{ op: 'insertOne', db: 'policy_db', collection: 'users' }]);
     });
 
+    it('ignores inherited namespace properties but accepts explicit prototype-named keys', async () => {
+        const inherited = Object.create({ toString: 'allow-both' });
+        inherited.users = 'allow-both';
+        const policy = normalizeWritePathPolicy({ default: 'model-only', namespaces: inherited });
+        for (const collection of ['toString', 'constructor', 'valueOf']) {
+            assert.equal(resolveWritePathRule(policy, { collection }).key, 'default');
+        }
+        assert.equal(resolveWritePathRule(policy, { collection: 'users' }).key, 'users');
+
+        const { runtime, calls } = createConnectedRuntime({
+            writePathPolicy: {
+                default: 'model-only',
+                namespaces: { toString: 'allow-both', constructor: 'allow-both', valueOf: 'allow-both' },
+            },
+        });
+        for (const collection of ['toString', 'constructor', 'valueOf']) {
+            await runtime.collection(collection).insertOne({ allowed: true });
+        }
+        await expectBlocked(runtime.collection('other').insertOne({ allowed: false }));
+        assert.deepEqual(calls.map((call) => call.collection), ['toString', 'constructor', 'valueOf']);
+    });
+
     it('supports explicit raw and management overrides under model-only mode', async () => {
         const { runtime, calls } = createConnectedRuntime({
             writePathPolicy: {

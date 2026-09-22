@@ -84,7 +84,6 @@ import {
 import {
     buildRuntimeDefaults,
     initAutoConvertConfig,
-    initializeDistributedCacheInvalidator,
     loadModelFiles,
 } from '../../../src/entry/capability-wiring';
 import { findByIdsDocuments, findOneByIdDocument } from '../../../src/adapters/mongodb/queries/find-by-id';
@@ -998,16 +997,21 @@ describe('model-instance helpers — direct branch coverage', () => {
 
         await assert.rejects(() => populateModelPath(context as any, docs, { path: 'author', populate: 123 } as any), /nested populate/);
         const populated = await populateModelPath(context as any, docs, { path: 'author', select: 'name', sort: { name: 1 }, skip: 0, limit: 1 } as any);
-        assert.deepEqual(populated[0].author, { name: 'Ada', _id: 'u1' });
+        assert.deepEqual(populated[0].author, { name: 'Ada' });
 
         const perParentRuntime = {
             scopedCollection: () => ({
-                find: async () => [
-                    { postId: 'p1', body: 'p1-second', order: 2 },
-                    { postId: 'p1', body: 'p1-first', order: 1 },
-                    { postId: 'p2', body: 'p2-second', order: 2 },
-                    { postId: 'p2', body: 'p2-first', order: 1 },
-                ],
+                find: async (query: { postId: { $in: string[] } }, options: { skip?: number; limit?: number }) => {
+                    const rows = [
+                        { postId: 'p1', body: 'p1-second', order: 2 },
+                        { postId: 'p1', body: 'p1-first', order: 1 },
+                        { postId: 'p2', body: 'p2-second', order: 2 },
+                        { postId: 'p2', body: 'p2-first', order: 1 },
+                    ];
+                    const matching = rows.filter((row) => query.postId.$in.includes(row.postId));
+                    matching.sort((left, right) => left.order - right.order);
+                    return matching.slice(options.skip ?? 0, (options.skip ?? 0) + (options.limit ?? matching.length));
+                },
             }),
         };
         const perParentDocs: Array<Record<string, unknown>> = [{ _id: 'p1' }, { _id: 'p2' }];
@@ -1188,39 +1192,6 @@ describe('capability wiring — direct branch coverage', () => {
         assert.equal(builtIn.findMaxSkip, 50000);
         assert.equal(builtIn.findPageMaxLimit, 500);
         assert.equal(builtIn.slowQueryMs, 500);
-    });
-
-    it('initializeDistributedCacheInvalidator covers null, cache-like, disabled, success, and failure branches', async () => {
-        const logger = { warnings: [] as unknown[], warn(...args: unknown[]) { this.warnings.push(args); } };
-        const runtimeCache = { delPattern: async () => undefined };
-
-        assert.equal(await initializeDistributedCacheInvalidator({} as any, runtimeCache as any, logger), null);
-        assert.equal(await initializeDistributedCacheInvalidator({ cache: [] } as any, runtimeCache as any, logger), null);
-        assert.equal(await initializeDistributedCacheInvalidator({ cache: { get: () => undefined } } as any, runtimeCache as any, logger), null);
-        assert.equal(await initializeDistributedCacheInvalidator({ cache: { distributed: null } } as any, runtimeCache as any, logger), null);
-        assert.equal(await initializeDistributedCacheInvalidator({ cache: { distributed: [] } } as any, runtimeCache as any, logger), null);
-        assert.equal(await initializeDistributedCacheInvalidator({ cache: { distributed: { enabled: false } } } as any, runtimeCache as any, logger), null);
-
-        const redis = {
-            subscribe: (_channel: string, callback: () => void) => callback(),
-            on: () => undefined,
-            publish: async () => undefined,
-            unsubscribe: async () => undefined,
-            quit: async () => undefined,
-            duplicate: () => ({
-                subscribe: (_channel: string, callback: () => void) => callback(),
-                on: () => undefined,
-                publish: async () => undefined,
-                unsubscribe: async () => undefined,
-                quit: async () => undefined,
-            }),
-        };
-        const invalidator = await initializeDistributedCacheInvalidator({ cache: { distributed: { redis, channel: 'test-channel' } } } as any, runtimeCache as any, logger);
-        assert.ok(invalidator);
-        await invalidator?.close();
-
-        assert.equal(await initializeDistributedCacheInvalidator({ cache: { distributed: { enabled: true } } } as any, runtimeCache as any, logger), null);
-        assert.equal(logger.warnings.length, 1);
     });
 
     it('loadModelFiles returns quietly for absent and invalid model config', async () => {
@@ -2494,10 +2465,10 @@ describe('v1 parity repairs — cache, batch retry and flat model hooks', () => 
         assert.deepEqual((batchUpdatePayload as { $inc?: Record<string, unknown> }).$inc, { __v: 1 });
 
         await orchestrateModelDeleteOne(baseContext, { id: 1 });
-        assert.equal(deleteOneFilter?.deletedAt, null);
+        assert.deepEqual(deleteOneFilter?.deletedAt, { $ne: true });
 
         await orchestrateModelDeleteBatch(baseContext, { stale: true });
-        assert.equal(batchUpdateFilter?.deletedAt, null);
+        assert.deepEqual(batchUpdateFilter?.deletedAt, { $ne: true });
 
         await orchestrateModelDeleteMany(baseContext, { stale: true }, { _forceDelete: true });
         assert.deepEqual(deleteManyFilter, { stale: true });

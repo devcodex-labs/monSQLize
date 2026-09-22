@@ -140,6 +140,22 @@ describe('Model validate — branch coverage', () => {
         assert.ok(typeof result.valid === 'boolean');
         assert.ok(Array.isArray(result.errors));
     });
+
+    it('schema factory failure blocks writes even when validation is disabled', async () => {
+        const modelName = 'schema_factory_failure_' + Date.now();
+        MonSQLize.Model.define(modelName, {
+            collection: modelName,
+            schema: () => { throw new Error('factory unavailable'); },
+            options: { validate: false },
+        });
+        const model = runtime.model(modelName);
+        const failure = /Schema initialization failed: factory unavailable/;
+        await assert.rejects(() => model.insertOne({ name: 'blocked' }, { validate: false }), failure);
+        await assert.rejects(() => model.insertMany([{ name: 'blocked' }]), failure);
+        await assert.rejects(() => model.updateOne({ name: 'blocked' }, { $set: { name: 'changed' } }), failure);
+        await assert.rejects(() => model.deleteOne({ name: 'blocked' }), failure);
+        assert.equal(await runtime._adapter.db.collection(modelName).countDocuments({}), 0);
+    });
 });
 
 // ── Model defaults — applyModelDefaults branches ──────────────────────────────
@@ -286,6 +302,26 @@ describe('Model hydrated document save/remove', () => {
         assert.ok(typeof removed === 'boolean' || typeof removed === 'number');
         const found = await m.findOne({ _id: result.insertedId });
         assert.equal(found, null);
+    });
+
+    it('hydrated doc.remove() follows Model soft-delete and delete hooks', async () => {
+        const calls: string[] = [];
+        MonSQLize.Model.define('remove_soft_doc', {
+            schema: {},
+            options: { softDelete: true },
+            hooks: {
+                beforeDelete: () => { calls.push('before'); },
+                afterDelete: () => { calls.push('after'); },
+            },
+        });
+        const m = runtime.model('remove_soft_doc');
+        const inserted = await m.insertOne({ name: 'Retained' });
+        const doc = await m.findOneById(inserted.insertedId);
+        assert.equal(await doc.remove(), true);
+        assert.equal(await m.findOneById(inserted.insertedId), null);
+        const raw = await runtime._adapter.db.collection('remove_soft_doc').findOne({ _id: inserted.insertedId });
+        assert.ok(raw?.deletedAt instanceof Date);
+        assert.deepEqual(calls, ['before', 'after']);
     });
 
     it('hydrateDocuments returns null for null/undefined input', async () => {

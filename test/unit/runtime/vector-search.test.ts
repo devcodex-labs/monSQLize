@@ -127,6 +127,25 @@ describe('vectorSearch()', () => {
         });
     });
 
+    it('keeps a $meta score projection distinct from an ordinary computed expression', () => {
+        const options = {
+            index: 'embeddings_index', path: 'embedding', queryVector: [0.1, 0.2],
+            limit: 2, numCandidates: 20,
+        };
+        const meta = buildVectorSearchPipeline({
+            ...options, projection: { body: 0, score: { $meta: 'vectorSearchScore' } },
+        });
+        assert.deepEqual((meta.pipeline[1] as { $project: Record<string, unknown> }).$project.score,
+            { $meta: 'vectorSearchScore' });
+
+        const computed = buildVectorSearchPipeline({
+            ...options, projection: { body: 0, calculated: { $add: [1, 2] } },
+        });
+        assert.deepEqual((computed.pipeline[1] as { $project: Record<string, unknown> }).$project.calculated,
+            { $add: [1, 2] });
+        assert.notDeepEqual(meta.pipeline[1], computed.pipeline[1]);
+    });
+
     it('maps score-bearing aggregate rows without exposing the internal score field', () => {
         const hits = mapVectorSearchRows<{ _id: string; title: string }>([
             { _id: 'doc-1', title: 'Vector search', [VECTOR_SEARCH_SCORE_FIELD]: 0.93 },

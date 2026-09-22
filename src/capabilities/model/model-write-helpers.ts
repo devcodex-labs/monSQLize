@@ -5,6 +5,45 @@
  * insertOne, updateOne, replaceOne, deleteOne, and other write paths.
  */
 import { ErrorCodes, createError } from '../../core/errors';
+import type { Readable } from 'node:stream';
+import type { ModelMutationContext } from './model-mutation-orchestrator';
+
+export async function* iterateModelCandidateBatches<TDocument>(
+    context: ModelMutationContext<TDocument>, filter: unknown, options: unknown, batchSize: number,
+): AsyncGenerator<Array<Record<string, unknown>>> {
+    const lookupOptions = buildModelVersionLookupOptions(options, {
+        _id: 1, [context.versionConfig?.field ?? '__v']: 1,
+    });
+    const stream = context.collection.stream(filter, {
+        ...lookupOptions, sort: { _id: 1 }, batchSize,
+    }) as Readable & AsyncIterable<Record<string, unknown>>;
+    let batch: Array<Record<string, unknown>> = [];
+    try {
+        for await (const document of stream) {
+            batch.push(document);
+            if (batch.length === batchSize) {
+                yield batch;
+                batch = [];
+            }
+        }
+        if (batch.length > 0) yield batch;
+    } finally {
+        stream.destroy();
+    }
+}
+
+export function buildStrictCandidateFilter(filter: unknown, id: unknown, versionField: string, expectedVersion: number): Record<string, unknown> {
+    return { $and: [filter ?? {}, { _id: id }, { [versionField]: expectedVersion }] };
+}
+
+export async function isModelVersionConflict<TDocument>(
+    context: ModelMutationContext<TDocument>, id: unknown, versionField: string, expectedVersion: number, options: unknown,
+): Promise<boolean> {
+    const current = await context.collection.findOne(
+        { _id: id }, buildModelVersionLookupOptions(options, { [versionField]: 1 }),
+    ) as Record<string, unknown> | null;
+    return current !== null && current !== undefined && current[versionField] !== expectedVersion;
+}
 
 export type ModelTimestampConfig = {
     createdAt: string | false;
@@ -53,6 +92,7 @@ export type ModelSchemaValidationContext = {
     validateEnabled: boolean;
     schemaCache: unknown;
     schemaValidateFn: ModelSchemaValidateFn;
+    schemaError?: Error | null;
 };
 
 type UpdatePipelineStage = Record<string, unknown>;
@@ -173,6 +213,12 @@ export function validateModelSchemaPayload(
     options?: Record<string, unknown>,
     metadata: Record<string, unknown> = {},
 ): Record<string, unknown> {
+    if (context.schemaError) {
+        throw withModelErrorMetadata(
+            createError(ErrorCodes.VALIDATION_ERROR, `Schema initialization failed: ${context.schemaError.message}`),
+            { errors: [{ field: '_schema', message: context.schemaError.message }], ...metadata },
+        );
+    }
     const shouldValidate = context.validateEnabled || options?.validate === true;
     if (!shouldValidate) {
         return document;
@@ -224,16 +270,22 @@ export function applyModelSoftDeleteFilter(
     }
     const resolvedOptions = (options ?? {}) as Record<string, unknown>;
     const resolvedQuery = (query ?? {}) as Record<string, unknown>;
-    if (resolvedQuery[softDeleteConfig.field] !== undefined) {
+    if (resolvedOptions.withDeleted !== undefined && typeof resolvedOptions.withDeleted !== 'boolean') {
+        throw createError(ErrorCodes.INVALID_ARGUMENT, 'withDeleted must be a boolean.');
+    }
+    if (resolvedOptions.onlyDeleted !== undefined && typeof resolvedOptions.onlyDeleted !== 'boolean') {
+        throw createError(ErrorCodes.INVALID_ARGUMENT, 'onlyDeleted must be a boolean.');
+    }
+    if (Object.prototype.hasOwnProperty.call(resolvedQuery, softDeleteConfig.field)) {
         return resolvedQuery;
     }
     if (resolvedOptions.withDeleted) {
         return resolvedQuery;
     }
     if (resolvedOptions.onlyDeleted) {
-        return { ...resolvedQuery, [softDeleteConfig.field]: { $ne: null } };
+        return { ...resolvedQuery, [softDeleteConfig.field]: softDeleteConfig.type === 'boolean' ? true : { $ne: null } };
     }
-    return { ...resolvedQuery, [softDeleteConfig.field]: null };
+    return { ...resolvedQuery, [softDeleteConfig.field]: softDeleteConfig.type === 'boolean' ? { $ne: true } : null };
 }
 
 export function applyModelInsertTimestamps(

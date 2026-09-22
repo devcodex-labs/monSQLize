@@ -2,6 +2,8 @@
 
 ## Introduction
 
+Opening pools reserve capacity before the client factory completes. Closing the manager rejects new additions, waits for pending additions, and closes clients that finish opening after shutdown began.
+
 Use this page when your application needs more than one MongoDB connection, such as a primary pool plus read replicas, an analytics pool, or tenant-specific pools. The recommended runtime path is to declare pools when creating the `MonSQLize` instance:
 
 - `pools: PoolConfig[]` defines named connection pools.

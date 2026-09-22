@@ -33,10 +33,16 @@ export function isExpressionObject(value: unknown): value is ExpressionObject {
     );
 }
 
+function isPlainExpressionRecord(value: unknown): value is Record<string, unknown> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
+}
+
 export function hasExpressionInObject(value: unknown): boolean {
     if (isExpressionObject(value)) return true;
-    if (!value || typeof value !== 'object') return false;
     if (Array.isArray(value)) return value.some((item) => hasExpressionInObject(item));
+    if (!isPlainExpressionRecord(value)) return false;
     return Object.values(value).some((item) => hasExpressionInObject(item));
 }
 
@@ -60,7 +66,7 @@ function transformExpressions(value: unknown, context: StageContext): unknown {
         return value.map((item) => transformStageEntry(item));
     }
 
-    if (!value || typeof value !== 'object') return value;
+    if (!isPlainExpressionRecord(value)) return value;
 
     const entries = Object.entries(value as Record<string, unknown>);
     const result: Record<string, unknown> = {};
@@ -71,7 +77,7 @@ function transformExpressions(value: unknown, context: StageContext): unknown {
 }
 
 function transformStageEntry(stage: unknown): unknown {
-    if (!stage || typeof stage !== 'object' || Array.isArray(stage)) {
+    if (!isPlainExpressionRecord(stage)) {
         return transformExpressions(stage, 'project');
     }
     const entries = Object.entries(stage as Record<string, unknown>);
@@ -97,7 +103,7 @@ function transformStageValue(value: unknown, context: StageContext): unknown {
     if (Array.isArray(value)) {
         return value.map((item) => transformStageValue(item, context));
     }
-    if (!value || typeof value !== 'object') return value;
+    if (!isPlainExpressionRecord(value)) return value;
     const entries = Object.entries(value as Record<string, unknown>);
     const result: Record<string, unknown> = {};
     for (const [key, current] of entries) {

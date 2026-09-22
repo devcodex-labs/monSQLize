@@ -1,6 +1,7 @@
 import { after, before, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryServerBootstrap } from '../../bootstrap/memory-server';
+import { buildFindPageCacheKey } from '../../../src/adapters/mongodb/queries/query-cache-keys';
 
 const MonSQLize = require('../../../dist/cjs/index.cjs');
 
@@ -609,6 +610,24 @@ describe('findPage() — advanced modes coverage', () => {
         const fresh = await col.findPage(options);
         assert.equal(fresh.meta.cacheHit, false);
         assert.equal(fresh.items[0].val, -100);
+    });
+
+    it('cache key follows the effective top-level or nested let used by the driver', async () => {
+        const native = runtime._adapter.db.collection('items');
+        const base = { query: { $expr: { $eq: ['$tag', '$$tenant'] } }, sort: { val: 1 as const }, limit: 5 };
+        const a = buildFindPageCacheKey(native, {}, { ...base, let: { tenant: 'a' } });
+        const b = buildFindPageCacheKey(native, {}, { ...base, let: { tenant: 'b' } });
+        const nested = buildFindPageCacheKey(native, {}, { ...base, options: { let: { tenant: 'a' } } });
+        const overridden = buildFindPageCacheKey(native, {}, { ...base, let: { tenant: 'a' }, options: { let: { tenant: 'b' } } });
+        assert.notEqual(a.key, b.key);
+        assert.equal(a.key, nested.key);
+        assert.equal(a.key, overridden.key);
+
+        const first = await col.findPage({ ...base, let: { tenant: 'a' }, cache: 60_000, meta: true });
+        const second = await col.findPage({ ...base, let: { tenant: 'b' }, cache: 60_000, meta: true });
+        assert.ok(first.items.every((item: { tag: string }) => item.tag === 'a'));
+        assert.ok(second.items.every((item: { tag: string }) => item.tag === 'b'));
+        assert.equal(second.meta.cacheHit, false);
     });
 
     it('query-level cache does not freeze async totals at the initial null value', async () => {

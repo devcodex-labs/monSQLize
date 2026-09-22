@@ -59,4 +59,43 @@ describe('P4-A transaction integration', () => {
         assert.equal((await runtime.collection('accounts').findOne({ _id: 'A' })).balance, 900);
         await runtime.close();
     });
+
+    it('rejects wrapped writes after a managed abort while allowing a native session', async () => {
+        const runtime = new MonSQLize({ type: 'mongodb', databaseName: 'p4a_tx_guard', config: { uri } });
+        await runtime.connect();
+        try {
+            const transaction = await runtime.startSession();
+            await transaction.start();
+            await transaction.abort();
+            await assert.rejects(
+                () => runtime.collection('guarded').insertOne({ name: 'late' }, { session: transaction.session }),
+                /no longer accepting writes/,
+            );
+            await transaction.end();
+            assert.equal(await runtime.collection('guarded').count({}), 0);
+
+            await runtime.collection('source').insertOne({ name: 'source' });
+            const lazyTransaction = await runtime.startSession();
+            await lazyTransaction.start();
+            const writePipeline = runtime.collection('source').aggregate(
+                [{ $out: 'late_output' }], { session: lazyTransaction.session },
+            );
+            await lazyTransaction.abort();
+            await assert.rejects(() => writePipeline.toArray(), /no longer accepting writes/);
+            await lazyTransaction.end();
+            assert.equal(await runtime.collection('late_output').count({}), 0);
+
+            const nativeSession = runtime._client.startSession();
+            try {
+                nativeSession.startTransaction();
+                await runtime.collection('guarded').insertOne({ name: 'native' }, { session: nativeSession });
+                await nativeSession.commitTransaction();
+            } finally {
+                await nativeSession.endSession();
+            }
+            assert.equal(await runtime.collection('guarded').count({}), 1);
+        } finally {
+            await runtime.close();
+        }
+    });
 });

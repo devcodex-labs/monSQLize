@@ -172,8 +172,8 @@ describe('Model P0 vector, populate, and protected relation deletion', () => {
         assert.deepEqual(query, { _id: { $in: ['tag-b', 'tag-a', 'missing'] } });
         assert.deepEqual(options, { projection: { label: 1, _id: 1, categoryId: 1 } });
         assert.deepEqual(result[0].tags, [
-            { _id: 'tag-b', label: 'B', category: { _id: 'category-b', name: 'Category' } },
-            { _id: 'tag-a', label: 'A', category: { _id: 'category-a', name: 'Category' } },
+            { label: 'B', category: { _id: 'category-b', name: 'Category' } },
+            { label: 'A', category: { _id: 'category-a', name: 'Category' } },
         ]);
     });
 

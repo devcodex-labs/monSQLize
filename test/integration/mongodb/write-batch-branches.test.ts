@@ -148,6 +148,34 @@ describe('write-batch — advanced branch coverage', () => {
         assert.ok(progress.length >= 1);
     });
 
+    it('updateBatch rechecks the business filter when a selected document changes', async () => {
+        const first = await col.insertOne({ tag: 'drift-update', status: 'pending', value: 0 });
+        await col.insertOne({ tag: 'drift-update', status: 'pending', value: 0 });
+        const native = col.raw();
+        const originalUpdateMany = native.updateMany.bind(native);
+        let intercepted = false;
+        native.updateMany = async (filter: any, update: any, options: any) => {
+            if (!intercepted) {
+                intercepted = true;
+                await native.updateOne({ _id: first.insertedId }, { $set: { status: 'cancelled' } });
+            }
+            return originalUpdateMany(filter, update, options);
+        };
+        try {
+            const result = await col.updateBatch(
+                { tag: 'drift-update', status: 'pending' },
+                { $set: { value: 1 } },
+                { batchSize: 2 },
+            );
+            assert.equal(result.matchedCount, 1);
+            assert.equal(result.modifiedCount, 1);
+            assert.equal(result.batchCount, 1);
+            assert.equal((await native.findOne({ _id: first.insertedId })).value, 0);
+        } finally {
+            native.updateMany = originalUpdateMany;
+        }
+    });
+
     it('updateBatch throws for non-object filter', async () => {
         await assert.rejects(
             () => col.updateBatch('not-obj' as any, { $set: {} }),
@@ -201,6 +229,29 @@ describe('write-batch — advanced branch coverage', () => {
             { onProgress: (p: unknown) => progress.push(p) },
         );
         assert.ok(progress.length >= 1);
+    });
+
+    it('deleteBatch rechecks the business filter after selection', async () => {
+        const first = await col.insertOne({ tag: 'drift-delete', status: 'pending' });
+        await col.insertOne({ tag: 'drift-delete', status: 'pending' });
+        const native = col.raw();
+        const originalDeleteMany = native.deleteMany.bind(native);
+        let intercepted = false;
+        native.deleteMany = async (filter: any, options: any) => {
+            if (!intercepted) {
+                intercepted = true;
+                await native.updateOne({ _id: first.insertedId }, { $set: { status: 'cancelled' } });
+            }
+            return originalDeleteMany(filter, options);
+        };
+        try {
+            const result = await col.deleteBatch({ tag: 'drift-delete', status: 'pending' }, { batchSize: 2 });
+            assert.equal(result.deletedCount, 1);
+            assert.equal(result.batchCount, 1);
+            assert.ok(await native.findOne({ _id: first.insertedId }));
+        } finally {
+            native.deleteMany = originalDeleteMany;
+        }
     });
 
     it('deleteBatch throws for non-object filter', async () => {
