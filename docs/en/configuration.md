@@ -521,6 +521,8 @@ Transaction cache locks are process-local. For cross-instance critical sections,
 | `countQueue.maxQueueSize` | `number` | implementation default | Maximum pending count jobs before new jobs are rejected. |
 | `countQueue.timeout` | `number` | implementation default | Queue wait timeout in milliseconds. It does not forcibly cancel an already running MongoDB operation. |
 
+Collection `countDocuments` passes the caller's `signal` to the count queue. A pre-aborted signal rejects before a cached result is returned; aborting a queued job removes it, while aborting a running job rejects the caller and forwards the signal to MongoDB. Queue timeout and caller cancellation remain separate.
+
 ## Runtime validation
 
 These constructor options are validated when the instance is created:

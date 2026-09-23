@@ -10,6 +10,7 @@
  */
 
 import { ChangeStream, Collection, Db, Document } from 'mongodb';
+import { ErrorCodes, createError } from '../../../core/errors';
 import type { Logger } from '../../../core/logger';
 import { normalizeProjection } from '../../../utils/normalize';
 import {
@@ -317,6 +318,8 @@ export class MongoCollectionAccessor<TSchema extends Document = Document> {
             : 0;
         const { cache: _cache, ...keyOptions } = merged;
         void _cache;
+        const callerSignal = keyOptions.signal as AbortSignal | undefined;
+        if (callerSignal?.aborted) throw createError(ErrorCodes.INVALID_OPERATION, 'Count operation aborted');
         const executeCount = (signal?: AbortSignal) => countDocuments(
             this.collectionRef,
             normalizedQuery ?? {},
@@ -332,15 +335,16 @@ export class MongoCollectionAccessor<TSchema extends Document = Document> {
             const cacheKey = buildCountCacheKey(this.collectionRef, this.management.defaults, normalizedQuery, keyOptions);
             const cached = await Promise.resolve(this.management.queryCache.get(cacheKey));
             if (cached !== undefined) {
+                if (callerSignal?.aborted) throw createError(ErrorCodes.INVALID_OPERATION, 'Count operation aborted');
                 return Promise.resolve(wrapQueryResultWithMeta(this.collectionRef, this.management.defaults, 'count', merged, startTs, cached as number) as never) as ReturnType<Collection<TSchema>['countDocuments']>;
             }
-            const runner = countQueue ? countQueue.execute(executeCount) : executeCount();
+            const runner = countQueue ? countQueue.execute(executeCount, { signal: callerSignal }) : executeCount();
             return runner.then(async (result) => {
                 await Promise.resolve(this.management.queryCache?.set(cacheKey, result, cacheTTL));
                 return wrapQueryResultWithMeta(this.collectionRef, this.management.defaults, 'count', merged, startTs, result) as number;
             }) as ReturnType<Collection<TSchema>['countDocuments']>;
         }
-        const runner = countQueue ? countQueue.execute(executeCount) : executeCount();
+        const runner = countQueue ? countQueue.execute(executeCount, { signal: callerSignal }) : executeCount();
         return runner.then((result) => wrapQueryResultWithMeta(this.collectionRef, this.management.defaults, 'count', merged, startTs, result) as number) as ReturnType<Collection<TSchema>['countDocuments']>;
     }
 

@@ -141,7 +141,7 @@ describe('Model validate — branch coverage', () => {
         assert.ok(Array.isArray(result.errors));
     });
 
-    it('schema factory failure blocks writes even when validation is disabled', async () => {
+    it('schema factory failure does not block writes or management when validation is disabled', async () => {
         const modelName = 'schema_factory_failure_' + Date.now();
         MonSQLize.Model.define(modelName, {
             collection: modelName,
@@ -149,12 +149,40 @@ describe('Model validate — branch coverage', () => {
             options: { validate: false },
         });
         const model = runtime.model(modelName);
+        await model.insertOne({ name: 'allowed' });
+        await model.insertMany([{ name: 'bulk' }]);
+        await model.updateOne({ name: 'allowed' }, { $set: { name: 'changed' } });
+        await model.deleteOne({ name: 'changed' });
+        await model.createIndex({ name: 1 });
+        await model.ensureIndexes();
+        assert.equal(await runtime._adapter.db.collection(modelName).countDocuments({}), 1);
+        await assert.rejects(
+            () => model.insertOne({ name: 'explicit-validation' }, { validate: true }),
+            /Schema initialization failed: factory unavailable/,
+        );
+    });
+
+    it('schema factory failure blocks required validation but allows skipValidation', async () => {
+        const modelName = 'schema_factory_required_' + Date.now();
+        MonSQLize.Model.define(modelName, {
+            collection: modelName,
+            schema: () => { throw new Error('factory unavailable'); },
+        });
+        const model = runtime.model(modelName);
         const failure = /Schema initialization failed: factory unavailable/;
-        await assert.rejects(() => model.insertOne({ name: 'blocked' }, { validate: false }), failure);
+        await assert.rejects(() => model.insertOne({ name: 'blocked' }), failure);
         await assert.rejects(() => model.insertMany([{ name: 'blocked' }]), failure);
-        await assert.rejects(() => model.updateOne({ name: 'blocked' }, { $set: { name: 'changed' } }), failure);
-        await assert.rejects(() => model.deleteOne({ name: 'blocked' }), failure);
-        assert.equal(await runtime._adapter.db.collection(modelName).countDocuments({}), 0);
+        await model.insertOne({ name: 'bypassed' }, { skipValidation: true });
+        await assert.rejects(
+            () => model.replaceOne({ name: 'bypassed' }, { name: 'replacement' }),
+            failure,
+        );
+        const document = await model.findOne({ name: 'bypassed' });
+        assert.ok(document);
+        document.name = 'changed';
+        await assert.rejects(() => document.save(), failure);
+        await model.createIndex({ name: 1 });
+        assert.equal(await runtime._adapter.db.collection(modelName).countDocuments({}), 1);
     });
 });
 

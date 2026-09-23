@@ -521,6 +521,8 @@ const msq = new MonSQLize({
 | `countQueue.maxQueueSize` | `number` | 实现默认值 | 等待队列长度上限，超过后拒绝新任务。 |
 | `countQueue.timeout` | `number` | 实现默认值 | 等待队列超时时间，单位毫秒；不会强制取消已经开始执行的 MongoDB 操作。 |
 
+Collection `countDocuments` 会把调用方的 `signal` 传给 count 队列。预先取消的 signal 会在返回缓存结果前拒绝；取消等待中的任务会移出队列，取消运行中的任务会拒绝调用方并把 signal 传给 MongoDB。队列超时与调用方取消互相独立。
+
 ## 运行时校验
 
 以下构造项会在实例创建时校验：

@@ -592,4 +592,49 @@ describe('ModelInstance — P0 relation integrity', () => {
             await runtime.close();
         }
     });
+
+    it('counts visible boolean soft-delete references during protected deletion', async () => {
+        MonSQLize.Model._clear();
+        MonSQLize.Model.define('p0_bool_targets', { schema: {}, options: { autoIndex: false } });
+        MonSQLize.Model.define('p0_bool_references', {
+            schema: {},
+            options: { softDelete: { field: 'removedAt', type: 'boolean' }, autoIndex: false },
+            relations: {
+                target: { from: 'p0_bool_targets', localField: 'targetId', foreignField: '_id' },
+            },
+        });
+        const runtime = new MonSQLize({
+            type: 'mongodb',
+            databaseName: 'test_model_p0_bool_relations',
+            config: { uri },
+            autoIndex: false,
+        });
+        try {
+            await runtime.connect();
+            const target = await runtime.model('p0_bool_targets').insertOne({ name: 'Protected' });
+            await runtime._adapter.db.collection('p0_bool_references').insertMany([
+                { targetId: target.insertedId, removedAt: false },
+                { targetId: target.insertedId, removedAt: null },
+                { targetId: target.insertedId },
+                { targetId: target.insertedId, removedAt: true },
+            ]);
+            const usage = await runtime.model('p0_bool_targets').checkRelationUsage(
+                { _id: target.insertedId },
+                { includeSoftDeletedReferences: false },
+            );
+            assert.equal(usage.used, true);
+            assert.equal(usage.usages[0].count, 3);
+            assert.equal((await runtime.model('p0_bool_targets').checkRelationUsage(
+                { _id: target.insertedId },
+            )).usages[0].count, 4);
+            await assert.rejects(
+                () => runtime.model('p0_bool_targets').deleteOneWithRelations({ _id: target.insertedId }, {
+                    includeSoftDeletedReferences: false,
+                }),
+                (error: unknown) => (error as { code?: string }).code === 'RELATION_IN_USE',
+            );
+        } finally {
+            await runtime.close();
+        }
+    });
 });

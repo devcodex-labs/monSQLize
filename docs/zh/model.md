@@ -4,6 +4,8 @@ Model 层在 MongoDB runtime 之上提供 schema 校验、自定义方法、生�
 
 3.3.0 修复迁移说明：文档实例的 `remove()` 现在遵循 Model 删除 hook 和软删除规则。boolean 软删除仅把 `true` 视为已删除；`false`、`null`、字段缺失均可见。严格版本更新会枚举全部匹配候选，不受公开 `find` 默认上限影响；业务条件变化或文档被并发删除计为 skipped，而不是版本冲突。populate 的 `skip`/`limit` 按每个父文档执行；不限量关联结果仍可能占用较多内存。
 
+schema 工厂错误仅在需要校验的完整文档写入中阻断操作。关闭校验时，写入和管理方法仍可用；单次完整文档写入可通过 `skipValidation` 跳过必需校验。
+
 **特性**：Schema 验证 · 自定义方法 · 生命周期钩子 · 自动索引 · 数据源绑定
 
 ---
@@ -1659,7 +1661,7 @@ await User.updateMany(
 ```
 
 - `counter`（默认）：原生批量更新并递增 version，只是版本计数器，不是乐观锁。
-- `strict`：先读取匹配文档的 `_id` 和 version，再逐条按 `{ _id, version }` 条件更新，并在结果中返回 `conflictCount` / `conflictedIds`。
+- `strict`：先读取匹配文档的 `_id` 和 version，再逐条按 `{ _id, version }` 条件更新，并在结果中返回 `conflictCount` / `conflictedIds`。并发变化使文档不再满足原业务条件时计为 skipped；只有仍满足条件但版本变化才计为冲突。
 - `off`：本次批量更新跳过 version 处理。
 
 ### 并发冲突检测

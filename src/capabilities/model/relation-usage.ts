@@ -11,6 +11,7 @@ import type {
     RelationUsageReport,
 } from '../../../types/model';
 import { resolveModelSoftDeleteConfig } from './model-instance-config';
+import { buildModelVisibleSoftDeleteCondition } from './model-write-helpers';
 import { Model } from './model-registry';
 import type { ModelRuntimeLike } from './populate-promise';
 import { getByPath, unique } from './model-utils';
@@ -224,7 +225,7 @@ export async function inspectDeclaredRelationUsage(
         };
         const sourceSoftDelete = resolveModelSoftDeleteConfig(inbound.definition);
         const query = !options.includeSoftDeletedReferences && sourceSoftDelete?.enabled
-            ? { $and: [baseQuery, { [sourceSoftDelete.field]: null }] }
+            ? { $and: [baseQuery, buildModelVisibleSoftDeleteCondition(sourceSoftDelete)] }
             : baseQuery;
 
         try {

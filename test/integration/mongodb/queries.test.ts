@@ -21,6 +21,99 @@ describe('P2-B MongoDB expression/queries', () => {
         await bootstrap.teardown();
     });
 
+    it('rejects a pre-aborted caller signal through public count paths', async () => {
+        const runtime = new MonSQLize({
+            type: 'mongodb',
+            databaseName: 'p2b_count_abort',
+            config: { uri },
+            countQueue: { concurrency: 1 },
+            cache: { maxEntries: 20 },
+        });
+        try {
+            await runtime.connect();
+            const collection = runtime.collection('count_abort');
+            await collection.insertOne({ marker: 'cached' });
+            const cachedController = new AbortController();
+            assert.equal(await collection.count(
+                { marker: 'cached' },
+                { cache: 60_000, signal: cachedController.signal },
+            ), 1);
+            cachedController.abort();
+            await assert.rejects(
+                () => collection.count({ marker: 'cached' }, { cache: 60_000, signal: cachedController.signal }),
+                (error: unknown) => hasErrorCode(error, 'INVALID_OPERATION'),
+            );
+            for (const cache of [0, 60_000]) {
+                const controller = new AbortController();
+                controller.abort();
+                await assert.rejects(
+                    () => collection.count({ marker: 'missing' }, { cache, signal: controller.signal }),
+                    (error: unknown) => hasErrorCode(error, 'INVALID_OPERATION'),
+                );
+            }
+        } finally {
+            await runtime.close();
+        }
+    });
+
+    it('propagates public count cancellation while retaining the running queue slot', async () => {
+        const runtime = new MonSQLize({
+            type: 'mongodb',
+            databaseName: 'p2b_count_queue_abort',
+            config: { uri },
+            countQueue: { concurrency: 1 },
+        });
+        await runtime.connect();
+        const collection = runtime.collection('count_queue_abort');
+        const raw = collection.raw();
+        const originalCountDocuments = raw.countDocuments;
+        const queue = runtime._runtimeDefaults.countQueue;
+        let releaseWork: (value: number) => void = () => undefined;
+        const work = new Promise<number>((resolve) => { releaseWork = resolve; });
+        let calls = 0;
+        let internalSignal: AbortSignal | undefined;
+        raw.countDocuments = async (_query: unknown, options: { signal?: AbortSignal }) => {
+            calls++;
+            if (calls === 1) {
+                internalSignal = options.signal;
+                return work;
+            }
+            return 2;
+        };
+        try {
+            const runningController = new AbortController();
+            const running = collection.count({ marker: 'running' }, { signal: runningController.signal });
+            const runningRejected = assert.rejects(running, (error: unknown) => hasErrorCode(error, 'INVALID_OPERATION'));
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            assert.equal(queue.getStats().running, 1);
+            runningController.abort();
+            await runningRejected;
+            assert.equal(internalSignal?.aborted, true);
+            assert.equal(queue.getStats().running, 1);
+
+            const queuedController = new AbortController();
+            const queued = collection.count({ marker: 'queued' }, { signal: queuedController.signal });
+            const queuedRejected = assert.rejects(queued, (error: unknown) => hasErrorCode(error, 'INVALID_OPERATION'));
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            assert.equal(queue.getStats().queuedNow, 1);
+            queuedController.abort();
+            await queuedRejected;
+            assert.equal(queue.getStats().queuedNow, 0);
+            assert.equal(calls, 1);
+
+            const resumed = collection.count({ marker: 'resumed' });
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            assert.equal(queue.getStats().queuedNow, 1);
+            releaseWork(1);
+            assert.equal(await resumed, 2);
+            assert.equal(queue.getStats().running, 0);
+        } finally {
+            releaseWork(1);
+            raw.countDocuments = originalCountDocuments;
+            await runtime.close();
+        }
+    });
+
     it('restores minimal query facade: find/findOne/count/distinct/findPage and native write passthrough', async () => {
         const runtime = new MonSQLize({ type: 'mongodb', databaseName: 'p2b_queries', config: { uri } });
 

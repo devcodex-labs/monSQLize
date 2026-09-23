@@ -20,6 +20,7 @@ import {
     applyModelSoftDeleteFilter,
     buildStrictCandidateFilter,
     isModelVersionConflict,
+    buildModelVisibleSoftDeleteCondition,
     iterateModelCandidateBatches,
     assertModelOptimisticLockDocument,
     assertModelOptimisticLockMatched,
@@ -131,7 +132,7 @@ async function runStrictUpdateMany<TDocument>(
                 options,
             );
             if ((result?.matchedCount ?? 0) === 0) {
-                if (await isModelVersionConflict(context, id, context.versionConfig.field, expectedVersion, options)) {
+                if (await isModelVersionConflict(context, filter, id, context.versionConfig.field, expectedVersion, options)) {
                     conflictedIds.push(id);
                 } else {
                     skippedIds.push(id);
@@ -219,7 +220,7 @@ async function runStrictUpdateBatch<TDocument>(
                 driverOptions,
             );
             if ((updateResult?.matchedCount ?? 0) === 0) {
-                if (await isModelVersionConflict(context, id, context.versionConfig.field, expectedVersion, driverOptions)) {
+                if (await isModelVersionConflict(context, filter, id, context.versionConfig.field, expectedVersion, driverOptions)) {
                     result.conflictCount = (result.conflictCount ?? 0) + 1;
                     result.conflictedIds?.push(id);
                 } else {
@@ -783,7 +784,7 @@ export async function orchestrateModelDeleteMany<TDocument = Record<string, unkn
     let result: unknown;
     if (softDeleteConfig?.enabled && !resolvedOptions._forceDelete) {
         result = await context.collection.updateMany(
-            { ...((filter as Record<string, unknown>) ?? {}), [softDeleteConfig.field]: null },
+            { $and: [filter ?? {}, buildModelVisibleSoftDeleteCondition(softDeleteConfig)] },
             { $set: { [softDeleteConfig.field]: softDeleteConfig.type === 'boolean' ? true : context.nowDate() } },
             options,
         );

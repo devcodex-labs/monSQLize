@@ -37,10 +37,10 @@ export function buildStrictCandidateFilter(filter: unknown, id: unknown, version
 }
 
 export async function isModelVersionConflict<TDocument>(
-    context: ModelMutationContext<TDocument>, id: unknown, versionField: string, expectedVersion: number, options: unknown,
+    context: ModelMutationContext<TDocument>, filter: unknown, id: unknown, versionField: string, expectedVersion: number, options: unknown,
 ): Promise<boolean> {
     const current = await context.collection.findOne(
-        { _id: id }, buildModelVersionLookupOptions(options, { [versionField]: 1 }),
+        { $and: [filter ?? {}, { _id: id }] }, buildModelVersionLookupOptions(options, { [versionField]: 1 }),
     ) as Record<string, unknown> | null;
     return current !== null && current !== undefined && current[versionField] !== expectedVersion;
 }
@@ -213,18 +213,15 @@ export function validateModelSchemaPayload(
     options?: Record<string, unknown>,
     metadata: Record<string, unknown> = {},
 ): Record<string, unknown> {
+    const shouldValidate = context.validateEnabled || options?.validate === true;
+    if (!shouldValidate || options?.skipValidation) {
+        return document;
+    }
     if (context.schemaError) {
         throw withModelErrorMetadata(
             createError(ErrorCodes.VALIDATION_ERROR, `Schema initialization failed: ${context.schemaError.message}`),
             { errors: [{ field: '_schema', message: context.schemaError.message }], ...metadata },
         );
-    }
-    const shouldValidate = context.validateEnabled || options?.validate === true;
-    if (!shouldValidate) {
-        return document;
-    }
-    if (options?.skipValidation) {
-        return document;
     }
     if (!context.schemaCache || !context.schemaValidateFn) {
         return document;
@@ -260,6 +257,12 @@ export function validateModelSchemaPayload(
     return normalized as Record<string, unknown>;
 }
 
+export function buildModelVisibleSoftDeleteCondition(
+    config: NonNullable<ModelSoftDeleteConfig>,
+): Record<string, unknown> {
+    return { [config.field]: config.type === 'boolean' ? { $ne: true } : null };
+}
+
 export function applyModelSoftDeleteFilter(
     query: unknown,
     options: unknown,
@@ -285,7 +288,7 @@ export function applyModelSoftDeleteFilter(
     if (resolvedOptions.onlyDeleted) {
         return { ...resolvedQuery, [softDeleteConfig.field]: softDeleteConfig.type === 'boolean' ? true : { $ne: null } };
     }
-    return { ...resolvedQuery, [softDeleteConfig.field]: softDeleteConfig.type === 'boolean' ? { $ne: true } : null };
+    return { ...resolvedQuery, ...buildModelVisibleSoftDeleteCondition(softDeleteConfig) };
 }
 
 export function applyModelInsertTimestamps(

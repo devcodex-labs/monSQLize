@@ -180,6 +180,25 @@ describe('Model softDelete / versioning behavior', () => {
             assert.deepEqual((await model.findOnlyDeleted({ group: 'boolean-reads' })).map((doc: any) => doc.name), ['deleted']);
             assert.equal((await model.findWithDeleted({ group: 'boolean-reads' })).length, 4);
         });
+
+        it('deleteMany marks every visible boolean record without re-marking deleted records', async () => {
+            const model = runtime.model('sd_bool');
+            const raw = runtime._adapter.db.collection('sd_bool');
+            await raw.insertMany([
+                { name: 'false', removedAt: false, group: 'boolean-delete-many' },
+                { name: 'null', removedAt: null, group: 'boolean-delete-many' },
+                { name: 'missing', group: 'boolean-delete-many' },
+                { name: 'deleted', removedAt: true, group: 'boolean-delete-many' },
+            ]);
+
+            const result = await model.deleteMany({ group: 'boolean-delete-many' });
+            assert.equal(result.matchedCount, 3);
+            assert.equal(await model.count({ group: 'boolean-delete-many' }), 0);
+            const records = await raw.find({ group: 'boolean-delete-many' }).toArray();
+            assert.equal(records.length, 4);
+            assert.ok(records.every((record: any) => record.removedAt === true));
+            assert.equal((await model.deleteMany({ group: 'boolean-delete-many' })).matchedCount, 0);
+        });
     });
 
     // ── findWithDeleted / findOnlyDeleted ─────────────────────────────────────
@@ -471,6 +490,39 @@ describe('Model softDelete / versioning behavior', () => {
             }
         });
 
+        it('updateMany strict mode prioritizes business-filter drift when version also changes', async () => {
+            const model = runtime.model('ver_items');
+            const item = await model.insertOne({ group: 'strict-double-drift', status: 'pending' });
+            const originalUpdateOne = model.collection.updateOne.bind(model.collection);
+            let drifted = false;
+            model.collection.updateOne = async (filter: any, update: any, options: any) => {
+                if (!drifted) {
+                    drifted = true;
+                    await originalUpdateOne(
+                        { _id: item.insertedId },
+                        { $set: { status: 'cancelled' }, $inc: { version: 1 } },
+                    );
+                }
+                return originalUpdateOne(filter, update, options);
+            };
+            try {
+                const result = await model.updateMany(
+                    { group: 'strict-double-drift', status: 'pending' },
+                    { $set: { touched: true } },
+                    { versionMode: 'strict' },
+                );
+                assert.equal(result.matchedCount, 0);
+                assert.equal(result.skippedCount, 1);
+                assert.equal(result.conflictCount, 0);
+                assert.deepEqual(result.skippedIds.map(String), [String(item.insertedId)]);
+                const current = await model.findOneById(item.insertedId);
+                assert.equal(current.status, 'cancelled');
+                assert.equal(current.touched, undefined);
+            } finally {
+                model.collection.updateOne = originalUpdateOne;
+            }
+        });
+
         it('updateMany strict mode forwards session to the version pre-read', async () => {
             const model = runtime.model('ver_items');
             await model.insertMany([
@@ -606,6 +658,39 @@ describe('Model softDelete / versioning behavior', () => {
                 assert.deepEqual(result.skippedIds?.map(String), [String(first.insertedId)]);
                 assert.equal(progress[progress.length - 1]?.skipped, 1);
                 assert.equal(await model.count({ group: 'strict-batch-drift', status: 'moved', touched: true }), 0);
+            } finally {
+                model.collection.updateOne = originalUpdateOne;
+            }
+        });
+
+        it('updateBatch strict mode prioritizes business-filter drift when version also changes', async () => {
+            const model = runtime.model('ver_items');
+            const item = await model.insertOne({ group: 'strict-batch-double-drift', status: 'pending' });
+            const originalUpdateOne = model.collection.updateOne.bind(model.collection);
+            const progress: any[] = [];
+            let drifted = false;
+            model.collection.updateOne = async (filter: any, update: any, options: any) => {
+                if (!drifted) {
+                    drifted = true;
+                    await originalUpdateOne(
+                        { _id: item.insertedId },
+                        { $set: { status: 'cancelled' }, $inc: { version: 1 } },
+                    );
+                }
+                return originalUpdateOne(filter, update, options);
+            };
+            try {
+                const result = await model.updateBatch(
+                    { group: 'strict-batch-double-drift', status: 'pending' },
+                    { $set: { touched: true } },
+                    { versionMode: 'strict', batchSize: 1, onProgress: (value: any) => progress.push(value) },
+                );
+                assert.equal(result.matchedCount, 0);
+                assert.equal(result.skippedCount, 1);
+                assert.equal(result.conflictCount, 0);
+                assert.deepEqual(result.skippedIds?.map(String), [String(item.insertedId)]);
+                assert.equal(progress[progress.length - 1]?.skipped, 1);
+                assert.equal((await model.findOneById(item.insertedId)).touched, undefined);
             } finally {
                 model.collection.updateOne = originalUpdateOne;
             }

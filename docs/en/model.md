@@ -4,6 +4,8 @@ The Model layer adds schema validation, custom methods, lifecycle hooks, relatio
 
 Migration note for 3.3.0 fixes: hydrated `remove()` now follows Model delete hooks and soft-delete rules. Boolean soft delete treats only `true` as deleted; `false`, `null`, and a missing field remain visible. Strict versioned updates enumerate all matching candidates without the public `find` limit, and classify a changed business filter or removed document as skipped rather than a version conflict. Populate `skip`/`limit` is applied per parent; an unlimited populate can retain a large result in memory.
 
+Schema factory errors block full-document writes only when validation is required. With validation disabled, writes and management methods remain available; `skipValidation` can bypass required validation on an individual full-document write.
+
 **Features**: Schema validation · Custom methods · Lifecycle hooks · Automatic indexing · Data source binding
 
 ---
@@ -1746,7 +1748,7 @@ await User.updateMany(
 ```
 
 - `counter` (default): native batch update plus version increment. This is a version counter, not optimistic locking.
-- `strict`: pre-read matching `_id` and version values, update each document with `{ _id, version }`, and return `conflictCount` / `conflictedIds`.
+- `strict`: pre-read matching `_id` and version values, update each document with `{ _id, version }`, and return `conflictCount` / `conflictedIds`. A concurrent change that no longer matches the original business filter is skipped; only a still-matching document with a changed version is a conflict.
 - `off`: skip version handling for this batch update.
 
 

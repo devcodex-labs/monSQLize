@@ -4,7 +4,6 @@
  * Exports ModelInstance, ModelMutationOrchestrator, and related helpers and types.
  */
 
-import { ErrorCodes, createError } from '../../core/errors';
 import type {
     HookContext,
     ModelAutoIndexOptions,
@@ -244,9 +243,6 @@ export class ModelInstance<TDocument = Record<string, unknown>> {
     }
 
     private runModelWrite<TResult>(executor: () => TResult): TResult {
-        if (this._schemaError) {
-            throw createError(ErrorCodes.VALIDATION_ERROR, `Schema initialization failed: ${this._schemaError.message}`);
-        }
         return runWithModelWriteSource(executor);
     }
 

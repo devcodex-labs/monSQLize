@@ -23,7 +23,7 @@ export interface QueryCacheLike {
 }
 
 export interface CountQueueLike {
-    execute<T>(fn: (signal?: AbortSignal) => Promise<T>): Promise<T>;
+    execute<T>(fn: (signal?: AbortSignal) => Promise<T>, options?: { signal?: AbortSignal }): Promise<T>;
 }
 
 export type NormalizedWritePathPolicyLike = import('../../capabilities/write-path-policy').NormalizedWritePathPolicy;
