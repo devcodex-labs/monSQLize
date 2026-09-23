@@ -71,15 +71,15 @@ jobs:
       - name: Run release preflight
         run: npm run release:preflight
 
-      - name: Verify npm publish authentication
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Prepare npm trusted publishing
         run: |
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::error::NPM_TOKEN is not configured or is not available to devcodex-labs/monSQLize. Grant this repository an npm publish secret, or configure npm trusted publishing and adjust this workflow."
+          npm install --global npm@11.20.0
+          node -e "const [major, minor] = process.versions.node.split('.').map(Number); if (major < 22 || (major === 22 && minor < 14)) process.exit(1)"
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+            echo "::error::GitHub OIDC token request is unavailable to this workflow."
             exit 2
           fi
-          npm whoami --registry=https://registry.npmjs.org/
+          npm --version
 
       - name: Inspect existing registry state
         id: registry-state
@@ -104,8 +104,6 @@ jobs:
       - name: Publish to npm
         if: steps.registry-state.outputs.already_published != 'true'
         run: npm publish --provenance --access public --ignore-scripts
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Verify registry and installed package
         shell: bash

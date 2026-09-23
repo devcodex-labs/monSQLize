@@ -40,14 +40,15 @@ git commit
 git push origin HEAD
 # Wait for remote CI on this commit, then run on the same clean commit:
 npm run release:preflight
-# Run the manual Release Authentication Check workflow and require npm whoami to pass.
+# Run the manual Release Authentication Check workflow to verify GitHub OIDC readiness.
+# Confirm the npm package trusts devcodex-labs/monSQLize / publish.yml for npm publish.
 # Optional private real-environment review: npm run verify:release
 VERSION=$(node -p "require('./package.json').version")
 git tag "v${VERSION}"
 git push origin "v${VERSION}"
 ```
 
-`release:preflight` verifies that the current `HEAD` exists on `origin`, so it cannot run against an uncommitted or local-only candidate. Before creating the tag, manually confirm remote CI, preflight evidence, and a successful **Release Authentication Check** run for the current repository. The authentication probe only runs `npm whoami`; it does not create a tag or publish. Preflight itself never creates or pushes a tag.
+`release:preflight` verifies that the current `HEAD` exists on `origin`, so it cannot run against an uncommitted or local-only candidate. Before creating the tag, manually confirm remote CI, preflight evidence, a successful **Release Authentication Check** run, and the npm-side trusted publisher configuration. In the `monsqlize` package settings, select GitHub Actions with organization `devcodex-labs`, repository `monSQLize`, workflow filename `publish.yml`, no environment, and `npm publish` allowed. The check verifies that the runner can request OIDC credentials; npm validates the trusted publisher only during `npm publish`. The check and preflight do not create or push a tag or publish.
 
 The tag starts the repository preflight and publish workflows. Do not deploy Pages yet. After registry acceptance succeeds, manually run **Deploy Docs to GitHub Pages** with `release_tag=vX.Y.Z`; that workflow checks out the tag and refuses deployment unless tag, `package.json`, and npm registry versions match.
 
