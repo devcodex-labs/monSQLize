@@ -2,7 +2,7 @@
 
 The Model layer adds schema validation, custom methods, lifecycle hooks, relations, and model-scoped write helpers on top of the MongoDB runtime. It keeps collection access explicit while giving repeated document workflows a consistent Model surface.
 
-Migration note for 3.3.0 fixes: hydrated `remove()` now follows Model delete hooks and soft-delete rules. Boolean soft delete treats only `true` as deleted; `false`, `null`, and a missing field remain visible. Strict versioned updates enumerate all matching candidates without the public `find` limit, and classify a changed business filter or removed document as skipped rather than a version conflict. Populate `skip`/`limit` is applied per parent; an unlimited populate can retain a large result in memory.
+Migration note for the 3.3.1 patch: hydrated `remove()` now follows Model delete hooks and soft-delete rules. Boolean soft delete treats only `true` as deleted; `false`, `null`, and a missing field remain visible. Strict versioned updates enumerate all matching candidates without the public `find` limit, and classify a changed business filter or removed document as skipped rather than a version conflict. Populate `skip`/`limit` is applied per parent; an unlimited populate can retain a large result in memory.
 
 Schema factory errors block full-document writes only when validation is required. With validation disabled, writes and management methods remain available; `skipValidation` can bypass required validation on an individual full-document write.
 

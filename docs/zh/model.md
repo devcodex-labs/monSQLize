@@ -2,7 +2,7 @@
 
 Model 层在 MongoDB runtime 之上提供 schema 校验、自定义方法、生命周期钩子、relations 和 Model 作用域写入能力。它不会隐藏 collection 访问，而是把重复的文档工作流收口到稳定的 Model 表面。
 
-3.3.0 修复迁移说明：文档实例的 `remove()` 现在遵循 Model 删除 hook 和软删除规则。boolean 软删除仅把 `true` 视为已删除；`false`、`null`、字段缺失均可见。严格版本更新会枚举全部匹配候选，不受公开 `find` 默认上限影响；业务条件变化或文档被并发删除计为 skipped，而不是版本冲突。populate 的 `skip`/`limit` 按每个父文档执行；不限量关联结果仍可能占用较多内存。
+3.3.1 补丁迁移说明：文档实例的 `remove()` 现在遵循 Model 删除 hook 和软删除规则。boolean 软删除仅把 `true` 视为已删除；`false`、`null`、字段缺失均可见。严格版本更新会枚举全部匹配候选，不受公开 `find` 默认上限影响；业务条件变化或文档被并发删除计为 skipped，而不是版本冲突。populate 的 `skip`/`limit` 按每个父文档执行；不限量关联结果仍可能占用较多内存。
 
 schema 工厂错误仅在需要校验的完整文档写入中阻断操作。关闭校验时，写入和管理方法仍可用；单次完整文档写入可通过 `skipValidation` 跳过必需校验。
 

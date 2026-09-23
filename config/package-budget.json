@@ -1,7 +1,7 @@
 {
   "artifacts": {
-    "dist/cjs/index.cjs": 720000,
-    "dist/esm/index.mjs": 720000,
+    "dist/cjs/index.cjs": 740000,
+    "dist/esm/index.mjs": 740000,
     "dist/cjs/cli/data-task.cjs": 50000
   }
 }

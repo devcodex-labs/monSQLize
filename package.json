@@ -1,6 +1,6 @@
 {
     "name": "monsqlize",
-    "version": "3.3.0",
+    "version": "3.3.1",
     "description": "TypeScript production data runtime layer for MongoDB today, with cache, transactions, pools, models, sync, and observability",
     "type": "commonjs",
     "main": "./dist/cjs/index.cjs",
@@ -21,6 +21,7 @@
         "./package.json": "./package.json"
     },
     "files": [
+        "changelogs/v3.3.1.md",
         "changelogs/v3.3.0.md",
         "changelogs/v3.2.0.md",
         "changelogs/v3.1.14.md",
@@ -165,7 +166,7 @@
         "ssh2": "1.17.0"
     },
     "overrides": {
-        "fast-uri": "3.1.5",
+        "fast-uri": "^3.1.8",
         "minimatch@3.1.5": {
             "brace-expansion": "1.1.18"
         },
