@@ -76,9 +76,15 @@ test('release paths consume the complete single-source preflight gate', () => {
     assert.match(ci, /npm run release:preflight/);
     assert.match(releaseWorkflow, /npm run release:preflight/);
     assert.match(releaseAuthWorkflow, /workflow_dispatch/);
-    assert.match(releaseAuthWorkflow, /secrets\.NPM_TOKEN/);
-    assert.match(releaseAuthWorkflow, /npm whoami/);
+    assert.match(releaseAuthWorkflow, /id-token:\s*write/);
+    assert.match(releaseAuthWorkflow, /npm@11\.20\.0/);
+    assert.match(releaseAuthWorkflow, /ACTIONS_ID_TOKEN_REQUEST_URL/);
+    assert.doesNotMatch(releaseAuthWorkflow, /secrets\.NPM_TOKEN|npm whoami/);
     assert.match(publishWorkflow, /npm run release:preflight/);
+    assert.match(publishWorkflow, /id-token:\s*write/);
+    assert.match(publishWorkflow, /npm@11\.20\.0/);
+    assert.match(publishWorkflow, /ACTIONS_ID_TOKEN_REQUEST_URL/);
+    assert.doesNotMatch(publishWorkflow, /secrets\.NPM_TOKEN|npm whoami/);
     assert.match(publishWorkflow, /dist\.integrity/);
     assert.match(publishWorkflow, /dist-tags\.latest/);
     assert.match(publishWorkflow, /id: registry-state/);
