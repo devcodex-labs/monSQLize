@@ -4,6 +4,10 @@
 
 monSQLize provides three bookmark maintenance APIs for managing `findPage()` bookmark caches. These APIs are intended for operational diagnostics and pagination performance tuning.
 
+Bookmark keys use the same source/authentication/pool cache scope and cursor strategy as `findPage()`. Pass matching `cursorTypes` and `cursorValueNormalizerVersion` in `keyDims` when warming, listing, clearing and querying. Instance defaults apply; a per-call normalizer override needs its own non-empty stable version. `prewarmBookmarks()` throws `INVALID_ARGUMENT` for an unversioned custom normalizer; queries can still run but do not reuse bookmarks automatically. Upgrade behavior is described in [Cache Invalidation](./cache-invalidation.md).
+
+The key strings below are conceptual examples. Use the returned keys/patterns or bookmark APIs; do not construct keys from `getNamespace()`.
+
 ## Core Features
 
 - ✅ **Smart Hash Matching**: Automatically applies `ensureStableSort` normalization, ensuring the same cache key as findPage is used
@@ -58,9 +62,9 @@ async prewarmBookmarks(keyDims, pages)
   warmed: 3,           //Number of pages successfully warmed up
   failed: 1,           //Number of pages that failed (out of range, etc.)
   keys: [              //cached key list
-    'bm:iid123:mongodb:mydb:products:hash456:p1',
-    'bm:iid123:mongodb:mydb:products:hash456:p2',
-    'bm:iid123:mongodb:mydb:products:hash456:p3'
+    '<cache-namespace>:bm:<query-hash>:1',
+    '<cache-namespace>:bm:<query-hash>:2',
+    '<cache-namespace>:bm:<query-hash>:3'
   ]
 }
 ```
@@ -142,7 +146,7 @@ async listBookmarks(keyDims?)
 {
   pages: [1, 2, 3, 5, 10],  //Cached page number list
   count: 5,                  //Number of caches
-  keyPrefix: 'bm:iid123:mongodb:mydb:products:hash456'
+  keys: ['<cache-namespace>:bm:<query-hash>:1', '...']
 }
 ```
 
@@ -150,8 +154,8 @@ async listBookmarks(keyDims?)
 ```javascript
 {
   keys: [                    //All bookmark keys
-    'bm:iid123:mongodb:mydb:products:hash456:p1',
-    'bm:iid123:mongodb:mydb:orders:hash789:p2',
+    '<cache-namespace>:bm:<query-hash>:1',
+    '<cache-namespace>:bm:<other-query-hash>:2',
     // ...
   ],
   count: 15                  //Total cache count
@@ -226,7 +230,8 @@ async clearBookmarks(keyDims?)
 ```javascript
 {
   cleared: 5,  //Number of caches cleared
-  keyPrefix: 'bm:iid123:mongodb:mydb:products:hash456'  //Key prefix to clear (optional)
+  pattern: '<cache-namespace>:bm:<query-hash>:*',
+  keysBefore: 5
 }
 ```
 

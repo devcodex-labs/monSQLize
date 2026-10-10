@@ -4,6 +4,38 @@ This guide starts with the v2.0.6 to v3.0.0 upgrade path, then retains the
 v1-to-v2 compatibility notes for older applications. Review every tightened
 contract that intersects your application before changing the installed major.
 
+## Upcoming changes after v3.3.1 (unreleased)
+
+These changes are currently on `main`; they are not yet published as an npm release.
+
+- Query, page, totals and bookmark caches now include source/authentication and
+  pool identities. Upgrade all application instances sharing a backend together;
+  old entries are not read, so expect a cold start and plan for refill traffic.
+  No global Redis flush is needed. TTL/cleanup can reclaim old keys. Applications
+  with custom cache-key patterns should use collection invalidation APIs or
+  result-matching descriptors rather than rebuilding internal prefixes from
+  `getNamespace()`.
+- Custom `cursorValueNormalizer` functions need a non-empty stable
+  `cursorValueNormalizerVersion` such as `token-string:v1` to use page caching or
+  bookmark prewarming. Change the identifier when behavior or captured config
+  changes. A per-query function override needs its own version. Without one,
+  queries still run, page caches and automatic bookmark reads are bypassed,
+  prewarming throws `INVALID_ARGUMENT`, and deep jumps can reach `jump.maxHops`.
+  Prefer `cursorTypes` for simple hints. Custom functions restore every cursor
+  field, including `_id`, instead of default Date/ObjectId restoration.
+- Transaction `timeout` / `maxDuration` now bound work before commit starts;
+  commit timing belongs to driver/server limits. For direct `Transaction`
+  construction, use `transactionOptions.maxCommitTimeMS`; high-level helper
+  options do not currently forward this field. Unknown commit results invalidate
+  affected caches conservatively and preserve the original error; they do not
+  imply rollback or permit automatic business-callback replay.
+- Cache refill coordination applies to the same CacheLike object in one process.
+  Cross-process Redis notifications remain eventually consistent. Same-source
+  routes invalidate together when registered on that cache object; host aliases
+  need consistent endpoints or explicit related-route invalidation.
+
+See the [unreleased changelog](https://github.com/devcodex-labs/monSQLize/blob/main/changelogs/unreleased.md) for the complete fixes.
+
 ## Upgrade from v3.0.0 to v3.1.0
 
 monSQLize v3.1 consumes schema-dsl v3 without installing schema-dsl's legacy

@@ -1,6 +1,6 @@
 ﻿# MongoDB 事务指南
 
-`timeout` 限制提交开始前的业务工作阶段。提交前会检查期限；提交开始后停止该计时器，提交、回滚和结束会话串行执行。提交阶段的限制应通过 MongoDB 驱动的 `maxCommitTimeMS` 等事务选项配置。提交结果不确定时，不会把状态报告为已回滚或重跑业务回调，而是保守清理相关缓存并保留原异常。
+`timeout` 限制提交开始前的业务工作阶段。提交前会检查期限；提交开始后停止该计时器，提交、回滚和结束会话串行执行。直接构造底层 `Transaction` 时，可通过 `transactionOptions.maxCommitTimeMS` 配置驱动提交限制。高层 `withTransaction()` / `startSession()` 选项当前不转发 `maxCommitTimeMS`；`timeout` 不能替代驱动/服务端的提交限制。提交结果不确定时，不会把状态报告为已回滚或重跑业务回调，而是保守清理相关缓存并保留原异常。
 
 
 ## 概述
@@ -16,7 +16,7 @@ monSQLize 在 MongoDB driver session 之上提供 `withTransaction()` 与 `start
 - ✅ **事务感知缓存策略**（带 session 的读绕过共享查询缓存，写入记录 commit 后失效）
 - ✅ **进程内缓存屏障/锁**（围绕缓存失效提供短窗口保护）
 - ✅ **自动重试**（瞬态错误自动重试）
-- ✅ **超时处理**（自动中断长事务）
+- ✅ **业务阶段超时**（提交前超过期限时回滚）
 - ✅ **监控指标**（执行时长、成功率等）
 - ✅ **读关注/读偏好/因果一致性**
 
@@ -156,8 +156,8 @@ try {
 const msq = new MonSQLize({
     // ...基础配置
     transaction: {
-        // ⭐ 重要：事务内默认不使用缓存（确保数据一致性）
-        // 如需在事务内使用缓存，需在查询时显式指定 cache 参数
+        // 携带 session 的读取始终绕过共享查询缓存，即使显式指定 cache。
+        // 写入记录失效意图，提交时执行。
         
         // 是否启用自动重试（默认：true）
         enableRetry: true,
@@ -171,7 +171,7 @@ const msq = new MonSQLize({
         // 重试退避系数（默认：2）
         retryBackoff: 2,
         
-        // 默认超时时间（毫秒，默认：30000）
+        // 提交前的默认业务工作期限（毫秒，默认：30000）
         defaultTimeout: 30000,
         
         // 默认读关注（可选）
@@ -207,7 +207,7 @@ await msq.withTransaction(async (tx) => {
     // 因果一致性（默认：true）
     causalConsistency: true,
     
-    // 超时时间（毫秒）
+    // 提交前的业务工作期限（毫秒）
     timeout: 60000,
     
     // 最大重试次数（覆盖全局配置）
@@ -259,7 +259,7 @@ const result = await msq.withTransaction(async (tx) => {
 - `start()`: 开始事务
 - `commit()`: 提交事务
 - `abort()`: 回滚事务
-- `end()`: 释放资源
+- `end()`: 等待在途提交/回滚后结束会话；未提交且结果已知的活动事务会先回滚。该方法不会提交事务。
 
 **示例**:
 ```javascript
@@ -321,8 +321,8 @@ await msq.withTransaction(async (tx) => {
     );
 });
 
-// 缓存失效只会在事务成功 commit 后 flush。
-// 如果事务 abort，待处理的失效意图会被丢弃。
+// 成功 commit 后执行缓存失效，commit 结果未知时也会保守清理。
+// 结果已知的事务 abort 会丢弃待处理的失效意图。
 // commit 后缓存失效是 best-effort；缓存失败不会回滚数据库提交。
 
 // ✅ 事务外查询：正常使用缓存
@@ -416,7 +416,7 @@ await msq.withTransaction(async (tx) => {
 // 长事务（谨慎使用）
 await msq.withTransaction(async (tx) => {
     // 复杂操作
-}, { timeout: 60000 }); // MongoDB 默认限制60秒
+}, { timeout: 60000 }); // 仅限制业务工作阶段，MongoDB 服务端限制独立生效
 ```
 
 ### 3. 错误处理

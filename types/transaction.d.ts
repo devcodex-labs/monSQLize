@@ -24,10 +24,9 @@ export interface TransactionOptions {
     };
     readPreference?: 'primary' | 'primaryPreferred' | 'secondary' | 'secondaryPreferred' | 'nearest';
     causalConsistency?: boolean;
-    /** Maximum transaction duration in milliseconds before an automatic abort. */
+    /** Maximum transaction work duration in milliseconds before commit begins. */
     maxDuration?: number;
-    /** @alias maxDuration — v1 compat field */
-    /** Deadline for transaction work before commit begins; commit uses driver commit time limits. */
+    /** Deadline for transaction work before commit begins. Alias: `maxDuration`. */
     timeout?: number;
     enableRetry?: boolean;
     maxRetries?: number;
@@ -91,16 +90,18 @@ export declare class Transaction {
         cache?: CacheLike | null;
         logger?: LoggerLike | null;
         lockManager?: CacheLockManager | null;
+        /** Work deadline in milliseconds; the timer stops before commit is dispatched. */
         timeout?: number;
+        /** MongoDB transaction options, including driver commit limits such as `maxCommitTimeMS`. */
         transactionOptions?: Record<string, unknown>;
     });
     /** Begin the transaction (starts the MongoDB session transaction). */
     start(): Promise<void>;
-    /** Commit the transaction; replays recorded cache invalidations on success. */
+    /** Commit the transaction; flushes cache invalidations on success or an unknown commit result. */
     commit(): Promise<void>;
     /** Abort the transaction and discard pending cache invalidations. */
     abort(): Promise<void>;
-    /** Alias for `commit()` — v1 compat shorthand. */
+    /** End the session after pending lifecycle work; aborts an active transaction with a known outcome. */
     end(): Promise<void>;
     /** Record a cache-invalidation pattern to be replayed on commit. */
     recordInvalidation(pattern: string): Promise<void>;

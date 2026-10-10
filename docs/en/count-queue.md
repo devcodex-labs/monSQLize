@@ -19,6 +19,8 @@ Count queue control is an advanced feature of monSQLize that limits the number o
 
 ## Runtime boundary
 
+Slots are reserved before a queued task is resumed, so new arrivals cannot exceed `concurrency` during handoff. Queued tasks aborted after handoff release their reserved slots before execution.
+
 CountQueue is a cooperative in-process scheduler. It limits how many count tasks monSQLize starts concurrently and aborts the provided `AbortSignal` on timeout, but it does not isolate work in separate workers, force-stop a promise that ignores the signal, or propagate distributed backpressure across multiple Node.js processes.
 
 ---

@@ -5,7 +5,7 @@
 This page explains the transaction behavior that matters when you tune throughput and cache consistency:
 
 1. **Read-only transaction accounting** - transactions that do not run monSQLize write helpers are counted separately in `getTransactionStats()`.
-2. **Process-local cache invalidation barrier** - transaction writes with explicit invalidation record intents and flush them only after a successful commit.
+2. **Process-local cache invalidation barrier** - transaction writes with explicit invalidation record intents and flush them after commit success or conservatively on an unknown commit result.
 
 
 ## Applicable scenarios
@@ -61,7 +61,7 @@ await msq.withTransaction(async (tx) => {
 
 ## Working principle
 
-When a transaction performs writes through monSQLize helpers with explicit cache invalidation configured, the runtime records read-cache invalidation intents. After the MongoDB commit succeeds, it flushes the recorded invalidations and releases the process-local cache lock; abort does not flush.
+When a transaction performs writes through monSQLize helpers with explicit cache invalidation configured, the runtime records read-cache invalidation intents. After the MongoDB commit succeeds, it flushes the recorded invalidations and releases the process-local cache lock. An unknown commit result also causes conservative invalidation without reporting rollback or replaying the callback. Abort with a known outcome discards the intents. Pending fills on the same CacheLike object are revoked; cross-process Redis notifications remain eventually consistent.
 
 ```javascript
 await msq.withTransaction(async (tx) => {

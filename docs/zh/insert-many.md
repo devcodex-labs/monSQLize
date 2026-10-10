@@ -119,6 +119,8 @@ try {
 
 插入成功后，monSQLize 默认不清理查询缓存。需要清理时，使用 `cache.invalidate` 精准失效，或使用 `autoInvalidate: true` 做集合级 broad 失效。
 
+已发送到驱动的批量插入可能先写入部分文档再抛错，`ordered: true` 也如此。失败时 monSQLize 会保守执行已配置的失效策略，并保留原写入异常；`cache.invalidate: false` 或 `[]` 仍可关闭失效。驱动调用前的参数验证失败不会清理缓存。`insertMany()` 本身不会回滚已插入的文档，需要整批原子性时请使用事务。
+
 ```javascript
 // 查询并缓存
 const users = await collection("users").find({}, { cache: 5000 });
@@ -128,7 +130,7 @@ console.log(users.length); // 10
 await collection("users").insertMany([
   { name: "Alice" },
   { name: "Bob" }
-]);
+], { autoInvalidate: true });
 
 // 再次查询（不会从缓存返回）
 const updatedUsers = await collection("users").find({}, { cache: 5000 });

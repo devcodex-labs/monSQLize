@@ -18,6 +18,8 @@ Count 队列控制是 monSQLize 的高级特性，用于限制同时执行的 `c
 
 ## 运行时边界
 
+排队任务唤醒前会先预占执行槽位，因此交接期间新到请求不会使运行数超过 `concurrency`。在交接后、执行前取消的排队任务会释放已预占的槽位。
+
 CountQueue 是进程内协作式调度器。它限制 monSQLize 启动 count 任务的并发数，并在超时时 abort 传入的 `AbortSignal`；但它不会把任务隔离到独立 worker，不能强制终止忽略 signal 的 Promise，也不会把背压传播到多个 Node.js 进程之间。
 
 ---

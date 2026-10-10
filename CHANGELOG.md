@@ -7,7 +7,7 @@
 
 ## Unreleased
 
-Cache isolation and write coordination, versioned cursor strategies, pagination and lifecycle fixes. See [Unreleased details](./changelogs/unreleased.md).
+Cache isolation and write coordination, versioned cursor strategies, pagination and lifecycle fixes. See [Unreleased details](https://github.com/devcodex-labs/monSQLize/blob/main/changelogs/unreleased.md).
 
 ## Version Overview
 

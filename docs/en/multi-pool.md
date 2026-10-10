@@ -655,13 +655,13 @@ process.on('SIGTERM', async () => {
 ```
 
 **BEHAVIOR**:
-1. ✅ Stop all health checks
-2. ✅ Close all MongoDB connections
-3. ✅ Clear all connection pools and configurations
-4. ✅ Tag Manager is closed
+1. Stop health checks and reject new pool additions.
+2. Wait for pending additions and attempt every client close, even if another close fails.
+3. Remove successfully closed pools and their configuration, health and stats; retain failed clients for a later `close()` retry.
+4. Coalesce concurrent `close()` calls. A single failure preserves its original error; multiple failures throw `AggregateError`.
 
 **Note**:
-- ⚠️ The manager can no longer be used after closing it
+- After shutdown begins, do not start new work; `close()` remains available to retry failed clients.
 - ⚠️ Make sure all operations are completed before closing
 - ✅ It is recommended to call when the application exits
 

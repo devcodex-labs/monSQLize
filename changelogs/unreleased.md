@@ -9,4 +9,5 @@
 - Correct null/missing BSON pagination boundaries, supported sort forms, and exclusion projections that retain cursor fields.
 - Serialize transaction commit, abort and end; apply work deadlines before commit and conservatively invalidate uncertain commit results.
 - Reserve CountQueue slots during handoff, track lock lease expiry and renewal, and attempt every pool close while retaining failed clients for retry.
+- Document cold-cache upgrades, stable cursor strategy configuration, partial-write invalidation, transaction work deadlines and retryable pool shutdown; align bilingual references, examples and public type comments.
 - Keep lint exclusions in flat config, add regression suites to the server matrix, and raise the main bundle budget from 740,000 to 750,000 bytes for the added coordination safeguards.

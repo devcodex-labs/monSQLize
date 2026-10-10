@@ -87,7 +87,7 @@ const staticConfig = await collection('config').findOne(
 
 ## Cache key generation
 
-Cache keys include the database and collection namespace, the operation name, the normalized query or pipeline, and the driver options that affect the returned result.
+Cache keys include source/authentication fingerprints, pool identity, database and collection, optional instance identity, operation, normalized query or pipeline, and driver options that affect results. Page/bookmark keys also include cursor type hints and the custom normalizer version. Raw key formats are internal; use invalidation descriptors and collection APIs. See [Cache Invalidation](./cache-invalidation.md) for scope linking and cold-cache upgrade behavior.
 
 The runtime uses a BSON-aware stable fingerprint for cache key values:
 
@@ -764,7 +764,7 @@ Writes do not invalidate read caches by default. When a write should clear cache
 This is a best-effort cache consistency model:
 
 - MongoDB writes are not rolled back if cache invalidation or distributed publish fails after the write.
-- Transactional writes record invalidation intents and flush them only after a successful commit; abort does not flush.
+- Transactional writes record invalidation intents and flush them after a successful commit or conservatively on an unknown commit result; abort with a known outcome discards them.
 - Cross-instance invalidation requires `cache.distributed` with Redis Pub/Sub and remains eventual, not exactly atomic with the database commit.
 - `cache.invalidate: false` or `cache.invalidate: []` overrides global `cache.autoInvalidate: true` for the current write.
 - `invalidate()` is still useful when data is changed outside monSQLize or when an application-owned cache must be refreshed manually.

@@ -1,6 +1,6 @@
 ﻿# MongoDB Transaction Guide
 
-`timeout` bounds transaction work before commit begins. The deadline is checked before dispatching commit, then its timer stops. Commit, abort and session end are serialized. Configure commit limits through MongoDB transaction options such as `maxCommitTimeMS`. An unknown commit result conservatively invalidates affected caches and preserves the original error without reporting rollback or replaying the business callback.
+`timeout` bounds transaction work before commit begins. The deadline is checked before dispatching commit, then its timer stops. Commit, abort and session end are serialized. For direct `Transaction` construction, configure driver commit limits with `transactionOptions.maxCommitTimeMS`. The high-level `withTransaction()` / `startSession()` options currently do not forward `maxCommitTimeMS`; `timeout` does not replace a driver/server commit limit. An unknown commit result conservatively invalidates affected caches and preserves the original error without reporting rollback or replaying the business callback.
 
 
 ## Overview
@@ -17,7 +17,7 @@ Managed transaction writes stop being accepted as soon as commit or abort begins
 - ✅ **Transaction-aware cache policy** (session reads bypass shared query cache; writes record post-commit invalidations)
 - ✅ **Process-local cache barrier/lock** (short-lived protection around cache invalidation)
 - ✅ **Auto-Retry** (Auto-retry on transient errors)
-- ✅ **Timeout processing** (automatically interrupt long transactions)
+- ✅ **Work timeout** (abort work that exceeds its deadline before commit begins)
 - ✅ **Monitoring indicators** (execution time, success rate, etc.)
 - ✅ **Read attention/read preference/causal consistency**
 
@@ -162,8 +162,8 @@ try {
 const msq = new MonSQLize({
     //...basic configuration
     transaction: {
-        //⭐ Important: Caching is not used by default within transactions (to ensure data consistency)
-        //If you want to use cache within a transaction, you need to explicitly specify the cache parameter when querying
+        // Reads with a session bypass shared query cache, even when cache is specified.
+        // Writes record invalidation intents for commit.
 
         //Whether to enable automatic retry (default: true)
         enableRetry: true,
@@ -177,7 +177,7 @@ const msq = new MonSQLize({
         //Retry backoff factor (default: 2)
         retryBackoff: 2,
 
-        //Default timeout (milliseconds, default: 30000)
+        //Default work deadline before commit (milliseconds, default: 30000)
         defaultTimeout: 30000,
 
         //Default read following (optional)
@@ -214,7 +214,7 @@ await msq.withTransaction(async (tx) => {
     //Causal consistency (default: true)
     causalConsistency: true,
 
-    //Timeout (milliseconds)
+    //Work deadline before commit (milliseconds)
     timeout: 60000,
 
     //Maximum number of retries (overrides global configuration)
@@ -268,7 +268,7 @@ Create a manual transaction session.
 - `start()`: Start transaction
 - `commit()`: Commit transaction
 - `abort()`: rollback transaction
-- `end()`: Release resources
+- `end()`: End the session after pending commit/abort work; abort an active transaction whose outcome is known. It does not commit.
 
 **Example**:
 ```javascript
@@ -331,8 +331,8 @@ await msq.withTransaction(async (tx) => {
     );
 });
 
-// Cache invalidation is flushed only after the transaction commits successfully.
-// If the transaction aborts, the pending invalidation intent is discarded.
+// Cache invalidation is flushed after commit success or an unknown commit result.
+// If the transaction aborts with a known outcome, pending intents are discarded.
 // Post-commit cache invalidation is best-effort; a cache failure does not roll back the database commit.
 
 //✅ Query outside transaction: use cache normally
@@ -430,7 +430,7 @@ await msq.withTransaction(async (tx) => {
 //Long transactions (use with caution)
 await msq.withTransaction(async (tx) => {
     //Complex operations
-}, { timeout: 60000 }); //MongoDB default limit is 60 seconds
+}, { timeout: 60000 }); //Work deadline only; MongoDB server limits are independent
 ```
 
 

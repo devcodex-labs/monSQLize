@@ -85,7 +85,7 @@ const staticConfig = await collection('config').findOne(
 
 ## 缓存键生成
 
-缓存键包含数据库与集合命名空间、操作名、标准化后的查询或聚合 pipeline，以及会影响返回结果的 driver options。
+缓存键包含数据源/认证指纹、连接池标识、数据库与集合、可选实例标识、操作名、标准化后的查询或聚合 pipeline，以及影响结果的 driver options。分页/书签键还包含游标类型提示及自定义转换策略版本。原始键格式属于内部实现，建议使用失效描述符与集合 API。同源联动与升级后缓存冷启动见[缓存失效](./cache-invalidation.md)。
 
 runtime 使用 BSON-aware 的稳定指纹生成缓存键：
 
@@ -745,7 +745,7 @@ const page100 = await collection('products').findPage({
 这是 best-effort 的缓存一致性模型：
 
 - 数据库写入成功后，如果后续缓存失效或分布式广播失败，不会回滚 MongoDB 写入。
-- 事务内写入会先记录待失效 intent，只在事务成功 commit 后 flush；事务 abort 不会 flush。
+- 事务内写入会先记录待失效 intent，成功 commit 后执行；commit 结果未知时也会保守清理。结果已知的事务 abort 会丢弃这些意图。
 - 跨实例缓存失效需要配置 `cache.distributed` 与 Redis Pub/Sub，并且仍是最终收敛，不是与数据库 commit 原子绑定。
 - `cache.invalidate: false` 或 `cache.invalidate: []` 会覆盖全局 `cache.autoInvalidate: true`，表示本次写入不清理缓存。
 - `invalidate()` 仍适用于外部工具改数据、应用侧额外缓存或需要手动刷新缓存的场景。

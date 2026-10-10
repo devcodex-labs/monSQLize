@@ -79,6 +79,7 @@ export declare class ConnectionPoolManager {
     getPoolHealth(): Map<string, PoolHealthStatus>;
     getHealthStatus(): Record<string, PoolHealthStatus>;
     getPoolStats(): Record<string, PoolStats>;
+    /** Attempt all closes; retain failed clients for retry. Concurrent calls share the in-flight close. */
     close(): Promise<void>;
 }
 

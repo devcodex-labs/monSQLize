@@ -116,6 +116,8 @@ try {
 
 After the insertion succeeds, monSQLize does not clear query caches by default. Use `cache.invalidate` or `autoInvalidate: true` when the write should clear cache.
 
+A dispatched bulk insert can partially succeed before throwing, including with `ordered: true`. On failure, monSQLize applies the configured invalidation policy conservatively and preserves the original write error; `cache.invalidate: false` or `[]` still suppresses invalidation. Validation failures before driver dispatch do not invalidate. `insertMany()` alone does not roll back already inserted documents; use a transaction when the batch must be atomic.
+
 ```javascript
 //Query and cache
 const users = await collection("users").find({}, { cache: 5000 });

@@ -143,6 +143,7 @@ The Redis cache adapter and distributed invalidator can share the same Redis URL
 | `cursorSecretWarning` | `'off' \| 'production' \| 'always'` | `'production'` | Controls startup warning when `cursorSecret` is missing. |
 | `cursorTypes` | `Record<string, CursorValueType>` | none | Field type hints for decoded cursor values. |
 | `cursorValueNormalizer` | `CursorValueNormalizer` | none | Custom decoded cursor value normalizer. |
+| `cursorValueNormalizerVersion` | `string` | none | Non-empty stable identity/version for custom cursor conversion; required for page caching and bookmark prewarming with a custom normalizer. |
 | `log.slowQueryTag` | `{ event?, code? }` | `{ event: 'slow_query', code: 'SLOW_QUERY' }` | Slow-query event tag fields. |
 | `log.formatSlowQuery` | `(meta) => unknown` | none | Custom formatter for slow-query event metadata. |
 | `autoConvertObjectId` | `boolean \| object \| field map` | `true` for MongoDB | Auto-convert valid 24-character hex strings to `ObjectId`. |
@@ -343,14 +344,18 @@ const msq = new MonSQLize({
 
 Automatic index creation preflights declared indexes, skips existing indexes, and creates only missing indexes. It does not drop, rename, or rebuild conflicting indexes; use `ensureIndexes({ dryRun: true })` or `ensureModelIndexes({ dryRun: true })` as an explicit production release gate before changing production indexes.
 
+## Cursor value normalization
+
+For custom cursor conversion, change `cursorValueNormalizerVersion` whenever behavior or captured configuration changes. A per-query normalizer override requires its own version; omitting it bypasses page caching and automatic bookmark reads, and `prewarmBookmarks()` rejects the configuration. Prefer `cursorTypes` when field type hints are sufficient. See [Cursor Value Type Hints](./findPage.md).
+
 ## Namespace config
 
-Use `namespace` when several monSQLize instances share one cache backend and their cache keys must remain isolated.
+Query caches automatically include source/authentication fingerprints and pool identity, even with the default `namespace` config. Use `namespace.instanceId` for additional application isolation when several runtimes share one backend; runtimes that intentionally share results should use the same value or omit it. Public `getNamespace()` remains unchanged. See [Cache Invalidation](./cache-invalidation.md) for linked same-source invalidation and upgrade behavior.
 
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `namespace.scope` | `'database' \| 'connection'` | `'database'` | Controls the namespace boundary used by runtime cache keys. |
-| `namespace.instanceId` | `string` | none | Prefixes query-cache keys and invalidation patterns for one runtime instance. Use this when multiple apps share the same Redis/cache backend. |
+| `namespace.instanceId` | `string` | none | Adds an application identity to query-cache keys and invalidation patterns; optional extra isolation on a shared backend. |
 
 ## Write path policy
 

@@ -874,7 +874,7 @@ console.log(cache.constructor.name);
 
 ### Q2: 如何查看某个查询的缓存键？
 
-**A**: 缓存键由查询参数自动生成，格式为：`<namespace>:<query-hash>`
+**A**: 键由操作名、包含数据源/认证/连接池的缓存命名空间及影响结果的查询选项生成。不同操作的格式不同，属于内部实现。支持时可查看 `meta.keyHash` 或使用缓存诊断；建议使用[失效描述符](./cache-invalidation.md)，不要根据 `getNamespace()` 拼接键。
 
 ```javascript
 const { collection } = await msq.connect();

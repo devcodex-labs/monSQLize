@@ -1,6 +1,6 @@
 # Cache Invalidation
 
-Cache scopes include a data-source fingerprint, authentication identity, pool, database, collection and optional instance identity. Keys contain configuration digests, never raw connection URIs or passwords. Pools sharing the same source host configuration invalidate together; separate sources have isolated result caches. Aliases with different host configurations pointing at the same source need consistent endpoints or explicit invalidation of the related pools. Custom clients without connection configuration use object identities for isolation and conservatively invalidate registered routes.
+Cache scopes include a data-source fingerprint, authentication identity, pool, database, collection and optional instance identity. Keys contain configuration digests, never raw connection URIs or passwords. Registered pools sharing the same CacheLike object, instance namespace and source host configuration invalidate together; separate sources have isolated result caches. Aliases with different host configurations pointing at the same source need consistent endpoints or explicit invalidation of the related pools. Custom clients without connection configuration use object identities for isolation and conservatively invalidate registered routes.
 
 After upgrading, query caches and bookmarks start cold. Old-format entries are not read and Redis is never flushed globally. Existing TTL/cleanup policies reclaim old entries; upgrade all application instances sharing the cache.
 

@@ -26,7 +26,7 @@ const msq = new MonSQLize({
 | `cache.defaultTtl` | `number` | implementation default | Default TTL used by direct cache writes. Query caching still uses the per-query `cache` TTL. |
 | `cache.enableStats` | `boolean` | `true` | Track hits, misses, sets, deletes, and evictions. |
 | `cache.enabled` | `boolean` | `true` | Disable the cache subsystem when set to `false`. |
-| `cache.autoInvalidate` | `boolean` | `false` | Broadly invalidate collection read caches after successful monSQLize writes. |
+| `cache.autoInvalidate` | `boolean` | `false` | Broadly invalidate collection read caches after monSQLize writes, including dispatched bulk inserts that may partially succeed before failing. |
 | `cache.distributed` | `object` | disabled | Redis Pub/Sub invalidation for multi-instance deployments. |
 
 ## Query TTL

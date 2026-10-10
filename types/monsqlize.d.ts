@@ -214,9 +214,9 @@ export interface MonSQLizeOptions {
         maxRetries?: number;
         retryDelay?: number;
         retryBackoff?: number;
-        /** Default transaction timeout in milliseconds. Alias: `maxDuration`. */
+        /** Default transaction work deadline before commit, in milliseconds. Alias: `maxDuration`. */
         defaultTimeout?: number;
-        /** Default transaction timeout in milliseconds. Alias: `defaultTimeout`. */
+        /** Default transaction work deadline before commit, in milliseconds. Alias: `defaultTimeout`. */
         maxDuration?: number;
         defaultReadConcern?: TransactionOptions['readConcern'];
         defaultWriteConcern?: TransactionOptions['writeConcern'];

@@ -26,7 +26,7 @@ const msq = new MonSQLize({
 | `cache.defaultTtl` | `number` | 实现默认值 | 直接写 cache 时的默认 TTL。查询缓存仍使用查询参数里的 `cache` TTL。 |
 | `cache.enableStats` | `boolean` | `true` | 统计命中、未命中、写入、删除和淘汰。 |
 | `cache.enabled` | `boolean` | `true` | 设为 `false` 时关闭缓存子系统。 |
-| `cache.autoInvalidate` | `boolean` | `false` | monSQLize 写入成功后，按集合粒度广泛失效读缓存。 |
+| `cache.autoInvalidate` | `boolean` | `false` | monSQLize 写入后按集合粒度广泛失效读缓存，包括已发送到驱动、可能部分成功再抛错的批量插入。 |
 | `cache.distributed` | `object` | 关闭 | 多实例部署时用 Redis Pub/Sub 广播缓存失效。 |
 
 ## 查询 TTL

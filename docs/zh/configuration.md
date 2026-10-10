@@ -143,6 +143,7 @@ Redis 二级缓存和分布式失效可以共用同一个 Redis URL。二者职�
 | `cursorSecretWarning` | `'off' \| 'production' \| 'always'` | `'production'` | 未配置 `cursorSecret` 时的启动告警策略。 |
 | `cursorTypes` | `Record<string, CursorValueType>` | 无 | 解码游标值时的字段类型提示。 |
 | `cursorValueNormalizer` | `CursorValueNormalizer` | 无 | 自定义游标值归一化函数。 |
+| `cursorValueNormalizerVersion` | `string` | 无 | 自定义游标转换的非空稳定策略标识与版本；配合分页缓存或预热书签使用时必须提供。 |
 | `log.slowQueryTag` | `{ event?, code? }` | `{ event: 'slow_query', code: 'SLOW_QUERY' }` | 慢查询事件 tag 字段。 |
 | `log.formatSlowQuery` | `(meta) => unknown` | 无 | 慢查询事件 metadata 格式化函数。 |
 | `autoConvertObjectId` | `boolean \| object \| field map` | MongoDB 下为 `true` | 自动把合法 24 位 hex 字符串转换为 `ObjectId`。 |
@@ -343,14 +344,18 @@ const msq = new MonSQLize({
 
 自动索引会先预检声明索引，跳过 existing，只创建 missing，不会 drop、rename 或 rebuild 冲突索引。生产环境建议使用 `ensureIndexes({ dryRun: true })` 或 `ensureModelIndexes({ dryRun: true })` 作为显式发布门禁。
 
+## 游标值恢复策略
+
+自定义游标转换的行为或闭包配置变化时，应更新 `cursorValueNormalizerVersion`。单次查询覆盖转换函数必须提供自己的版本；省略后会绕过分页缓存和自动书签读取，`prewarmBookmarks()` 会拒绝该配置。仅需字段类型提示时，优先使用 `cursorTypes`，详见[游标值类型提示](./findPage.md)。
+
 ## 命名空间配置
 
-多个 monSQLize 实例共用同一个缓存后端时，用 `namespace` 隔离缓存 key。
+即使使用默认 `namespace` 配置，查询缓存也会自动包含数据源/认证指纹与连接池标识。多个 runtime 共用缓存后端时，可通过 `namespace.instanceId` 进一步隔离应用；有意共享结果的实例应使用相同值或不设置。公开的 `getNamespace()` 行为不变。同源失效联动与升级行为见[缓存失效](./cache-invalidation.md)。
 
 | 配置项 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `namespace.scope` | `'database' \| 'connection'` | `'database'` | 控制 runtime 缓存 key 使用的命名空间边界。 |
-| `namespace.instanceId` | `string` | 无 | 给查询缓存 key 与失效 pattern 加实例前缀。多个应用共用 Redis/cache backend 时应配置。 |
+| `namespace.instanceId` | `string` | 无 | 给查询缓存 key 与失效 pattern 增加应用标识，可在共享缓存后端上提供额外隔离。 |
 
 ## 写路径策略
 

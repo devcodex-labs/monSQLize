@@ -17,7 +17,7 @@ async findPage(options = {})
 | Parameters | Type | Required | Default value | Description |
 |------|------|------|--------|------|
 | `query` | Object | No | `{}` | MongoDB query conditions |
-| `sort` | Object | No | `{ _id: 1 }` | Sorting rules, which will automatically ensure stable sorting |
+| `sort` | MongoDB `Sort` | No | `{ _id: 1 }` | Object, field string, Map, field list, single pair or tuple list; directions are `1`, `-1`, `asc`, `ascending`, `desc`, `descending`. Adds `_id: 1` when absent; invalid directions and `$meta` are rejected with `INVALID_ARGUMENT`. |
 | `limit` | Number | Yes | - | The number of documents returned per page, the maximum value is configured by `findPageMaxLimit` (default 500) |
 | `after` | String | No | - | Cursor paging: Get the data after the specified cursor |
 | `before` | String | No | - | Cursor paging: Get the data before the specified cursor |
@@ -36,6 +36,9 @@ async findPage(options = {})
 | `meta` | Boolean | No | `false` | Whether to return query meta information |
 | `cache` | Number | No | `0` | Cache TTL for non-stream/non-explain page results (milliseconds). `async` totals are cached separately |
 | `explain` | Boolean/String | No | - | Returns the query execution plan, optional values: `true`, `'queryPlanner'`, `'executionStats'`, `'allPlansExecution'` |
+| `cursorTypes` | Object | No | Instance defaults | Per-field restoration hints, merged with instance hints. |
+| `cursorValueNormalizer` | Function | No | Instance default | Custom `(field, value) => restoredValue`; handles every cursor field instead of default restoration. |
+| `cursorValueNormalizerVersion` | String | No | Instance default | Stable strategy identity/version. A per-query function override needs an explicit version for result caching and bookmark prewarming. |
 
 ### jump configuration item
 
@@ -48,8 +51,8 @@ Bookmark mechanism for optimizing page jump performance.
 | `keyDims` | Object | Automatically generated | Custom bookmark key dimensions (advanced usage) |
 
 **Bookmark mechanism description**:
-- Bookmarks are automatically saved to the instance cache with the key prefix `bm:`
-- The bookmark contains the desensitized shape hash of the query (without the specific query value)
+- Bookmarks are saved under `<cache-namespace>:bm:`; the namespace includes source/authentication fingerprints, pool, database, collection and optional instance identity.
+- Bookmark keys hash actual query values, normalized sort, limit, pipeline, cursor type hints and normalizer version; queries with different values do not share anchors.
 - Default TTL is 6 hours (configurable via `defaults.bookmarks.ttlMs`)
 - Save bookmarks for up to 10000 pages (configurable via `defaults.bookmarks.maxPages`)
 
@@ -1075,7 +1078,7 @@ console.log(dataResult);
 
 **Cached content**:
 - **Query result cache**: the key prefix is `findPage:`, and it stores non-stream/non-explain page results when `cache` is greater than `0`
-- **Bookmark cache**: the key prefix is `<db>:<collection>:bm:`, and it stores jump bookmarks
+- **Bookmark cache**: the key prefix is `<cache-namespace>:bm:`, and it stores jump bookmarks
 - **Totals cache**: the key prefix is `findPageTotals:`, and it stores totals results controlled by `totals.ttlMs`
 
 **Cache Invalidation**:
@@ -1098,8 +1101,9 @@ await collection('products').invalidate();
 ```
 
 **Cache key distinction**:
-- The same query, sort, and limit will hit the same cache
+- Matching query, normalized sort, limit, projection, pipeline, cursor and cursor strategy can reuse results within the same cache scope.
 - Different query conditions will generate different cache keys
+- Custom normalizers need a stable version for page-result caching and automatic bookmark reuse; raw key formats are internal. See [Cache Invalidation](./cache-invalidation.md).
 
 ```javascript
 // Both queries use the same cache
@@ -1365,15 +1369,20 @@ For custom conversion logic, pass `cursorValueNormalizer(field, value)` at the i
 When using result caches or prewarmed bookmarks, also provide `cursorValueNormalizerVersion`, a stable strategy identity and version such as `token-string:v1`. Change it whenever conversion logic, captured configuration or restored types change. A given identifier must always describe the same conversion behavior.
 
 ```ts
+import { ObjectId } from 'mongodb';
+
 await collection('events').findPage({
   sort: { token: 1 },
   cache: 60000,
-  cursorValueNormalizer: (_field, value) => value,
+  cursorValueNormalizer: (field, value) =>
+    field === '_id' && typeof value === 'string' ? new ObjectId(value) : value,
   cursorValueNormalizerVersion: 'token-string:v1'
 });
 ```
 
 The instance configuration accepts the same field. A per-query function override needs an explicit per-query version; it does not inherit the instance function's version. An unversioned custom function can still query, but bypasses page-result caching and automatic bookmark reads; bookmark prewarming rejects it. Deep jumps may therefore need more database queries and reach `jump.maxHops`. Both `cursorTypes` and the strategy version participate in page and bookmark keys.
+
+A custom normalizer replaces default restoration and `cursorTypes` for every sort field, including the `_id` tie-breaker. Handle Date/ObjectId fields explicitly; returning an unchanged ObjectId string can produce incorrect cursor comparisons. An exclusion projection such as `{ _id: 0 }` retains business fields, and all cursor sort fields (including `_id`) remain in the returned items.
 
 Cursor comparisons support null/missing boundaries and common scalar BSON sort types. Pagination uses `$expr` comparisons; verify index efficiency with `explain` for your query, sort and data distribution. Array sorting by minimum/maximum elements is outside this guarantee.
 

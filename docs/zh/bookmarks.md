@@ -4,6 +4,10 @@
 
 monSQLize 提供了三个 Bookmark 维护 API，用于管理 findPage 的 bookmark 缓存。这些 API 适用于运维调试和性能优化场景。
 
+书签键与 `findPage()` 使用相同的数据源/认证/连接池缓存作用域及游标策略。预热、列出、清理与查询时，`keyDims` 中的 `cursorTypes`、`cursorValueNormalizerVersion` 应一致。实例默认配置生效；单次覆盖转换函数时必须提供自己的非空稳定版本。未配置版本的自定义函数会使 `prewarmBookmarks()` 抛出 `INVALID_ARGUMENT`；查询仍可执行，但不会自动复用书签。升级行为见[缓存失效](./cache-invalidation.md)。
+
+下方键字符串仅作概念示例，请使用返回的键/模式或书签 API，不要根据 `getNamespace()` 拼接缓存键。
+
 ## 核心特性
 
 - ✅ **智能 Hash 匹配**：自动应用 `ensureStableSort` 规范化，确保与 findPage 使用相同的缓存键
@@ -54,9 +58,9 @@ async prewarmBookmarks(keyDims, pages)
   warmed: 3,           // 成功预热的页数
   failed: 1,           // 失败的页数（超出范围等）
   keys: [              // 缓存的键列表
-    'bm:iid123:mongodb:mydb:products:hash456:p1',
-    'bm:iid123:mongodb:mydb:products:hash456:p2',
-    'bm:iid123:mongodb:mydb:products:hash456:p3'
+    '<cache-namespace>:bm:<query-hash>:1',
+    '<cache-namespace>:bm:<query-hash>:2',
+    '<cache-namespace>:bm:<query-hash>:3'
   ]
 }
 ```
@@ -132,7 +136,7 @@ async listBookmarks(keyDims?)
 {
   pages: [1, 2, 3, 5, 10],  // 已缓存的页码列表
   count: 5,                  // 缓存数量
-  keyPrefix: 'bm:iid123:mongodb:mydb:products:hash456'
+  keys: ['<cache-namespace>:bm:<query-hash>:1', '...']
 }
 ```
 
@@ -140,8 +144,8 @@ async listBookmarks(keyDims?)
 ```javascript
 {
   keys: [                    // 所有 bookmark 键
-    'bm:iid123:mongodb:mydb:products:hash456:p1',
-    'bm:iid123:mongodb:mydb:orders:hash789:p2',
+    '<cache-namespace>:bm:<query-hash>:1',
+    '<cache-namespace>:bm:<other-query-hash>:2',
     // ...
   ],
   count: 15                  // 总缓存数
@@ -210,7 +214,8 @@ async clearBookmarks(keyDims?)
 ```javascript
 {
   cleared: 5,  // 已清除的缓存数量
-  keyPrefix: 'bm:iid123:mongodb:mydb:products:hash456'  // 清除的键前缀（可选）
+  pattern: '<cache-namespace>:bm:<query-hash>:*',
+  keysBefore: 5
 }
 ```
 

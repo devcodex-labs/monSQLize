@@ -5,7 +5,7 @@
 本文档说明调优事务吞吐与缓存一致性时真正需要关注的行为：
 
 1. **只读事务统计** - 未执行 monSQLize 写 helper 的事务会在 `getTransactionStats()` 中单独计数。
-2. **进程内缓存失效屏障** - 显式配置缓存失效的事务写入会记录 intent，只在事务成功 commit 后 flush。
+2. **进程内缓存失效屏障** - 显式配置缓存失效的事务写入会记录 intent，成功 commit 后执行；commit 结果未知时也会保守清理。
 
 ### 适用场景
 
@@ -57,7 +57,7 @@ await msq.withTransaction(async (tx) => {
 
 ### 工作原理
 
-事务通过 monSQLize helper 写入且显式配置了缓存失效时，runtime 会记录读缓存失效 intent。MongoDB commit 成功后再 flush 已记录的失效并释放进程内缓存锁；abort 不会 flush。
+事务通过 monSQLize helper 写入且显式配置了缓存失效时，runtime 会记录读缓存失效 intent。MongoDB commit 成功后再执行已记录的失效并释放进程内缓存锁。commit 结果未知时也会保守清理，不会报告已回滚或重跑回调。结果已知的 abort 会丢弃这些意图。同一个 CacheLike 对象上的在途回填会被撤销，跨进程 Redis 通知仍是最终一致性。
 
 ```javascript
 await msq.withTransaction(async (tx) => {

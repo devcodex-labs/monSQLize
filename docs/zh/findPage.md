@@ -18,7 +18,7 @@ async findPage(options = {})
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 |------|------|------|--------|------|
 | `query` | Object | 否 | `{}` | MongoDB 查询条件 |
-| `sort` | Object | 否 | `{ _id: 1 }` | 排序规则，会自动确保稳定排序 |
+| `sort` | MongoDB `Sort` | 否 | `{ _id: 1 }` | 支持对象、字段字符串、Map、字段列表、单个键值对或元组列表；方向为 `1`、`-1`、`asc`、`ascending`、`desc`、`descending`。缺少 `_id` 时补充 `_id: 1`；无效方向及 `$meta` 抛出 `INVALID_ARGUMENT`。 |
 | `limit` | Number | 是 | - | 每页返回的文档数量，最大值由 `findPageMaxLimit` 配置（默认 500） |
 | `after` | String | 否 | - | 游标分页：获取指定游标之后的数据 |
 | `before` | String | 否 | - | 游标分页：获取指定游标之前的数据 |
@@ -37,6 +37,9 @@ async findPage(options = {})
 | `meta` | Boolean | 否 | `false` | 是否返回查询元信息 |
 | `cache` | Number | 否 | `0` | 非流式、非 explain 分页结果缓存 TTL（毫秒）；`async` totals 使用独立缓存 |
 | `explain` | Boolean/String | 否 | - | 返回查询执行计划，可选值：`true`、`'queryPlanner'`、`'executionStats'`、`'allPlansExecution'` |
+| `cursorTypes` | Object | 否 | 实例配置 | 按字段提供恢复类型提示，与实例提示合并。 |
+| `cursorValueNormalizer` | Function | 否 | 实例配置 | 自定义 `(field, value) => restoredValue`，替代所有游标字段的默认恢复。 |
+| `cursorValueNormalizerVersion` | String | 否 | 实例配置 | 稳定策略标识与版本；单次覆盖转换函数时，配合结果缓存或书签预热必须显式提供。 |
 
 ### jump 配置项
 
@@ -49,8 +52,8 @@ async findPage(options = {})
 | `keyDims` | Object | 自动生成 | 自定义书签键维度（高级用法） |
 
 **书签机制说明**：
-- 书签会自动保存到实例缓存中，键前缀为 `bm:`
-- 书签包含查询的去敏形状哈希（不含具体查询值）
+- 书签保存在 `<cache-namespace>:bm:` 下，命名空间包含数据源/认证指纹、连接池、数据库、集合及可选实例标识。
+- 书签键根据实际查询值、规范化排序、limit、pipeline、游标类型提示及转换策略版本计算摘要；查询值不同不会共享锚点。
 - 默认 TTL 为 6 小时（可通过 `defaults.bookmarks.ttlMs` 配置）
 - 最多保存 10000 页的书签（可通过 `defaults.bookmarks.maxPages` 配置）
 
@@ -1076,7 +1079,7 @@ console.log(dataResult);
 
 **缓存内容**：
 - **查询结果缓存**：键前缀为 `findPage:`，当 `cache` 大于 `0` 时缓存非流式、非 explain 分页结果
-- **书签缓存**：键前缀为 `<db>:<collection>:bm:`，缓存跳页书签
+- **书签缓存**：键前缀为 `<cache-namespace>:bm:`，缓存跳页书签
 - **总数缓存**：键前缀为 `findPageTotals:`，按 `totals.ttlMs` 缓存总数统计结果
 
 **缓存失效**：
@@ -1099,8 +1102,9 @@ await collection('products').invalidate();
 ```
 
 **缓存键区分**：
-- 相同的 query、sort、limit 会命中同一个缓存
+- 同一缓存作用域内，查询、规范化排序、limit、投影、pipeline、游标及游标策略一致时，可以复用结果。
 - 不同的查询条件会生成不同的缓存键
+- 自定义转换函数需要稳定版本标识才能使用分页结果缓存和自动书签复用；原始键格式属于内部实现，详见[缓存失效](./cache-invalidation.md)。
 
 ```javascript
 // 这两个查询使用相同的缓存
@@ -1366,15 +1370,20 @@ await collection('events').findPage({
 配合缓存或预热书签使用时，请同时提供稳定的策略标识 `cursorValueNormalizerVersion`，例如 `token-string:v1`。标识应包含策略名称和版本；转换逻辑、闭包配置或恢复类型变化时，需要更新标识。同一标识必须始终对应相同的转换行为。
 
 ```ts
+import { ObjectId } from 'mongodb';
+
 await collection('events').findPage({
   sort: { token: 1 },
   cache: 60000,
-  cursorValueNormalizer: (_field, value) => value,
+  cursorValueNormalizer: (field, value) =>
+    field === '_id' && typeof value === 'string' ? new ObjectId(value) : value,
   cursorValueNormalizerVersion: 'token-string:v1'
 });
 ```
 
 实例级配置同样支持该字段。单次调用覆盖转换函数时，必须同时指定本次策略标识，不能自动继承实例函数的标识。未提供标识的自定义函数仍可查询，但会跳过分页结果缓存和自动书签读取；预热书签会拒绝该配置。这样会增加深页跳转的数据库查询次数，也可能达到 `jump.maxHops` 限制。`cursorTypes`、策略标识同时参与结果缓存和书签的键计算。
+
+自定义转换函数会替代所有排序字段的默认恢复及 `cursorTypes`，包括作为平局判定字段的 `_id`。必须显式处理 Date/ObjectId；直接返回 ObjectId 字符串可能导致游标比较错误。`{ _id: 0 }` 等排除式投影保留业务字段，所有游标排序字段（包括 `_id`）仍会出现在返回项中。
 
 游标比较支持 null／缺失字段与常见标量 BSON 类型之间的排序边界。分页过滤使用 `$expr` 比较，实际索引效率取决于查询、排序和数据分布，应通过 `explain` 验证。数组排序的最小／最大元素规则不在此保证范围内。
 

@@ -14,6 +14,8 @@ Upgrade and security: [Migration Guide](./MIGRATION.md) · [Private Vulnerabilit
 
 The npm `latest` dist-tag and GitHub Pages are the stable channel; `main` may contain the next release. Pages deployment accepts only a versioned Git tag whose package version is already present on npm, so unpublished APIs are not promoted as stable documentation.
 
+Upcoming cache/pagination changes on `main`, including `cursorValueNormalizerVersion` and cold-cache upgrade behavior, are described in the [unreleased changelog](https://github.com/devcodex-labs/monSQLize/blob/main/changelogs/unreleased.md) and [migration guide](./MIGRATION.md); they are not yet part of a published release.
+
 This development source is pinned to verified registry `schema-dsl@3.0.4`. The v3 package remains subject to the full release gate before an immutable tag and npm publication.
 
 ```bash
@@ -439,7 +441,7 @@ Cache capabilities include:
 
 - In-memory L1 cache.
 - Optional Redis-backed L2 cache.
-- Automatic invalidation after writes.
+- Opt-in invalidation after writes, including partial bulk-insert failures.
 - Cache namespace, TTL, and distributed invalidation controls.
 
 ## Advanced Capabilities
@@ -459,7 +461,7 @@ await msq.withTransaction(async (tx) => {
 
 Read options such as `session`, `readConcern`, `readPreference`, `collation`, `hint`, `maxTimeMS`, and `allowDiskUse` are forwarded to the MongoDB driver. Query caches are bypassed while a `session` is present, so transaction reads use the driver snapshot instead of a shared cache entry.
 
-Transaction cache invalidations are recorded during the transaction and flushed only after a successful commit. If the transaction aborts, pending invalidations are discarded.
+Transaction cache invalidations are recorded during the transaction and flushed after a successful commit. An unknown commit result also triggers conservative invalidation without reporting rollback or replaying the business callback. If the transaction aborts with a known outcome, pending invalidations are discarded. `timeout` limits work before commit begins; `end()` closes the session and does not commit.
 
 ### Connection Pools
 
