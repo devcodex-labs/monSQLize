@@ -1362,6 +1362,21 @@ await collection('events').findPage({
 
 For custom conversion logic, pass `cursorValueNormalizer(field, value)` at the instance level or on a single `findPage()` call.
 
+When using result caches or prewarmed bookmarks, also provide `cursorValueNormalizerVersion`, a stable strategy identity and version such as `token-string:v1`. Change it whenever conversion logic, captured configuration or restored types change. A given identifier must always describe the same conversion behavior.
+
+```ts
+await collection('events').findPage({
+  sort: { token: 1 },
+  cache: 60000,
+  cursorValueNormalizer: (_field, value) => value,
+  cursorValueNormalizerVersion: 'token-string:v1'
+});
+```
+
+The instance configuration accepts the same field. A per-query function override needs an explicit per-query version; it does not inherit the instance function's version. An unversioned custom function can still query, but bypasses page-result caching and automatic bookmark reads; bookmark prewarming rejects it. Deep jumps may therefore need more database queries and reach `jump.maxHops`. Both `cursorTypes` and the strategy version participate in page and bookmark keys.
+
+Cursor comparisons support null/missing boundaries and common scalar BSON sort types. Pagination uses `$expr` comparisons; verify index efficiency with `explain` for your query, sort and data distribution. Array sorting by minimum/maximum elements is outside this guarantee.
+
 ### Cursor token compatibility issues when upgrading from v1
 
 **Source of the problem**: If you persistently store `endCursor` / `startCursor` (write to database, put into Redis, encode in URL) during v1 running, after v2 turns on `cursorSecret`, these old token formats will be `<payload>` (no signature), and v2 will fail to parse because the signature separator cannot be found during v2 verification.

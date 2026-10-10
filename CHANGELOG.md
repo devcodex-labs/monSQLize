@@ -1,13 +1,13 @@
 # CHANGELOG
 
 > Summary index — the newest versioned release details are in [changelogs/v3.3.1.md](./changelogs/v3.3.1.md); the earlier RC note remains an unpublished rehearsal archive.
-> **Last updated**: 2026-09-23
+> **Last updated**: 2026-10-10
 
 ---
 
 ## Unreleased
 
-No changes are currently recorded after v3.3.1.
+Cache isolation and write coordination, versioned cursor strategies, pagination and lifecycle fixes. See [Unreleased details](./changelogs/unreleased.md).
 
 ## Version Overview
 

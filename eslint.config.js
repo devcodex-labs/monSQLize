@@ -138,6 +138,8 @@ module.exports = [
     // Ignored files.
     {
         ignores: [
+            'dist/**',
+            '.devcodex/**',
             'node_modules/',
             'coverage/',
             'lib/',

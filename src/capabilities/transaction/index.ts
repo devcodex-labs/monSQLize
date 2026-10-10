@@ -6,6 +6,7 @@
  * - Public and shared types are managed by `types/transaction.d.ts`; only runtime implementation and internal state types are kept here.
  */
 
+import { coordinateInvalidation } from '../../core/cache-coordination';
 import { randomBytes } from 'node:crypto';
 import type { MongoClient, ClientSession } from 'mongodb';
 import type { CacheLike } from '../cache';
@@ -158,6 +159,10 @@ export class CacheLockManager {
  * @since v1.3.0
  */
 export class Transaction {
+    private commitPromise: Promise<void> | null = null;
+    private abortPromise: Promise<void> | null = null;
+    private endPromise: Promise<void> | null = null;
+    private commitOutcomeUnknown = false;
     readonly id = `tx_${randomBytes(8).toString('hex')}`;
     state: 'pending' | 'active' | 'committed' | 'aborted' = 'pending';
     private acceptingWrites = false;
@@ -186,6 +191,7 @@ export class Transaction {
      * @since v1.4.0
      */
     async start(): Promise<void> {
+        if (this.endPromise || this.abortPromise) throw createError(ErrorCodes.INVALID_OPERATION, 'Transaction is already ending.');
         if (this.state !== 'pending') {
             throw createError(ErrorCodes.INVALID_OPERATION, `Cannot start transaction in state: ${this.state}`);
         }
@@ -212,12 +218,40 @@ export class Transaction {
      * @since v1.4.0
      */
     async commit(): Promise<void> {
+        if (this.commitPromise) return this.commitPromise;
+        if (this.endPromise || this.abortPromise) {
+            throw createError(ErrorCodes.INVALID_OPERATION, 'Transaction is already ending.');
+        }
         if (this.state !== 'active') {
             throw createError(ErrorCodes.INVALID_OPERATION, `Cannot commit transaction in state: ${this.state}`);
         }
         this.acceptingWrites = false;
+        const timeout = this.options.timeout ?? 30000;
+        if (!this.commitOutcomeUnknown && timeout > 0 && this.getDuration() >= timeout) {
+            await this.abort();
+            throw createError(ErrorCodes.OPERATION_TIMEOUT, 'Transaction work exceeded its timeout before commit.');
+        }
+        this.clearTimeout();
+        const committing = this.commitOnce();
+        this.commitPromise = committing;
+        try { await committing; }
+        finally { if (this.commitPromise === committing) this.commitPromise = null; }
+    }
+
+    private async commitOnce(): Promise<void> {
         if (typeof (this.session as unknown as Record<string, unknown>).commitTransaction === 'function') {
-            await commitTransactionWithRetry(this.session, this.options.logger);
+            try {
+                await commitTransactionWithRetry(this.session, this.options.logger);
+                this.commitOutcomeUnknown = false;
+            } catch (error) {
+                this.commitOutcomeUnknown = isUnknownTransactionCommitResult(error);
+                if (this.commitOutcomeUnknown) {
+                    await this.flushPendingInvalidations().catch(cacheError => {
+                        this.options.logger?.warn?.('[Transaction] uncertain commit cache invalidation failed.', cacheError);
+                    });
+                }
+                throw error;
+            }
         }
         this.state = 'committed';
         try {
@@ -243,6 +277,14 @@ export class Transaction {
      */
     async abort(): Promise<void> {
         this.acceptingWrites = false;
+        if (this.commitPromise) await this.commitPromise.catch(() => undefined);
+        if (this.commitOutcomeUnknown) return;
+        if (this.abortPromise) return this.abortPromise;
+        this.abortPromise = this.abortOnce();
+        return this.abortPromise;
+    }
+
+    private async abortOnce(): Promise<void> {
         if (this.state !== 'pending' && this.state !== 'active') {
             return;
         }
@@ -268,7 +310,16 @@ export class Transaction {
      * @since v1.4.0
      */
     async end(): Promise<void> {
+        if (this.endPromise) return this.endPromise;
+        this.endPromise = this.endOnce();
+        return this.endPromise;
+    }
+
+    private async endOnce(): Promise<void> {
         this.acceptingWrites = false;
+        if (this.commitPromise) await this.commitPromise.catch(() => undefined);
+        if (this.abortPromise) await this.abortPromise;
+        else if (this.state === 'active' && !this.commitOutcomeUnknown) await this.abort();
         this.clearTimeout();
         this.options.lockManager?.releaseLocks(this.id);
         await this.session.endSession();
@@ -310,15 +361,17 @@ export class Transaction {
             return;
         }
         const cacheWithDelete = this.options.cache as CacheLike & { delete?: (key: string) => unknown | Promise<unknown> };
-        for (const intent of this.pendingInvalidationIntents.values()) {
-            if (intent.type === 'pattern') {
-                await this.options.cache.delPattern?.(intent.value);
-            } else if (typeof cacheWithDelete.del === 'function') {
-                await cacheWithDelete.del(intent.value);
-            } else if (typeof cacheWithDelete.delete === 'function') {
-                await cacheWithDelete.delete(intent.value);
+        await coordinateInvalidation(this.options.cache, [...this.pendingInvalidationIntents.values()], async () => {
+            for (const intent of this.pendingInvalidationIntents.values()) {
+                if (intent.type === 'pattern') {
+                    await cacheWithDelete.delPattern?.(intent.value);
+                } else if (typeof cacheWithDelete.del === 'function') {
+                    await cacheWithDelete.del(intent.value);
+                } else if (typeof cacheWithDelete.delete === 'function') {
+                    await cacheWithDelete.delete(intent.value);
+                }
             }
-        }
+        });
     }
 
     private async clearPendingInvalidationBarriers(): Promise<void> {

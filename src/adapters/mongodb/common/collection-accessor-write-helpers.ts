@@ -216,12 +216,15 @@ export async function insertManyForAccessor<TSchema extends Document = Document>
 
     const startedAt = Date.now();
     let result: Awaited<ReturnType<Collection<TSchema>['insertMany']>>;
+    let dispatched = false;
     try {
         const convertedDocs = documents.map((document) => context.cvDoc(document)) as typeof documents;
         await runPreWriteInvalidation(context, options);
+        dispatched = true;
         result = await insertManyDocuments(context.collectionRef, convertedDocs, stripWriteCacheControlOptions(options));
         markTransactionWrite(options);
     } catch (err: unknown) {
+        if (dispatched) await runPostWriteInvalidation(context, options).catch(() => undefined);
         const mongoErr = err as { code?: number; message?: string };
         if (mongoErr?.code === 11000) {
             throw createError(

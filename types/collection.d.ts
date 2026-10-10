@@ -1,11 +1,9 @@
 import type { ChangeStream, Document, FindOptions as MongoFindOptions, Sort } from 'mongodb';
 import type {
-    AggregateOptions,
     MetaOptions,
     VectorSearchHit,
     VectorSearchOptions,
 } from './aggregation';
-
 export type {
     AggregateOptions,
     MetaOptions,
@@ -323,6 +321,8 @@ export interface FindPageOptions<TSchema = any> {
     cursorTypes?: Record<string, CursorValueType>;
     /** Custom cursor value normalizer. Receives the sort field name and decoded cursor value. */
     cursorValueNormalizer?: CursorValueNormalizer;
+    /** Stable strategy identity and version. A per-query normalizer needs its own explicit version. */
+    cursorValueNormalizerVersion?: string;
     options?: MongoFindOptions;
     /** Cursor-walking bookmark jump configuration */
     jump?: JumpOptions;

@@ -9,6 +9,8 @@
  *   modules rather than accumulating here.
  */
 
+import { readThroughCache } from '../../../core/cache-coordination';
+import { cacheNamespace } from '../../../core/cache-scope';
 import { ChangeStream, Collection, Db, Document } from 'mongodb';
 import { ErrorCodes, createError } from '../../../core/errors';
 import type { Logger } from '../../../core/logger';
@@ -252,12 +254,7 @@ export class MongoCollectionAccessor<TSchema extends Document = Document> {
             && !(await isCollectionCacheBarrierActive(this.management.queryCache, this.collectionRef, this.management.defaults))
         ) {
             const cacheKey = buildFindOneCacheKey(this.collectionRef, this.management.defaults, normalizedQuery, driverOptions);
-            const cached = await Promise.resolve(this.management.queryCache.get(cacheKey)) as TSchema | null | undefined;
-            if (cached !== undefined) {
-                return Promise.resolve(wrapQueryResultWithMeta(this.collectionRef, this.management.defaults, 'findOne', rawOptions, startTs, cached) as never) as ReturnType<Collection<TSchema>['findOne']>;
-            }
-            const result = await findOneDocument(this.collectionRef, normalizedQuery, driverOptions as Parameters<Collection<TSchema>['findOne']>[1]);
-            await Promise.resolve(this.management.queryCache.set(cacheKey, result, cacheTTL));
+            const result = await readThroughCache(this.management.queryCache, cacheKey, cacheTTL, () => findOneDocument(this.collectionRef, normalizedQuery, driverOptions as Parameters<Collection<TSchema>['findOne']>[1]));
             return wrapQueryResultWithMeta(this.collectionRef, this.management.defaults, 'findOne', rawOptions, startTs, result) as never;
         }
 
@@ -333,16 +330,10 @@ export class MongoCollectionAccessor<TSchema extends Document = Document> {
             && !(await isCollectionCacheBarrierActive(this.management.queryCache, this.collectionRef, this.management.defaults))
         ) {
             const cacheKey = buildCountCacheKey(this.collectionRef, this.management.defaults, normalizedQuery, keyOptions);
-            const cached = await Promise.resolve(this.management.queryCache.get(cacheKey));
-            if (cached !== undefined) {
-                if (callerSignal?.aborted) throw createError(ErrorCodes.INVALID_OPERATION, 'Count operation aborted');
-                return Promise.resolve(wrapQueryResultWithMeta(this.collectionRef, this.management.defaults, 'count', merged, startTs, cached as number) as never) as ReturnType<Collection<TSchema>['countDocuments']>;
-            }
-            const runner = countQueue ? countQueue.execute(executeCount, { signal: callerSignal }) : executeCount();
-            return runner.then(async (result) => {
-                await Promise.resolve(this.management.queryCache?.set(cacheKey, result, cacheTTL));
-                return wrapQueryResultWithMeta(this.collectionRef, this.management.defaults, 'count', merged, startTs, result) as number;
-            }) as ReturnType<Collection<TSchema>['countDocuments']>;
+            const result = await readThroughCache(this.management.queryCache, cacheKey, cacheTTL,
+                () => countQueue ? countQueue.execute(executeCount, { signal: callerSignal }) : executeCount());
+            if (callerSignal?.aborted) throw createError(ErrorCodes.INVALID_OPERATION, 'Count operation aborted');
+            return wrapQueryResultWithMeta(this.collectionRef, this.management.defaults, 'count', merged, startTs, result) as number;
         }
         const runner = countQueue ? countQueue.execute(executeCount, { signal: callerSignal }) : executeCount();
         return runner.then((result) => wrapQueryResultWithMeta(this.collectionRef, this.management.defaults, 'count', merged, startTs, result) as number) as ReturnType<Collection<TSchema>['countDocuments']>;
@@ -451,12 +442,7 @@ export class MongoCollectionAccessor<TSchema extends Document = Document> {
             && !(await isCollectionCacheBarrierActive(this.management.queryCache, this.collectionRef, this.management.defaults))
         ) {
             const cacheKey = buildDistinctCacheKey(this.collectionRef, this.management.defaults, key, normalizedQuery, driverOptions);
-            const cached = await Promise.resolve(this.management.queryCache.get(cacheKey));
-            if (cached !== undefined) {
-                return Promise.resolve(wrapQueryResultWithMeta(this.collectionRef, this.management.defaults, 'distinct', rawOptions, startTs, cached) as never) as ReturnType<Collection<TSchema>['distinct']>;
-            }
-            const result = await executeDistinct();
-            await Promise.resolve(this.management.queryCache.set(cacheKey, result, cacheTTL));
+            const result = await readThroughCache(this.management.queryCache, cacheKey, cacheTTL, executeDistinct);
             return wrapQueryResultWithMeta(this.collectionRef, this.management.defaults, 'distinct', rawOptions, startTs, result) as never;
         }
         const result = await executeDistinct();
@@ -765,10 +751,11 @@ export class MongoCollectionAccessor<TSchema extends Document = Document> {
 
     private bookmarkContext() {
         return {
-            namespace: `${this.dbName}:${this.collectionName}`,
+            namespace: cacheNamespace(`${this.dbName}:${this.collectionName}`, this.management.defaults),
             cache: this.management.cache,
             getCache: this.management.getCache,
             logger: this.management.logger,
+            defaults: this.management.defaults,
             findPage: (options: FindPageOptions<TSchema>) => this.findPage(options),
         };
     }

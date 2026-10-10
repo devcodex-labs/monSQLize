@@ -5,6 +5,68 @@ import { insertBatchDocuments } from '../../../src/adapters/mongodb/writes/write
 
 const MonSQLize = require('../../../dist/cjs/index.cjs');
 
+it('Serializes commit, abort and end while a commit exceeds the work timeout', async () => {
+    let complete!: () => void;
+    const committed = new Promise<void>(resolve => { complete = resolve; });
+    let commits = 0, aborts = 0, ends = 0;
+    const session = {
+        ...createFakeSession(),
+        commitTransaction: () => { commits++; return committed; },
+        abortTransaction: async () => { aborts++; },
+        endSession: async () => { ends++; },
+    };
+    const tx = new MonSQLize.Transaction(session, { timeout: 50 });
+    await tx.start();
+    const committing = tx.commit();
+    const duplicate = tx.commit();
+    const aborting = tx.abort();
+    const ending = tx.end();
+    const endingAgain = tx.end();
+    await new Promise(resolve => setTimeout(resolve, 90));
+    assert.equal(commits, 1);
+    assert.equal(aborts, 0);
+    assert.equal(ends, 0);
+    complete();
+    await Promise.all([committing, duplicate, aborting, ending, endingAgain]);
+    assert.equal(tx.state, 'committed');
+    assert.equal(aborts, 0);
+    assert.equal(ends, 1);
+});
+
+it('An expired work deadline prevents dispatching commit', async () => {
+    let commits = 0;
+    const tx = new MonSQLize.Transaction({ ...createFakeSession(), commitTransaction: async () => { commits++; } }, { timeout: 1 });
+    await tx.start();
+    // Busy work crosses the deadline before the timeout callback can run.
+    const until = Date.now() + 5;
+    while (Date.now() < until) { /* controlled work */ }
+    await assert.rejects(tx.commit(), { code: 'OPERATION_TIMEOUT' });
+    assert.equal(commits, 0);
+    assert.equal(tx.state, 'aborted');
+    await tx.end();
+});
+
+it('An unknown commit result clears stale cache and does not claim rollback', async () => {
+    let aborts = 0;
+    const error = Object.assign(new Error('unknown commit'), { errorLabels: ['UnknownTransactionCommitResult'] });
+    const cache = new MonSQLize.MemoryCache();
+    cache.set('unknown:key', 1, 1000);
+    const tx = new MonSQLize.Transaction({
+        ...createFakeSession(),
+        commitTransaction: async () => { throw error; },
+        abortTransaction: async () => { aborts++; },
+    }, { cache });
+    await tx.start();
+    await tx.recordCacheInvalidation({ type: 'key', value: 'unknown:key' });
+    await assert.rejects(tx.commit(), candidate => candidate === error);
+    await tx.abort();
+    assert.equal(aborts, 0);
+    assert.equal(cache.get('unknown:key'), undefined);
+    assert.equal(tx.state, 'active');
+    assert.throws(() => tx.assertAcceptingWrites(), { code: 'INVALID_OPERATION' });
+    await tx.end();
+});
+
 function createFakeSession() {
     let inTransaction = false;
     let startOptions: Record<string, unknown> | undefined;

@@ -1,5 +1,8 @@
 # Business-level distributed lock
 
+`Lock.isHeld()` checks local lease expiry and ownership tokens; successful renewal updates the deadline. For Redis handles, this synchronous check uses the last successful acquisition/renewal deadline and cannot prove the remote key was not deleted externally. Expired handles cannot release a successor's lock.
+
+
 > **Deprecated compatibility page**: monSQLize keeps `withLock()`, `acquireLock()`, and `tryAcquireLock()` for existing callers, but business locking is no longer a recommended monSQLize capability. Prefer application/framework-level locking, such as the VextJS runtime layer, for new payment/order critical sections.
 
 ## Overview

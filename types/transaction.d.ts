@@ -27,6 +27,7 @@ export interface TransactionOptions {
     /** Maximum transaction duration in milliseconds before an automatic abort. */
     maxDuration?: number;
     /** @alias maxDuration — v1 compat field */
+    /** Deadline for transaction work before commit begins; commit uses driver commit time limits. */
     timeout?: number;
     enableRetry?: boolean;
     maxRetries?: number;

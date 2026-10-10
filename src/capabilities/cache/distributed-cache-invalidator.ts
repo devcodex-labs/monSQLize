@@ -1,3 +1,5 @@
+import { coordinateInvalidation } from '../../core/cache-coordination';
+import type { QueryCacheLike } from '../../types/internal/query';
 import { randomBytes } from 'crypto';
 import { createError, ErrorCodes } from '../../core/errors';
 import { MemoryCache as BaseMemoryCache } from 'cache-hub';
@@ -137,17 +139,19 @@ export class DistributedCacheInvalidator {
     }
 
     private async _invalidateFromRemote(kind: 'pattern' | 'key', value: string): Promise<void> {
-        if (this._cache instanceof BaseMemoryCache) {
-            if (kind === 'pattern') await this._cache.delPattern(value);
-            else await this._cache.del(value);
-            return;
-        }
-        if (this._cache.local instanceof BaseMemoryCache && this._cache.remote === undefined) {
-            if (kind === 'pattern') await this._cache.local.delPattern(value);
-            else await this._cache.local.del(value);
-            return;
-        }
-        await this._cache.invalidateFromRemote?.(kind, value);
+        await coordinateInvalidation(this._cache as QueryCacheLike, [{ type: kind, value }], async () => {
+            if (this._cache instanceof BaseMemoryCache) {
+                if (kind === 'pattern') await this._cache.delPattern(value);
+                else await this._cache.del(value);
+                return;
+            }
+            if (this._cache.local instanceof BaseMemoryCache && this._cache.remote === undefined) {
+                if (kind === 'pattern') await this._cache.local.delPattern(value);
+                else await this._cache.local.del(value);
+                return;
+            }
+            await this._cache.invalidateFromRemote?.(kind, value);
+        });
     }
 
     async invalidate(pattern: string): Promise<void> {

@@ -11,7 +11,7 @@
 import type { MonSQLizeOptions } from '../../types/monsqlize';
 import type { RuntimeDefaults } from '../types/internal/query';
 import type { LoggerLike } from '../core/logger';
-import { ErrorCodes } from '../core/errors';
+import { ErrorCodes, createError } from '../core/errors';
 import type { ModelDefinition } from '../capabilities/model';
 import { Model } from '../capabilities/model';
 import { CountQueue } from '../capabilities/count-queue';
@@ -102,6 +102,12 @@ export function buildRuntimeDefaults(options: MonSQLizeOptions): RuntimeDefaults
     if (o.requireCursorSecret !== undefined) defaults.requireCursorSecret = o.requireCursorSecret;
     if (o.cursorTypes !== undefined) defaults.cursorTypes = o.cursorTypes;
     if (typeof o.cursorValueNormalizer === 'function') defaults.cursorValueNormalizer = o.cursorValueNormalizer;
+    if (o.cursorValueNormalizerVersion !== undefined) {
+        if (typeof o.cursorValueNormalizerVersion !== 'string' || !o.cursorValueNormalizerVersion.trim()) {
+            throw createError(ErrorCodes.INVALID_CONFIG, 'cursorValueNormalizerVersion must be a non-empty string');
+        }
+        defaults.cursorValueNormalizerVersion = o.cursorValueNormalizerVersion;
+    }
     // v1-compat: countQueue defaults to enabled when not explicitly configured.
     const countQueueCfg = o.countQueue === false
         ? { enabled: false }

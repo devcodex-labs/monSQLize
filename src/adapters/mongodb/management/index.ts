@@ -7,6 +7,9 @@
  *   and other management APIs.
  */
 
+import { normalizeSortShape } from '../queries/query-helpers';
+import { coordinateInvalidation, withCacheReads } from '../../../core/cache-coordination';
+import type { QueryCacheLike } from '../../../types/internal/query';
 import { createHash } from 'node:crypto';
 import { Collection, Db, Document } from 'mongodb';
 
@@ -299,22 +302,25 @@ export async function prewarmBookmarks<TSchema extends Document = Document>(para
         }
 
         try {
-            const payload = await params.findPage({ ...keyDims, page, totals: false, jump: { step: 1, maxHops: 1000 } } as unknown as FindPageOptions<TSchema>);
-            const items = (payload as unknown as { items?: unknown[]; data?: unknown[] }).items
-                ?? (payload as unknown as { data?: unknown[] }).data
-                ?? [];
-            if (items.length > 0) {
+            await withCacheReads(cache as unknown as QueryCacheLike, async guarded => {
                 const key = buildBookmarkKey(params.namespace, keyDims, page);
-                await Promise.resolve(cache.set(key, {
-                    page,
-                    pageInfo: payload.pageInfo,
-                    size: items.length,
-                    warmedAt: new Date().toISOString(),
-                }));
-                result.warmed += 1;
-            } else {
-                result.failed += 1;
-            }
+                await guarded.get(key);
+                const payload = await params.findPage({ ...keyDims, page, totals: false, jump: { step: 1, maxHops: 1000 } } as unknown as FindPageOptions<TSchema>);
+                const items = (payload as unknown as { items?: unknown[]; data?: unknown[] }).items
+                    ?? (payload as unknown as { data?: unknown[] }).data
+                    ?? [];
+                if (items.length > 0) {
+                    await Promise.resolve((guarded as unknown as BookmarkCacheLike).set(key, {
+                        page,
+                        pageInfo: payload.pageInfo,
+                        size: items.length,
+                        warmedAt: new Date().toISOString(),
+                    }));
+                    result.warmed += 1;
+                } else {
+                    result.failed += 1;
+                }
+            });
         } catch (cause) {
             result.failed += 1;
             params.logger?.warn('Bookmark prewarm failed', cause);
@@ -401,12 +407,7 @@ function normalizeBookmarkKeyDims<TSchema extends Document = Document>(
     const normalized = {
         ...(keyDims ?? {}),
     };
-    const sort: Record<string, 1 | -1> = normalized.sort && typeof normalized.sort === 'object' && !Array.isArray(normalized.sort)
-        ? { ...(normalized.sort as Record<string, 1 | -1>) }
-        : { _id: 1 as const };
-    if (!('_id' in sort)) {
-        sort._id = 1;
-    }
+    const sort = normalizeSortShape(normalized.sort);
     normalized.sort = sort as typeof normalized.sort;
     normalized.limit = normalized.limit ?? DEFAULT_FIND_PAGE_LIMIT;
     normalized.query = normalized.query ?? {};
@@ -427,6 +428,8 @@ function buildBookmarkBaseKey(namespace: string, keyDims: BookmarkKeyDims): stri
         limit: keyDims.limit,
         query: keyDims.query,
         pipeline: keyDims.pipeline,
+        cursorTypes: keyDims.cursorTypes,
+        cursorValueNormalizerVersion: keyDims.cursorValueNormalizerVersion,
     }))}`;
 }
 
@@ -474,7 +477,7 @@ async function resolveKeys(cache: BookmarkCacheLike, pattern: string): Promise<s
 }
 
 async function resolveDeletePattern(cache: BookmarkCacheLike, pattern: string): Promise<number> {
-    const deleted = await Promise.resolve(cache.delPattern?.(pattern) ?? 0);
+    const deleted = await coordinateInvalidation(cache as unknown as QueryCacheLike, [{ type: 'pattern', value: pattern }], async () => await Promise.resolve(cache.delPattern?.(pattern) ?? 0));
     return typeof deleted === 'number' ? deleted : 0;
 }
 

@@ -5,6 +5,7 @@ import type {
     RuntimeDefaults,
 } from '../../../types/internal/query';
 import type { FindPageOptions } from '../../../../types/collection';
+import { resolveCursorStrategy } from './cursor-strategy';
 import { convertObjectIdStrings } from '../utils/objectid-converter';
 import { DEFAULT_FIND_PAGE_LIMIT, hashPayload } from './find-page-cache-helpers';
 import {
@@ -167,6 +168,7 @@ export function buildFindPageCacheKey<TSchema extends Document = Document>(
         : undefined;
     const { let: nestedLet, ...nestedOptions } = (options.options ?? {}) as Record<string, unknown>;
     const effectiveLet = ext.let !== undefined ? ext.let : nestedLet;
+    const strategy = resolveCursorStrategy(ext, defaults);
     const payload = {
         query: normalizeQueryForCache(options.query, defaults),
         sort: normalizeSortShape(options.sort),
@@ -186,6 +188,7 @@ export function buildFindPageCacheKey<TSchema extends Document = Document>(
         },
         hasCursorValueNormalizer: typeof ext.cursorValueNormalizer === 'function'
             || typeof defaults.cursorValueNormalizer === 'function',
+        cursorValueNormalizerVersion: strategy.cursorValueNormalizerVersion,
         hint: ext.hint,
         collation: ext.collation,
         batchSize: ext.batchSize,

@@ -1,4 +1,6 @@
 import type { Collection, Document } from 'mongodb';
+import { relatedCacheNamespaces } from '../../../core/cache-scope';
+import { coordinateInvalidation } from '../../../core/cache-coordination';
 import {
     clearCacheInvalidationBarrier,
 } from '../../../core/cache-invalidation-barrier';
@@ -102,24 +104,12 @@ export function resolveAggregateWriteTarget(pipeline: Document[]): AggregateWrit
     return isRecord(mergeStage) ? resolveCollectionTarget(mergeStage['into']) : null;
 }
 
-function buildAccessorCacheNamespace(
-    dbName: string,
-    collectionName: string,
-    defaults: RuntimeDefaults | undefined,
-): string {
-    const namespace = `${dbName}.${collectionName}`;
-    const instanceId = defaults?.namespace?.instanceId;
-    return instanceId ? `${instanceId}:${namespace}` : namespace;
-}
-
 function buildAccessorCacheNamespaces(
     dbName: string,
     collectionName: string,
     defaults: RuntimeDefaults | undefined,
 ): string[] {
-    const namespace = `${dbName}.${collectionName}`;
-    const scopedNamespace = buildAccessorCacheNamespace(dbName, collectionName, defaults);
-    return scopedNamespace === namespace ? [namespace] : [scopedNamespace, namespace];
+    return relatedCacheNamespaces(`${dbName}.${collectionName}`, defaults);
 }
 
 export function buildReadCacheInvalidationPatterns(
@@ -129,15 +119,15 @@ export function buildReadCacheInvalidationPatterns(
     operation?: ReadCacheOperation,
 ): string[] {
     const namespaces = buildAccessorCacheNamespaces(dbName, collectionName, defaults);
-    const bookmarkNamespace = `${dbName}:${collectionName}`;
-    const legacyNamespacePatterns = defaults?.namespace?.instanceId
+    const bookmarkNamespaces = relatedCacheNamespaces(`${dbName}:${collectionName}`, defaults);
+    const legacyNamespacePatterns = !defaults?.cacheScope && defaults?.namespace?.instanceId
         ? [`${defaults.namespace.instanceId}:mongodb:${dbName}:${collectionName}:*`]
         : [];
     const forNamespaces = (prefix: string) => namespaces.map((namespace) => `${prefix}:${namespace}:*`);
     const findPagePatterns = [
         ...forNamespaces('findPage'),
         ...forNamespaces('findPageTotals'),
-        `${bookmarkNamespace}:bm:*`,
+        ...bookmarkNamespaces.map(namespace => `${namespace}:bm:*`),
     ];
     const aggregatePatterns = forNamespaces('aggregate');
     const distinctPatterns = forNamespaces('distinct');
@@ -238,6 +228,13 @@ function uniqueIntents(intents: CacheInvalidationIntent[]): CacheInvalidationInt
     return output;
 }
 
+function linkedQueryKeyIntents(key: string, defaults: RuntimeDefaults | undefined): CacheInvalidationIntent[] {
+    const scopes = defaults?.relatedCacheScopes?.();
+    return scopes && defaults?.cacheScope
+        ? scopes.map(scope => ({ type: 'key', value: key.replace(`:${defaults.cacheScope}:`, `:${scope}:`) }))
+        : [{ type: 'key', value: key }];
+}
+
 function entryToIntents<TSchema extends Document>(
     collection: Collection<TSchema>,
     dbName: string,
@@ -287,23 +284,23 @@ function entryToIntents<TSchema extends Document>(
     const descriptorOptions = isRecord(entry.options) ? entry.options : undefined;
     if (operation === 'find') {
         if (entry.query !== undefined || descriptorOptions !== undefined) {
-            return [{ type: 'key', value: buildFindCacheKey(collection, defaults, entry.query, descriptorOptions) }];
+            return linkedQueryKeyIntents(buildFindCacheKey(collection, defaults, entry.query, descriptorOptions), defaults);
         }
     } else if (operation === 'findOne') {
         if (entry.query !== undefined || descriptorOptions !== undefined) {
-            return [{ type: 'key', value: buildFindOneCacheKey(collection, defaults, entry.query, descriptorOptions) }];
+            return linkedQueryKeyIntents(buildFindOneCacheKey(collection, defaults, entry.query, descriptorOptions), defaults);
         }
     } else if (operation === 'count') {
         if (entry.query !== undefined || descriptorOptions !== undefined) {
-            return [{ type: 'key', value: buildCountCacheKey(collection, defaults, entry.query, descriptorOptions) }];
+            return linkedQueryKeyIntents(buildCountCacheKey(collection, defaults, entry.query, descriptorOptions), defaults);
         }
     } else if (operation === 'distinct') {
         if (typeof entry.field === 'string' && entry.field.length > 0) {
-            return [{ type: 'key', value: buildDistinctCacheKey(collection, defaults, entry.field, entry.query, descriptorOptions) }];
+            return linkedQueryKeyIntents(buildDistinctCacheKey(collection, defaults, entry.field, entry.query, descriptorOptions), defaults);
         }
     } else if (operation === 'aggregate') {
         if (Array.isArray(entry.pipeline) || descriptorOptions !== undefined) {
-            return [{ type: 'key', value: buildAggregateCacheKey(collection, defaults, entry.pipeline, descriptorOptions) }];
+            return linkedQueryKeyIntents(buildAggregateCacheKey(collection, defaults, entry.pipeline, descriptorOptions), defaults);
         }
     } else if (operation === 'findPage') {
         const findPageOptions = isRecord(entry.options)
@@ -312,14 +309,14 @@ function entryToIntents<TSchema extends Document>(
         if (entry.query !== undefined && findPageOptions.query === undefined) {
             findPageOptions.query = entry.query;
         }
-        return [{ type: 'key', value: buildFindPageCacheKey(collection, defaults, findPageOptions as never).key }];
+        return linkedQueryKeyIntents(buildFindPageCacheKey(collection, defaults, findPageOptions as never).key, defaults);
     } else if (operation === 'findOneById') {
         if (entry.id !== undefined) {
-            return [{ type: 'key', value: buildFindOneByIdCacheKey(collection, defaults, entry.id, descriptorOptions) }];
+            return linkedQueryKeyIntents(buildFindOneByIdCacheKey(collection, defaults, entry.id, descriptorOptions), defaults);
         }
     } else if (operation === 'findByIds') {
         if (Array.isArray(entry.ids)) {
-            return [{ type: 'key', value: buildFindByIdsCacheKey(collection, defaults, entry.ids, descriptorOptions) }];
+            return linkedQueryKeyIntents(buildFindByIdsCacheKey(collection, defaults, entry.ids, descriptorOptions), defaults);
         }
     }
 
@@ -385,15 +382,17 @@ export async function applyCacheInvalidationIntents(
     if (!queryCache || intents.length === 0) {
         return 0;
     }
-    let deleted = 0;
-    for (const intent of uniqueIntents(intents)) {
-        if (intent.type === 'pattern') {
-            deleted += Number(await Promise.resolve(queryCache.delPattern?.(intent.value) ?? 0));
-        } else {
-            deleted += await deleteCacheKey(queryCache, intent.value);
+    return coordinateInvalidation(queryCache, intents, async () => {
+        let deleted = 0;
+        for (const intent of uniqueIntents(intents)) {
+            if (intent.type === 'pattern') {
+                deleted += Number(await Promise.resolve(queryCache.delPattern?.(intent.value) ?? 0));
+            } else {
+                deleted += await deleteCacheKey(queryCache, intent.value);
+            }
         }
-    }
-    return deleted;
+        return deleted;
+    });
 }
 
 export async function invalidateReadCachesForNamespace(
@@ -406,11 +405,7 @@ export async function invalidateReadCachesForNamespace(
     if (!queryCache?.delPattern) {
         return 0;
     }
-    let deleted = 0;
-    for (const pattern of buildReadCacheInvalidationPatterns(dbName, collectionName, defaults, operation)) {
-        deleted += Number(await Promise.resolve(queryCache.delPattern(pattern)));
-    }
-    return deleted;
+    return applyCacheInvalidationIntents(queryCache, patternsToIntents(buildReadCacheInvalidationPatterns(dbName, collectionName, defaults, operation)));
 }
 
 export async function prepareReadCachesBeforeWrite(

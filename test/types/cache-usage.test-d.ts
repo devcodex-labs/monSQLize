@@ -28,7 +28,11 @@ expectAssignable<{ hits: number; misses: number; errors: number; hitRate: number
 const runtime = new MonSQLize({
     type: 'mongodb',
     databaseName: 'typed-function-cache',
+    cursorValueNormalizer: (_field, value) => value,
+    cursorValueNormalizerVersion: 'identity:v1',
 });
+runtime.collection('events').findPage({ cursorValueNormalizerVersion: 'identity:v2' });
+runtime.collection('events').prewarmBookmarks({ cursorValueNormalizer: (_field: string, value: unknown) => value, cursorValueNormalizerVersion: 'identity:v3' }, [2]);
 expectType<DistributedCacheInvalidatorStats | null>(runtime.getDistributedCacheInvalidatorStats());
 
 const functionCache = new MonSQLize.FunctionCache(runtime, {

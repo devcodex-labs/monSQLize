@@ -1,5 +1,7 @@
 /** findPage execution layer: pagination, totals calculation, and meta tracking. */
 
+import { withCacheReads } from '../../../core/cache-coordination';
+import { cacheNamespace } from '../../../core/cache-scope';
 import { Collection, Document } from 'mongodb';
 
 import { createError, ErrorCodes } from '../../../core/errors';
@@ -39,6 +41,7 @@ import {
 } from './find-page-cache-helpers';
 import { computeTotals } from './find-page-totals';
 import { buildFindPageCacheKey } from './query-cache-keys';
+import { resolveCursorStrategy } from './cursor-strategy';
 
 // ── Internal utilities ────────────────────────────────────────────────────────
 
@@ -118,6 +121,7 @@ export async function executeFindPage<TSchema extends Document = Document>(
     const metaStartTs = Date.now();
     const metaSteps: NonNullable<MetaInfo['steps']> = [];
     const ext = options as Record<string, unknown>;
+    const strategy = resolveCursorStrategy(ext, defaults);
     const page = normalizePositiveInteger(options.page, 1, 'page');
     const rawLimit = normalizePositiveInteger(options.limit, DEFAULT_FIND_PAGE_LIMIT, 'limit');
     const limit = defaults.findPageMaxLimit !== undefined && rawLimit > defaults.findPageMaxLimit
@@ -174,7 +178,7 @@ export async function executeFindPage<TSchema extends Document = Document>(
     if (ext.readPreference !== undefined) driverOpts.readPreference = ext.readPreference;
     if (ext.allowDiskUse !== undefined) driverOpts.allowDiskUse = ext.allowDiskUse;
     if (ext.let !== undefined) driverOpts.let = ext.let;
-    const projection = resolveProjectionOption(ext);
+    const projection = resolveProjectionOption(ext) ?? driverOpts.projection;
     if (projection !== undefined) {
         driverOpts.projection = buildEffectiveProjection(projection, sort);
     }
@@ -206,6 +210,7 @@ export async function executeFindPage<TSchema extends Document = Document>(
         ? await isCollectionCacheBarrierActive(queryCache, collection, defaults)
         : false;
     const pageResultCache = cacheTTL > 0
+        && strategy.cacheable
         && queryCache
         && options.stream !== true
         && (options.explain === undefined || options.explain === false)
@@ -281,6 +286,7 @@ export async function executeFindPage<TSchema extends Document = Document>(
     }
 
     bookmarkResume = page > 1
+        && strategy.cacheable
         && queryCache
         && !hasSessionOption(driverOpts)
         && !options.after
@@ -288,11 +294,13 @@ export async function executeFindPage<TSchema extends Document = Document>(
         && options.stream !== true
         && (options.explain === undefined || options.explain === false)
         && !useOffsetJump
-        ? await readNearestBookmark(queryCache, `${dbName}:${collectionName}`, {
+        ? await readNearestBookmark(queryCache, cacheNamespace(`${dbName}:${collectionName}`, defaults), {
             query: baseQuery,
             sort,
             limit,
             pipeline: options.pipeline as Document[] | undefined,
+            cursorTypes: strategy.cursorTypes,
+            cursorValueNormalizerVersion: strategy.cursorValueNormalizerVersion,
         }, page)
         : null;
 
@@ -572,11 +580,20 @@ export async function executeFindPage<TSchema extends Document = Document>(
  * @returns `{ items, pageInfo, totals?, meta? }` — v1-compatible paginated result.
  * @since v1.0.0
  */
-export async function findPageDocuments<TSchema extends Document = Document>(
+async function executeFindPageDocuments<TSchema extends Document = Document>(
     collection: Collection<TSchema>,
     options: FindPageOptions<TSchema> = {},
     defaults?: RuntimeDefaults,
     queryCache?: QueryCacheLike | null,
 ): Promise<FindPageResult<TSchema>> {
     return executeFindPage(collection, options, defaults ?? {}, queryCache);
+}
+
+export function findPageDocuments<TSchema extends Document = Document>(
+    collection: Collection<TSchema>, options: FindPageOptions<TSchema> = {},
+    defaults: RuntimeDefaults = {}, queryCache?: QueryCacheLike | null,
+): Promise<FindPageResult<TSchema>> {
+    return queryCache
+        ? withCacheReads(queryCache, cache => executeFindPageDocuments(collection, options, defaults, cache))
+        : executeFindPageDocuments(collection, options, defaults, queryCache);
 }

@@ -7,6 +7,7 @@
  */
 
 import type { MongoClient } from 'mongodb';
+import { scopedCacheDefaults } from '../core/cache-scope';
 import type { Logger } from '../core/logger';
 import { MemoryCache, type CacheLike } from '../capabilities/cache';
 import {
@@ -59,7 +60,7 @@ export function createRuntimeDbFacade(host: RuntimeDbFacadeHost, databaseName: s
             getCache: () => host.resolveAdapterCache(),
             getQueryCache: () => host.resolveAdapterCache(),
             logger: host._logger,
-            defaults: host._runtimeDefaults,
+            defaults: scopedCacheDefaults(host._runtimeDefaults, host._client, host.resolveAdapterCache()),
             cacheAutoInvalidate,
         },
     ) as DbFacade;

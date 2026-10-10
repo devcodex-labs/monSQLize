@@ -5,6 +5,7 @@
  * complexity and enable independent testing.
  */
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { cacheNamespace, relatedCacheNamespaces } from '../../../core/cache-scope';
 
 import { BSON, Collection, Document, ObjectId, Sort } from 'mongodb';
 
@@ -33,16 +34,24 @@ import {
 /** Converts any MongoDB `Sort` input into a normalized `{ field: 1 | -1 }` map, always including `_id`. */
 export function normalizeSortShape(sort?: Sort): SortShape {
     const normalized: SortShape = {};
-
-    if (Array.isArray(sort)) {
-        for (const [field, direction] of sort) {
-            normalized[String(field)] = direction === -1 || direction === 'desc' || direction === 'descending' ? -1 : 1;
+    const add = (field: unknown, direction: unknown): void => {
+        if (typeof field !== 'string' || !field || ![1, -1, 'asc', 'ascending', 'desc', 'descending'].includes(direction as string | number)) {
+            throw createError(ErrorCodes.INVALID_ARGUMENT, 'findPage sort requires field names and ascending/descending directions.');
         }
-    } else if (sort && typeof sort === 'object') {
-        for (const [field, direction] of Object.entries(sort)) {
-            normalized[field] = direction === -1 || direction === 'desc' || direction === 'descending' ? -1 : 1;
+        Object.defineProperty(normalized, field, { value: direction === -1 || direction === 'desc' || direction === 'descending' ? -1 : 1, enumerable: true, configurable: true, writable: true });
+    };
+    if (typeof sort === 'string') add(sort, 1);
+    else if (sort instanceof Map) for (const [field, direction] of sort) add(field, direction);
+    else if (Array.isArray(sort)) {
+        if (sort.length === 2 && typeof sort[0] === 'string' && (typeof sort[1] === 'number' || ['asc', 'ascending', 'desc', 'descending'].includes(sort[1] as string))) {
+            add(sort[0], sort[1]);
+        } else for (const entry of sort) {
+            if (typeof entry === 'string') add(entry, 1);
+            else if (Array.isArray(entry) && entry.length === 2) add(entry[0], entry[1]);
+            else throw createError(ErrorCodes.INVALID_ARGUMENT, 'Invalid findPage sort entry.');
         }
-    }
+    } else if (sort && typeof sort === 'object') for (const [field, direction] of Object.entries(sort)) add(field, direction);
+    else if (sort != null) throw createError(ErrorCodes.INVALID_ARGUMENT, 'Invalid findPage sort.');
 
     if (!normalized._id) {
         normalized._id = 1;
@@ -397,8 +406,7 @@ export function buildCollectionCacheNamespace<TSchema extends Document = Documen
     defaults: RuntimeDefaults = {},
 ): string {
     const namespace = (collection as unknown as { namespace?: string }).namespace ?? '';
-    const instanceId = defaults.namespace?.instanceId;
-    return instanceId ? `${instanceId}:${namespace}` : namespace;
+    return cacheNamespace(namespace, defaults);
 }
 
 export function buildCollectionCacheBarrierNamespaces<TSchema extends Document = Document>(
@@ -406,8 +414,7 @@ export function buildCollectionCacheBarrierNamespaces<TSchema extends Document =
     defaults: RuntimeDefaults = {},
 ): string[] {
     const namespace = (collection as unknown as { namespace?: string }).namespace ?? '';
-    const scopedNamespace = buildCollectionCacheNamespace(collection, defaults);
-    return scopedNamespace === namespace ? [namespace] : [scopedNamespace, namespace];
+    return relatedCacheNamespaces(namespace, defaults);
 }
 
 export async function isCollectionCacheBarrierActive<TSchema extends Document = Document>(
@@ -524,11 +531,12 @@ export function buildCursorFilter(
             ? (sortDirection === 1 ? '$gt' : '$lt')
             : (sortDirection === 1 ? '$lt' : '$gt');
 
+        const value = normalizeCursorValue(cursorValues[index], field, options) ?? null;
+        // Expressions compare BSON types across null/number/string boundaries;
+        // ordinary range predicates apply type bracketing and silently skip rows.
         clauses.push({
             ...equalityPrefix,
-            [field]: {
-                [operator]: normalizeCursorValue(cursorValues[index], field, options),
-            },
+            $expr: { [operator]: [value === null ? { $ifNull: [`$${field}`, null] } : `$${field}`, { $literal: value }] },
         });
     }
 
@@ -557,7 +565,7 @@ export function buildEffectiveProjection(
     const sortFields = Object.keys(sort || {});
     const isExclusion = Object.entries(projObj).some(
         ([k, v]) => k !== '_id' && (v === 0 || v === false),
-    );
+    ) || (Object.keys(projObj).every(k => k === '_id') && (projObj._id === 0 || projObj._id === false));
 
     if (isExclusion) {
         for (const k of sortFields) {

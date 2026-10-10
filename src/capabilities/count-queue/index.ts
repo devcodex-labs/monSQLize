@@ -133,17 +133,20 @@ export class CountQueue {
             }
             this.stats.queued += 1;
             await this._waitInQueue(startTime, signal);
+        } else {
+            this.running += 1;
         }
 
-        if (signal?.aborted) throw createError(ErrorCodes.INVALID_OPERATION, 'Count operation aborted');
+        if (signal?.aborted) {
+            this._wakeNext();
+            throw createError(ErrorCodes.INVALID_OPERATION, 'Count operation aborted');
+        }
 
-        this.running += 1;
         this.stats.executed += 1;
 
         const elapsed = Date.now() - startTime;
         const remainingMs = Math.max(1, this.timeout - elapsed);
         return this._executeWithTimeout(fn, remainingMs, signal, () => {
-            this.running -= 1;
             this._wakeNext();
         });
     }
@@ -236,6 +239,8 @@ export class CountQueue {
                 entry.cleanup();
                 entry.resolve();
             }
+        } else {
+            this.running -= 1;
         }
     }
 

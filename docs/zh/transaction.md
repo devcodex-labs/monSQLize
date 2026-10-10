@@ -1,5 +1,8 @@
 ﻿# MongoDB 事务指南
 
+`timeout` 限制提交开始前的业务工作阶段。提交前会检查期限；提交开始后停止该计时器，提交、回滚和结束会话串行执行。提交阶段的限制应通过 MongoDB 驱动的 `maxCommitTimeMS` 等事务选项配置。提交结果不确定时，不会把状态报告为已回滚或重跑业务回调，而是保守清理相关缓存并保留原异常。
+
+
 ## 概述
 
 monSQLize 在 MongoDB driver session 之上提供 `withTransaction()` 与 `startSession()` 辅助方法。ACID 边界来自 MongoDB 事务/session；monSQLize 额外负责重试、超时、统计和缓存失效协调。

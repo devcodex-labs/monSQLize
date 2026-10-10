@@ -1,3 +1,4 @@
+import { withCacheReads } from '../../../core/cache-coordination';
 import { Collection, Document } from 'mongodb';
 
 import { MemoryCache } from '../../../capabilities/cache';
@@ -53,7 +54,7 @@ function runTotalsOnce(key: string, task: () => Promise<void>): void {
     _totalsInflight.set(key, promise);
 }
 
-export async function computeTotals<TSchema extends Document = Document>(
+async function executeComputeTotals<TSchema extends Document = Document>(
     coll: Collection<TSchema>,
     query: Document,
     limit: number,
@@ -141,14 +142,15 @@ export async function computeTotals<TSchema extends Document = Document>(
             return { ...cached, mode: 'async', token };
         }
         setImmediate(() => {
-            runTotalsOnce(cacheKey, async () => {
+            runTotalsOnce(cacheKey, () => withCacheReads(cache, async cache => {
+                await cache.get(cacheKey);
                 try {
                     const payload = buildPayload(await countWithOptions());
                     await Promise.resolve(cache.set(cacheKey, payload, ttlMs));
                 } catch {
                     await Promise.resolve(cache.set(cacheKey, buildFailurePayload('count_failed'), ttlMs));
                 }
-            });
+            }));
         });
         return { mode: 'async', total: null, token };
     }
@@ -177,4 +179,13 @@ export async function computeTotals<TSchema extends Document = Document>(
     }
 
     return { mode: mode ?? 'sync' };
+}
+
+export function computeTotals<TSchema extends Document = Document>(
+    coll: Collection<TSchema>, query: Document, limit: number, totals: TotalsOptions,
+    defaults: RuntimeDefaults = {}, queryCache?: QueryCacheLike | null,
+    driverOptions: Record<string, unknown> = {},
+): Promise<TotalsInfo> {
+    const cache = queryCache ?? _asyncTotalsCache;
+    return withCacheReads(cache, guarded => executeComputeTotals(coll, query, limit, totals, defaults, guarded, driverOptions));
 }

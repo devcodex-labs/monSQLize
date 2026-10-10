@@ -13,6 +13,7 @@
  * - `query-helpers.ts`  — cursor / ObjectId / sort / projection helpers
  */
 
+import { readThroughCache } from '../../../core/cache-coordination';
 import { ChangeStream, Collection, Document, FindOptions, Sort } from 'mongodb';
 
 import { createError, ErrorCodes } from '../../../core/errors';
@@ -305,13 +306,7 @@ export class FindChain<TSchema extends Document = Document> implements FindChain
             && !(await isCollectionCacheBarrierActive(this.queryCache, this.collection, this.defaults))
         ) {
             const cacheKey = this.buildCacheKey();
-            const cached = await Promise.resolve(this.queryCache.get(cacheKey));
-            if (cached !== undefined) {
-                return this.wrapResult('find', startTs, cached as TSchema[]) as TSchema[] | ResultWithMeta<TSchema[]>;
-            }
-            const qc = this.queryCache;
-            const result = await this.runToArray();
-            await Promise.resolve(qc.set(cacheKey, result, cacheTTL));
+            const result = await readThroughCache(this.queryCache, cacheKey, cacheTTL, () => this.runToArray());
             return this.wrapResult('find', startTs, result) as TSchema[] | ResultWithMeta<TSchema[]>;
         }
 
@@ -455,13 +450,7 @@ class AggregateChain<TResult = unknown, TSchema extends Document = Document> imp
             && !(await isCollectionCacheBarrierActive(this.queryCache, this.collection, this.defaults))
         ) {
             const cacheKey = this.buildCacheKey();
-            const cached = await Promise.resolve(this.queryCache.get(cacheKey));
-            if (cached !== undefined) {
-                return this.wrapResult('aggregate', startTs, cached as TResult[]) as TResult[] | ResultWithMeta<TResult[]>;
-            }
-            const qc = this.queryCache;
-            const result = await this.runToArray();
-            await Promise.resolve(qc.set(cacheKey, result, cacheTTL));
+            const result = await readThroughCache(this.queryCache, cacheKey, cacheTTL, () => this.runToArray());
             return this.wrapResult('aggregate', startTs, result) as TResult[] | ResultWithMeta<TResult[]>;
         }
         return this.runToArray().then((result) => this.wrapResult('aggregate', startTs, result) as TResult[] | ResultWithMeta<TResult[]>);

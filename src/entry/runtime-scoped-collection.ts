@@ -20,6 +20,7 @@ import { ErrorCodes, createError } from '../core/errors';
 import type { RuntimeDefaults } from '../types/internal/query';
 import type { MonSQLizeOptions } from '../../types/monsqlize';
 import { resolvePoolClientFromRecord } from './runtime-compat-accessors';
+import { scopedCacheDefaults } from '../core/cache-scope';
 
 /**
  * Full configuration for `resolveScopedCollection`.
@@ -97,7 +98,7 @@ export function resolveScopedCollection(config: ResolveScopedCollectionConfig): 
                     getCache: () => config.cache,
                     getQueryCache: () => config.cache,
                     logger: config.logger,
-                    defaults: config.runtimeDefaults,
+                    defaults: scopedCacheDefaults(config.runtimeDefaults, client, config.cache, poolName),
                     poolName,
                 },
                 dbRef,
@@ -115,7 +116,7 @@ export function resolveScopedCollection(config: ResolveScopedCollectionConfig): 
                     getCache: () => config.cache,
                     getQueryCache: () => config.cache,
                     logger: config.logger,
-                    defaults: config.runtimeDefaults,
+                    defaults: scopedCacheDefaults(config.runtimeDefaults, client, config.cache, poolName),
                     poolName,
                 },
             );

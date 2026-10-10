@@ -7,6 +7,8 @@
 import { Collection, Db, Document } from 'mongodb';
 import { createError, ErrorCodes } from '../../../core/errors';
 import type { Logger } from '../../../core/logger';
+import type { RuntimeDefaults } from '../../../types/internal/query';
+import { resolveCursorStrategy } from '../queries/cursor-strategy';
 import type { FindPageOptions, FindPageResult } from '../queries';
 import {
     clearBookmarks,
@@ -26,6 +28,7 @@ import {
 } from '../management';
 
 type BookmarkContext<TSchema extends Document> = {
+    defaults?: RuntimeDefaults;
     namespace: string;
     cache?: BookmarkCacheLike | null;
     getCache?: () => BookmarkCacheLike | null | undefined;
@@ -76,11 +79,13 @@ export function prewarmBookmarksForAccessor<TSchema extends Document>(
     keyDims: BookmarkKeyDims<TSchema> = {},
     pages: number[] = [],
 ): Promise<BookmarkPrewarmResult> {
+    const strategy = resolveCursorStrategy(keyDims as Record<string, unknown>, context.defaults);
+    if (!strategy.cacheable) throw createError(ErrorCodes.INVALID_ARGUMENT, 'Bookmark prewarming with a custom cursor normalizer requires cursorValueNormalizerVersion.');
     return prewarmBookmarks({
         namespace: context.namespace,
         cache: resolveBookmarkCache(context as BookmarkContext<Document>),
         logger: context.logger,
-        keyDims,
+        keyDims: { ...keyDims, ...strategy },
         pages,
         findPage: context.findPage,
     });
@@ -93,7 +98,7 @@ export function listBookmarksForAccessor<TSchema extends Document>(
     return listBookmarks({
         namespace: context.namespace,
         cache: resolveBookmarkCache(context as BookmarkContext<Document>),
-        keyDims,
+        keyDims: keyDims ? { ...keyDims, ...resolveCursorStrategy(keyDims as Record<string, unknown>, context.defaults) } : undefined,
     });
 }
 
@@ -104,7 +109,7 @@ export function clearBookmarksForAccessor<TSchema extends Document>(
     return clearBookmarks({
         namespace: context.namespace,
         cache: resolveBookmarkCache(context as BookmarkContext<Document>),
-        keyDims,
+        keyDims: keyDims ? { ...keyDims, ...resolveCursorStrategy(keyDims as Record<string, unknown>, context.defaults) } : undefined,
     });
 }
 

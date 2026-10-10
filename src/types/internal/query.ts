@@ -90,6 +90,9 @@ export interface CursorValueNormalizationOptions {
  * - This is the “trimmed defaults” used by the query layer, not the full MonSQLizeOptions
  */
 export interface RuntimeDefaults {
+    cacheScope?: string;
+    relatedCacheScopes?: () => string[];
+    cursorValueNormalizerVersion?: string;
     maxTimeMS?: number;
     findLimit?: number;
     findMaxLimit?: number;

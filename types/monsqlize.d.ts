@@ -261,6 +261,8 @@ export interface MonSQLizeOptions {
     cursorTypes?: Record<string, CursorValueType>;
     /** Global cursor value normalizer used when findPage decodes after/before tokens. @since v3.0.0 */
     cursorValueNormalizer?: CursorValueNormalizer;
+    /** Stable strategy identity and version, e.g. 'string-id:v1'; bump when conversion changes. */
+    cursorValueNormalizerVersion?: string;
     /** Logging tag configuration applied to slow-query event payloads. @since v1.3.0 */
     log?: { slowQueryTag?: { event?: string; code?: string;[key: string]: unknown }; formatSlowQuery?: (meta: unknown) => unknown; };
     /** Auto-convert valid 24-character hex strings to ObjectId across query/write paths. Pass `false` to disable, or use `excludeFields`, `maxDepth`, or `{ field: false }` escape hatches. Default: true for mongodb type. @since v1.3.0 */

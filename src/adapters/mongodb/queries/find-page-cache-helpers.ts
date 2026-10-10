@@ -49,6 +49,8 @@ export function hashPayload(payload: unknown): string {
 }
 
 type BookmarkKeyDimsPayload = {
+    cursorTypes?: Record<string, unknown>;
+    cursorValueNormalizerVersion?: string;
     sort: SortShape;
     limit: number;
     query: Document;
@@ -73,6 +75,8 @@ function buildBookmarkBaseKey(namespace: string, keyDims: BookmarkKeyDimsPayload
         limit: keyDims.limit,
         query: keyDims.query,
         pipeline: keyDims.pipeline,
+        cursorTypes: keyDims.cursorTypes,
+        cursorValueNormalizerVersion: keyDims.cursorValueNormalizerVersion,
     })}`;
 }
 

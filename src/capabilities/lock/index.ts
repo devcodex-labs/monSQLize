@@ -72,6 +72,7 @@ const globalStore = new Map<string, LockRecord>();
 export class Lock {
     readonly acquiredAt = Date.now();
     released = false;
+    private expiresAt: number;
 
     constructor(
         readonly key: string,
@@ -79,9 +80,11 @@ export class Lock {
         readonly manager: {
             releaseLock: (key: string, lockId: string) => Promise<boolean>;
             renewLock: (key: string, lockId: string, ttl: number) => Promise<boolean>;
+            ownsLock?: (key: string, lockId: string) => boolean;
         },
         readonly ttl: number,
-    ) { }
+        acquiredAt = Date.now(),
+    ) { this.expiresAt = acquiredAt + ttl; }
 
     /**
      * Release the lock.
@@ -104,7 +107,11 @@ export class Lock {
         if (this.released) {
             return false;
         }
-        return this.manager.renewLock(this.key, this.lockId, ttl ?? this.ttl);
+        const duration = ttl ?? this.ttl;
+        const startedAt = Date.now();
+        const renewed = await this.manager.renewLock(this.key, this.lockId, duration);
+        if (renewed) this.expiresAt = startedAt + duration;
+        return renewed;
     }
 
     /**
@@ -112,7 +119,9 @@ export class Lock {
      * @since v1.4.0
      */
     isHeld(): boolean {
-        return !this.released;
+        return !this.released && (this.manager.ownsLock
+            ? this.manager.ownsLock(this.key, this.lockId)
+            : Date.now() < this.expiresAt);
     }
 
     /**
@@ -130,6 +139,10 @@ export class Lock {
  * @since v1.4.0
  */
 export class LockManager {
+    ownsLock(key: string, lockId: string): boolean {
+        const record = globalStore.get(this.normalizeKey(key));
+        return record?.lockId === lockId && record.expiresAt > Date.now();
+    }
     private readonly logger: LoggerLike | null;
     private readonly lockKeyPrefix: string;
     private readonly maxDuration: number;
@@ -458,10 +471,11 @@ export class DistributedCacheLockManager {
         const fullKey = this.lockKeyPrefix + key;
         for (let attempt = 0; attempt <= retryTimes; attempt++) {
             try {
+                const startedAt = Date.now();
                 const result = await this.redis.set(fullKey, lockId, 'PX', ttl, 'NX');
                 if (result === 'OK') {
                     this.stats.locksAcquired++;
-                    return new Lock(key, lockId, this, ttl);
+                    return new Lock(key, lockId, this, ttl, startedAt);
                 }
                 if (attempt === retryTimes) break;
                 await sleep(retryDelay);
@@ -479,10 +493,11 @@ export class DistributedCacheLockManager {
         const lockId = this._generateLockId();
         const fullKey = this.lockKeyPrefix + key;
         try {
+            const startedAt = Date.now();
             const result = await this.redis.set(fullKey, lockId, 'PX', ttl, 'NX');
             if (result === 'OK') {
                 this.stats.locksAcquired++;
-                return new Lock(key, lockId, this, ttl);
+                return new Lock(key, lockId, this, ttl, startedAt);
             }
             return null;
         } catch {

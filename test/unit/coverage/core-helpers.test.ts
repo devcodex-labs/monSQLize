@@ -581,8 +581,8 @@ describe('coverage core helpers', () => {
         assert.deepEqual(reverseSort({ createdAt: -1, _id: 1 }), { createdAt: 1, _id: -1 });
         assert.deepEqual(buildCursorFilter({ createdAt: -1, _id: 1 }, ['2026-01-01T00:00:00.000Z', hex], 'after'), {
             $or: [
-                { createdAt: { $lt: new Date('2026-01-01T00:00:00.000Z') } },
-                { createdAt: new Date('2026-01-01T00:00:00.000Z'), _id: { $gt: parseRequiredObjectId(hex) } },
+                { $expr: { $lt: ['$createdAt', { $literal: new Date('2026-01-01T00:00:00.000Z') }] } },
+                { createdAt: new Date('2026-01-01T00:00:00.000Z'), $expr: { $gt: ['$_id', { $literal: parseRequiredObjectId(hex) }] } },
             ],
         });
         assert.equal(normalizeCursorValue('2026-01-01T00:00:00.000Z', 'token', { cursorTypes: { token: 'string' } }), '2026-01-01T00:00:00.000Z');
@@ -591,7 +591,7 @@ describe('coverage core helpers', () => {
         assert.equal(normalizeCursorValue('true', 'active', { cursorTypes: { active: 'boolean' } }), true);
         assert.equal(normalizeCursorValue('x', 'custom', { cursorValueNormalizer: (field, value) => `${field}:${String(value)}` }), 'custom:x');
         assert.deepEqual(buildCursorFilter({ token: 1 }, ['2026-01-01T00:00:00.000Z'], 'after', { cursorTypes: { token: 'string' } }), {
-            token: { $gt: '2026-01-01T00:00:00.000Z' },
+            $expr: { $gt: ['$token', { $literal: '2026-01-01T00:00:00.000Z' }] },
         });
         assert.deepEqual(getSortValues({ nested: { rank: 2 }, _id: 'b' }, { 'nested.rank': 1, _id: 1 }), [2, 'b']);
         assert.deepEqual(buildEffectiveProjection(['name'], { createdAt: -1 }), { name: 1, createdAt: 1 });

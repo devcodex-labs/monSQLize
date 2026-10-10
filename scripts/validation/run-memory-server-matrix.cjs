@@ -34,6 +34,7 @@ const integrationSourceSuites = [
     'test/integration/pool/pool.test.js',
     'test/integration/slow-query-log/slow-query-log.test.js',
     'test/integration/transaction/transaction.test.js',
+    'test/integration/runtime/review-regressions.test.js',
     'test/integration/data-tasks/data-task-job-facade.test.js',
     'test/integration/sync/sync.test.js',
 ];

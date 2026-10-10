@@ -1363,6 +1363,21 @@ await collection('events').findPage({
 
 如需自定义转换逻辑，可以在实例级或单次 `findPage()` 调用上提供 `cursorValueNormalizer(field, value)`。
 
+配合缓存或预热书签使用时，请同时提供稳定的策略标识 `cursorValueNormalizerVersion`，例如 `token-string:v1`。标识应包含策略名称和版本；转换逻辑、闭包配置或恢复类型变化时，需要更新标识。同一标识必须始终对应相同的转换行为。
+
+```ts
+await collection('events').findPage({
+  sort: { token: 1 },
+  cache: 60000,
+  cursorValueNormalizer: (_field, value) => value,
+  cursorValueNormalizerVersion: 'token-string:v1'
+});
+```
+
+实例级配置同样支持该字段。单次调用覆盖转换函数时，必须同时指定本次策略标识，不能自动继承实例函数的标识。未提供标识的自定义函数仍可查询，但会跳过分页结果缓存和自动书签读取；预热书签会拒绝该配置。这样会增加深页跳转的数据库查询次数，也可能达到 `jump.maxHops` 限制。`cursorTypes`、策略标识同时参与结果缓存和书签的键计算。
+
+游标比较支持 null／缺失字段与常见标量 BSON 类型之间的排序边界。分页过滤使用 `$expr` 比较，实际索引效率取决于查询、排序和数据分布，应通过 `explain` 验证。数组排序的最小／最大元素规则不在此保证范围内。
+
 ### 从 v1 升级时的游标令牌兼容问题
 
 **问题根源**：如果你在 v1 运行期间将 `endCursor` / `startCursor` 持久化存储（写入数据库、放入 Redis、编码在 URL 里），在 v2 开启 `cursorSecret` 后，这些旧令牌格式为 `<payload>`（无签名），v2 验证时会因找不到签名分隔符而解析失败。

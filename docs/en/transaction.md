@@ -1,5 +1,8 @@
 ﻿# MongoDB Transaction Guide
 
+`timeout` bounds transaction work before commit begins. The deadline is checked before dispatching commit, then its timer stops. Commit, abort and session end are serialized. Configure commit limits through MongoDB transaction options such as `maxCommitTimeMS`. An unknown commit result conservatively invalidates affected caches and preserves the original error without reporting rollback or replaying the business callback.
+
+
 ## Overview
 
 monSQLize wraps MongoDB driver sessions with `withTransaction()` and `startSession()` helpers. The ACID boundary is MongoDB's transaction/session boundary; monSQLize adds retry, timeout, statistics, and cache-invalidation coordination around that driver behavior.

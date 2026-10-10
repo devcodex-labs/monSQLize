@@ -10,6 +10,7 @@
  * Does not depend on FindChain to avoid circular references.
  */
 
+import { readThroughCache } from '../../../core/cache-coordination';
 import { Collection, Document, FindOptions, ObjectId } from 'mongodb';
 
 import { createError, ErrorCodes } from '../../../core/errors';
@@ -63,16 +64,10 @@ export async function findOneByIdDocument<TSchema extends Document = Document>(
         && !(await isCollectionCacheBarrierActive(queryCache, collection, defaults))
     ) {
         const cacheKey = buildFindOneByIdCacheKey(collection, defaults, objectId, baseOptions);
-        const cached = await Promise.resolve(queryCache.get(cacheKey)) as TSchema | null | undefined;
-        if (cached !== undefined) {
-            return cached;
-        }
-        const result = await collection.findOne(
+        return readThroughCache(queryCache, cacheKey, cacheTTL, () => collection.findOne(
             { _id: objectId } as Parameters<Collection<TSchema>['findOne']>[0],
             findOptions as Parameters<Collection<TSchema>['findOne']>[1],
-        ) as unknown as TSchema | null;
-        await Promise.resolve(queryCache.set(cacheKey, result, cacheTTL));
-        return result;
+        ) as unknown as Promise<TSchema | null>);
     }
 
     return collection.findOne(
@@ -165,15 +160,9 @@ export async function findByIdsDocuments<TSchema extends Document = Document>(
 
     let results: TSchema[];
     if (cacheKey && queryCache) {
-        const cached = await Promise.resolve(queryCache.get(cacheKey)) as TSchema[] | undefined;
-        if (cached !== undefined) {
-            results = cached;
-        } else {
-            results = await collection.find({
-                _id: { $in: uniqueIds },
-            } as Parameters<Collection<TSchema>['find']>[0], driverOptions as Parameters<Collection<TSchema>['find']>[1]).toArray() as TSchema[];
-            await Promise.resolve(queryCache.set(cacheKey, results, cacheTTL));
-        }
+        results = await readThroughCache(queryCache, cacheKey, cacheTTL, () => collection.find({
+            _id: { $in: uniqueIds },
+        } as Parameters<Collection<TSchema>['find']>[0], driverOptions as Parameters<Collection<TSchema>['find']>[1]).toArray() as Promise<TSchema[]>);
     } else {
         results = await collection.find({
             _id: { $in: uniqueIds },

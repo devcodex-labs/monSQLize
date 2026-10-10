@@ -1,5 +1,12 @@
 # Cache Invalidation
 
+Cache scopes include a data-source fingerprint, authentication identity, pool, database, collection and optional instance identity. Keys contain configuration digests, never raw connection URIs or passwords. Pools sharing the same source host configuration invalidate together; separate sources have isolated result caches. Aliases with different host configurations pointing at the same source need consistent endpoints or explicit invalidation of the related pools. Custom clients without connection configuration use object identities for isolation and conservatively invalidate registered routes.
+
+After upgrading, query caches and bookmarks start cold. Old-format entries are not read and Redis is never flushed globally. Existing TTL/cleanup policies reclaim old entries; upgrade all application instances sharing the cache.
+
+Within a process, invalidation revokes pending fills on the same CacheLike object. An asynchronous set already dispatched must finish before deletion. This covers queries, pages, totals, transaction commits and received remote invalidation messages. Cross-process Redis notifications remain eventually consistent; they do not provide an atomic database/cache transaction. `cache.invalidate:false` and empty arrays still disable that write's invalidation.
+
+
 Read caching is opt-in per query, and write invalidation is opt-in per write or per runtime configuration.
 
 Distributed invalidation received from another instance clears local cache entries without publishing another invalidation. Locally initiated invalidation still publishes normally, so concurrent local writes and incoming messages are handled independently.

@@ -17,6 +17,23 @@ function deferred<T = void>() {
 describe('CountQueue', () => {
     const CountQueue: new (opts?: { concurrency?: number; maxQueueSize?: number; timeout?: number }) => any = MonSQLize.CountQueue;
 
+    it('releases a handed-off slot when its queued caller aborts before resuming', async () => {
+        const q = new CountQueue({ concurrency: 1 });
+        const first = deferred<number>();
+        const controller = new AbortController();
+        const a = q.execute(() => first.promise);
+        let cancelledStarted = false;
+        const b = q.execute(async () => { cancelledStarted = true; }, { signal: controller.signal });
+        const rejected = assert.rejects(b, (error: unknown) => hasErrorCode(error, 'INVALID_OPERATION'));
+        const c = q.execute(async () => 3);
+        first.promise.then(() => controller.abort());
+        first.resolve(1);
+        await Promise.all([a, rejected]);
+        assert.equal(await c, 3);
+        assert.equal(cancelledStarted, false);
+        assert.equal(q.getStats().running, 0);
+    });
+
     // ── basic execution ───────────────────────────────────────────────────────
 
     it('execute() returns the function result', async () => {

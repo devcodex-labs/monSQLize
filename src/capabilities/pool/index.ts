@@ -401,8 +401,10 @@ export class ConnectionPoolManager {
         if (this._closePromise) return this._closePromise;
         this._closed = true;
         this._generation += 1;
-        this._closePromise = this._closeAllPools();
-        return this._closePromise;
+        const closing = this._closeAllPools();
+        this._closePromise = closing;
+        try { await closing; }
+        finally { if (this._closePromise === closing) this._closePromise = null; }
     }
 
     private async _closeAllPools(): Promise<void> {
@@ -410,13 +412,18 @@ export class ConnectionPoolManager {
         this._healthChecker.stop();
         this._stats.close();
         await Promise.allSettled([...this._pendingAddTasks]);
-        for (const pool of this.pools.values()) {
-            await pool.client.close();
+        const errors: unknown[] = [];
+        for (const [name, pool] of this.pools) {
+            try {
+                await pool.client.close();
+                this.pools.delete(name);
+                this.healthStatus.delete(name);
+                this.stats.delete(name);
+                this._configs.delete(name);
+            } catch (error) { errors.push(error); }
         }
-        this.pools.clear();
-        this.healthStatus.clear();
-        this.stats.clear();
-        this._configs.clear();
+        if (errors.length === 1) throw errors[0];
+        if (errors.length > 1) throw new AggregateError(errors, 'Failed to close connection pools');
     }
 
     // ─── v1 compat methods ───────────────────────────────────────────────────────────
