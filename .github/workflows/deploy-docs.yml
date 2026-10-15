@@ -74,6 +74,27 @@ jobs:
       - name: Check docs example matrix
         run: node release/scripts/validation/check-doc-example-matrix.cjs --require-covered
 
+      - name: Include site ownership verification
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const { execFileSync } = require('node:child_process');
+          const file = 'google4524eb8336ad041b.html';
+          const source = `tooling/docs/public/${file}`;
+          const sourceSha = execFileSync('git', ['-C', 'tooling', 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+          if (sourceSha !== process.env.GITHUB_SHA) {
+            throw new Error('Verification source must match the workflow commit.');
+          }
+          if (fs.readFileSync(source, 'utf8').trimEnd() !== `google-site-verification: ${file}`) {
+            throw new Error('Unexpected Google site verification content.');
+          }
+          // Site ownership is independent of the published documentation version.
+          fs.copyFileSync(source, `release/docs/public/${file}`);
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,
+            `\nSite verification file: ${file}\n\nVerification source commit: ${sourceSha}\n`);
+          NODE
+
       - name: Install website dependencies
         working-directory: ./release/website
         run: npm ci
@@ -94,6 +115,22 @@ jobs:
             node ../../tooling/scripts/validation/check-site-links.cjs --dist "${PWD}/dist"
             npm audit
           fi
+
+      - name: Verify site ownership artifact
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const { createHash } = require('node:crypto');
+          const file = 'google4524eb8336ad041b.html';
+          const source = fs.readFileSync(`tooling/docs/public/${file}`);
+          const artifact = fs.readFileSync(`release/website/dist/${file}`);
+          if (!source.equals(artifact)) {
+            throw new Error('Built site verification file differs from its source.');
+          }
+          const sha256 = createHash('sha256').update(artifact).digest('hex');
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\nVerification file SHA-256: ${sha256}\n`);
+          NODE
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v5

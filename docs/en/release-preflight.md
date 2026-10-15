@@ -52,6 +52,8 @@ git push origin "v${VERSION}"
 
 The tag starts the repository preflight and publish workflows. Do not deploy Pages yet. After registry acceptance succeeds, manually run **Deploy Docs to GitHub Pages** with `release_tag=vX.Y.Z`; that workflow checks out the tag and refuses deployment unless tag, `package.json`, and npm registry versions match.
 
+Site ownership verification is independent of the documentation version. The Pages workflow copies only `google4524eb8336ad041b.html` from its own commit into the tagged site's static assets, validates the verification text, and compares the built file byte for byte before upload. Its source commit and SHA-256 appear in the build summary. To deploy this file with the current stable documentation, run `gh workflow run deploy-docs.yml --repo devcodex-labs/monSQLize --ref main -f release_tag=v3.3.1`. Other documentation still comes from the selected release tag; this command does not publish an npm package or change an existing tag.
+
 If a tag-triggered publish fails for a recoverable reason such as authentication or registry availability, the publish workflow can be started manually with that exact existing `release_tag`. The workflow checks out and verifies the tag commit; it cannot publish the default branch as an untagged release.
 
 ## Post-publish acceptance

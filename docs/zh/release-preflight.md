@@ -52,6 +52,8 @@ git push origin "v${VERSION}"
 
 tag 会启动仓库 preflight 与 publish workflow，此时不要部署 Pages。registry 验收通过后，手动运行 **Deploy Docs to GitHub Pages**，传入 `release_tag=vX.Y.Z`；该 workflow 会检出指定 tag，并在 tag、`package.json` 与 npm registry 版本不一致时拒绝部署。
 
+站点所有权验证独立于文档版本。Pages workflow 只把自身提交中的 `google4524eb8336ad041b.html` 复制到 tag 站点的静态资源目录，校验验证文本，并在上传前逐字节比较构建后的文件；build summary 会记录来源提交与 SHA-256。需要将此文件与当前稳定文档一起部署时，运行 `gh workflow run deploy-docs.yml --repo devcodex-labs/monSQLize --ref main -f release_tag=v3.3.1`。其他文档仍来自所选发布 tag，此命令不会发布 npm 包或修改既有 tag。
+
 如果 tag 触发的 publish 因认证或 registry 可用性等可恢复原因失败，可以用同一个已存在的 `release_tag` 手动重跑 publish workflow。workflow 会检出并校验该 tag 的 commit，不能把默认分支上的未打 tag 提交直接发布。
 
 ## 发布后验收

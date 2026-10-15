@@ -12,7 +12,7 @@ Quick path: [Installation](https://devcodex-labs.github.io/monSQLize/getting-sta
 Configuration reference: [English](https://devcodex-labs.github.io/monSQLize/configuration) · [简体中文](https://devcodex-labs.github.io/monSQLize/zh/configuration)
 Upgrade and security: [Migration Guide](./MIGRATION.md) · [Private Vulnerability Reporting](./SECURITY.md)
 
-The npm `latest` dist-tag and GitHub Pages are the stable channel; `main` may contain the next release. Pages deployment accepts only a versioned Git tag whose package version is already present on npm, so unpublished APIs are not promoted as stable documentation.
+The npm `latest` dist-tag and GitHub Pages are the stable channel; `main` may contain the next release. Pages deployment accepts only a versioned Git tag whose package version is already present on npm, so unpublished APIs are not promoted as stable documentation. The Google site ownership verification file is copied separately from the workflow commit, with its source commit and content hash recorded in the deployment summary.
 
 Upcoming cache/pagination changes on `main`, including `cursorValueNormalizerVersion` and cold-cache upgrade behavior, are described in the [unreleased changelog](https://github.com/devcodex-labs/monSQLize/blob/main/changelogs/unreleased.md) and [migration guide](./MIGRATION.md); they are not yet part of a published release.
 
