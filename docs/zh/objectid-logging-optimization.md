@@ -1,5 +1,11 @@
 # ObjectId 转换诊断说明
 
+## Logger trace ID
+
+结构化 `Logger` 默认输出当前活动 trace ID；`enableTraceId: false` 只省略该字段，不关闭 trace context 传递。`Logger.generateTraceId()` 同时支持 CJS 与纯 ESM 消费者。`new Logger(sink, options)`、`Logger.create(sink, options)` 接收相同日志选项。
+
+`insertMany` 在驱动写入成功后，即使诊断 warning 失败，也不会替换成功结果或跳过写缓存失效。慢查询存储的错误处理策略是另一项契约。
+
 ## 当前行为
 
 当前运行时默认按值转换 ObjectId。查询条件、写入载荷和聚合管道在递归遍历到合法 24 位十六进制字符串时，都可能转换为 ObjectId。

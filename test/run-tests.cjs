@@ -40,6 +40,15 @@ const COMPAT = [
 ];
 
 const UNIT = [
+    'test/unit/cache/cache-tag-backfill.test.js',
+    'test/unit/cache/cache-delete-backfill.test.js',
+    'test/unit/cache/cache-wrapper-lifecycle.test.js',
+    'test/unit/runtime/pipeline-snapshot.test.js',
+    'test/unit/runtime/post-write-logging.test.js',
+    'test/unit/slow-query-log/manager-close-races.test.js',
+    'test/unit/expression/review-regressions.test.js',
+    'test/unit/coverage/logger-trace-contract.test.js',
+    'test/unit/model/schema-dsl-block-scopes.test.js',
     'test/unit/expression/expression.test.js',
     'test/unit/expression/operators.test.js',
     'test/unit/errors/errors.test.js',
@@ -121,6 +130,9 @@ const UNIT = [
 ];
 
 const INTEGRATION = [
+    'test/integration/mongodb/review-repair-regressions.test.js',
+    'test/integration/model/review-model-regressions.test.js',
+    'test/integration/slow-query-log/review-storage-regressions.test.js',
     'test/integration/cache/cache.test.js',
     'test/integration/mongodb/connect.test.js',
     'test/integration/mongodb/queries.test.js',

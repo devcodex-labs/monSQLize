@@ -24,8 +24,8 @@ function compile(expression: string): any {
 
 function matchCompile(expression: string): any {
     const exprObj = expr(expression);
-    const pipeline: PipelineStage[] = compilePipelineExpressions([{ $match: { _result: exprObj } }]);
-    return pipeline[0].$match._result;
+    const pipeline: PipelineStage[] = compilePipelineExpressions([{ $match: exprObj }]);
+    return pipeline[0].$match;
 }
 
 function groupCompile(expression: string): any {
@@ -546,9 +546,11 @@ describe('Expression: compilePipelineExpressions pipeline integration', () => {
 
     it('wraps $match expressions in $expr', () => {
         const pipeline = compilePipelineExpressions([
-            { $match: { age: expr('age > 18') } },
+            { $match: expr('age > 18') },
         ]);
-        assert.deepEqual(pipeline[0].$match.age, { $expr: { $gt: ['$age', 18] } });
+        assert.deepEqual(pipeline[0].$match, { $expr: { $gt: ['$age', 18] } });
+        assert.throws(() => compilePipelineExpressions([{ $match: { age: expr('age > 18') } }]), { code: 'INVALID_EXPRESSION' });
+        assert.throws(() => compilePipelineExpressions([{ $match: { age: { $eq: expr('age > 18') } } }]), { code: 'INVALID_EXPRESSION' });
     });
 
     it('passes through pipelines with no expressions unchanged', () => {

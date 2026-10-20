@@ -1,8 +1,18 @@
 # findByIds Reference
 
-Model `findByIds` applies soft-delete visibility in the same database query, using the final `before` hook options. Inclusion, exclusion, computed projections and the `project` alias keep their native meaning, including explicitly projected deletion markers. `onlyDeleted` and `withDeleted` keep their existing precedence and validation. Raw Collection queries remain unfiltered. An `after` hook may replace the result without a second visibility filter.
+Model `findByIds` applies soft-delete visibility in the same database query, using the final `before` hook options. Supported inclusion, exclusion, computed projections and the `project` alias keep their native meaning, including explicitly projected deletion markers; the `preserveOrder` boundary below applies. `onlyDeleted` and `withDeleted` keep their existing precedence and validation. Raw Collection queries remain unfiltered. An `after` hook may replace the result without a second visibility filter.
 
-Filtered Model cache entries are isolated by visibility condition and included in exact `findByIds` write-invalidation descriptors. Caches without pattern deletion bypass these filtered entries; session reads also bypass the cache. ID validation, deduplication and `preserveOrder` behavior are unchanged.
+Filtered Model cache entries are isolated by visibility condition and included in exact `findByIds` write-invalidation descriptors. Caches without pattern deletion bypass these filtered entries; session reads also bypass the cache. ID validation and deduplication are unchanged.
+
+## Projection with input order
+
+With `preserveOrder: true`, ordinary `_id: 0`/`false` exclusions and supported computed `_id` expressions, including `$$REMOVE`, retain input ID order. Internal identities are removed or restored before returning results; these paths bypass result caching. MongoDB still applies `sort`, `skip` and `limit` first to select the subset, and one native query is used.
+
+Find-only `_id` projections (`$slice`, `$elemMatch`, `$meta`), nested or dotted rewrites of `_id`, and an explicit `_id: undefined` cannot reliably retain that identity and throw `INVALID_OPERATION`. Combining `returnKey: true` with input-order preservation also throws, including with an `_id_` hint, because projection metadata can still replace the returned identity. Special projections on other fields remain native where they preserve the identity. Use `preserveOrder: false` for the original native projection path.
+
+Native raw BSON result mode (`raw: true`) is also incompatible with input-order preservation. A computed `_id` cannot be combined with truthy `fieldsAsRaw._id` or `fieldsAsRaw.value`: BSON applies these field names at every nesting depth and can decode the internal identity wrapper as raw bytes. Computed identities require a plain or null-prototype `fieldsAsRaw` map. These checks use the effective Collection configuration; per-call `raw: false` and `fieldsAsRaw: {}` override inherited settings using native driver precedence.
+
+Native result-cache entries distinguish effective BSON serialization and decoding options, including inherited settings and non-enumerable `fieldsAsRaw` flags. Raw results cannot warm the same entry as ordinary decoded documents. Exact `findByIds` invalidation uses the same key calculation.
 
 ## Method overview
 

@@ -223,13 +223,18 @@ function compileScopedExpression(expression: string, scope: ExpressionScope): un
     return parseScopedValue(expr, scope);
 }
 
+function readQuotedString(source: string): string | undefined {
+    const quote = source[0];
+    return (quote === "'" || quote === '"') && source[source.length - 1] === quote
+        ? source.slice(1, -1) : undefined;
+}
+
 function parseScopedValue(value: string, scope: ExpressionScope): unknown {
     const compileInnerExpression = (source: string) => compileScopedExpression(source, scope);
     const normalized = stripOuterParentheses(value.trim());
 
-    if ((normalized.startsWith("'") && normalized.endsWith("'")) || (normalized.startsWith('"') && normalized.endsWith('"'))) {
-        return normalized.slice(1, -1);
-    }
+    const quoted = readQuotedString(normalized);
+    if (quoted !== undefined) return quoted.startsWith('$') ? { $literal: quoted } : quoted;
     if (normalized === 'null') return null;
     if (normalized === 'true') return true;
     if (normalized === 'false') return false;
@@ -258,10 +263,11 @@ function dispatchFunction(name: string, argsStr: string, scope: ExpressionScope)
     const compileInnerExpression = (source: string) => compileScopedExpression(source, scope);
     const args = splitArgsStr(argsStr);
     if (name === 'LITERAL') {
-        const source = args[0].trim();
-        const literal = source.startsWith('{') || source.startsWith('[')
-            ? JSON.parse(source)
-            : parseScopedValue(source, { dsl: new Map(), native: new Map() });
+        const source = stripOuterParentheses(args[0].trim());
+        const quoted = readQuotedString(source);
+        const literal = quoted !== undefined ? quoted
+            : source.startsWith('{') || source.startsWith('[') ? JSON.parse(source)
+                : parseScopedValue(source, { dsl: new Map(), native: new Map() });
         return { $literal: literal };
     }
     if (UNARY_FUNCTIONS[name]) return { [UNARY_FUNCTIONS[name]]: parseValue(args[0]) };
@@ -417,6 +423,13 @@ function splitArgsStr(argsStr: string): string[] {
     return splitTopLevel(argsStr, ',');
 }
 
+/** A quote is escaped only after an odd-length run of backslashes. */
+function isEscaped(source: string, index: number): boolean {
+    let count = 0;
+    for (let at = index - 1; at >= 0 && source[at] === '\\'; at--) count++;
+    return count % 2 === 1;
+}
+
 function topLevelPositions(source: string): number[] {
     const positions: number[] = [];
     const stack: string[] = [];
@@ -424,7 +437,7 @@ function topLevelPositions(source: string): number[] {
     for (let index = 0; index < source.length; index++) {
         const ch = source[index];
         if (quote) {
-            if (ch === quote && source[index - 1] !== '\\') quote = null;
+            if (ch === quote && !isEscaped(source, index)) quote = null;
             continue;
         }
         if (ch === '"' || ch === "'") { quote = ch; continue; }
@@ -520,8 +533,7 @@ function isWrappedByOuterParentheses(source: string): boolean {
     let quote: string | null = null;
     for (let index = 0; index < source.length; index++) {
         const ch = source[index];
-        const prev = source[index - 1];
-        if ((ch === '"' || ch === "'") && prev !== '\\') {
+        if ((ch === '"' || ch === "'") && !isEscaped(source, index)) {
             if (quote === ch) quote = null;
             else if (!quote) quote = ch;
             continue;

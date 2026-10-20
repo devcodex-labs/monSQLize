@@ -88,7 +88,9 @@ function transformStageEntry(stage: unknown): unknown {
     const result: Record<string, unknown> = {};
     for (const [key, current] of entries) {
         const context = getStageContext(key);
-        if (key === '$facet' && isPlainExpressionRecord(current)) {
+        if (key === '$match') {
+            result[key] = transformMatchPredicate(current);
+        } else if (key === '$facet' && isPlainExpressionRecord(current)) {
             result[key] = Object.fromEntries(Object.entries(current).map(([name, pipeline]) => [name, transformPipeline(pipeline)]));
         } else if ((key === '$lookup' || key === '$unionWith' || key === '$merge') && isPlainExpressionRecord(current)) {
             const nested = key === '$merge' ? 'whenMatched' : 'pipeline';
@@ -106,6 +108,30 @@ function getStageContext(key: string): StageContext {
     if (key === '$project' || key === '$addFields' || key === '$set') return 'project';
     if (key === '$group') return 'group';
     return 'match';
+}
+
+/** Field query values cannot contain a DSL predicate without an explicit $expr role. */
+function transformQueryValue(value: unknown): unknown {
+    if (isExpressionObject(value)) {
+        throw createError(ErrorCodes.INVALID_EXPRESSION, 'Expressions in $match must be predicates or values of $expr');
+    }
+    if (Array.isArray(value)) return value.map(transformQueryValue);
+    if (!isPlainExpressionRecord(value)) return value;
+    return Object.fromEntries(Object.entries(value).map(([key, current]) =>
+        [key, key === '$literal' ? current : transformQueryValue(current)]));
+}
+
+/** Keeps query predicate and aggregation expression positions separate. */
+function transformMatchPredicate(value: unknown): unknown {
+    if (isExpressionObject(value)) return { $expr: compileInnerExpression(value.__expr__) };
+    if (!isPlainExpressionRecord(value)) return transformQueryValue(value);
+    return Object.fromEntries(Object.entries(value).map(([key, current]) => {
+        if (key === '$expr') return [key, transformStageValue(current, 'project')];
+        if ((key === '$and' || key === '$or' || key === '$nor') && Array.isArray(current)) {
+            return [key, current.map(transformMatchPredicate)];
+        }
+        return [key, transformQueryValue(current)];
+    }));
 }
 
 function transformStageValue(value: unknown, context: StageContext): unknown {

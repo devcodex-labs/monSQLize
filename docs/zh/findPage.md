@@ -5,6 +5,10 @@ totals 缓存键区分 BSON/RegExp 查询和实际 count 选项，包括继承�
 
 ## 概述
 
+`findPage` 是只读操作：`pipeline` 中的顶层 `$out` 或 `$merge` 会在访问缓存或数据库前报 `INVALID_OPERATION`，管道结构在调用时固定。写管道请使用 `aggregate`，并遵守写路径策略。
+
+使用自定义管道时，`projection`/`project` 在用户阶段之后应用，返回项仍保留游标排序字段。支持包含、排除和数组投影；与管道组合的 find 专用 `$slice`、`$elemMatch`、positional 投影会报 `INVALID_OPERATION`，可改用 `aggregate` 的聚合表达式。未传管道时沿用原生 find 投影路径。
+
 `findPage` 是 monSQLize 提供的高级分页查询方法，支持多种分页模式，包括游标分页、跳页、流式查询和总数统计等功能。
 
 ## 方法签名

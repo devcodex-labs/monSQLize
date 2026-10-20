@@ -1,5 +1,11 @@
 # Model API documentation
 
+Soft deletion through `deleteOne`, `deleteMany` and their relation-aware variants updates the configured `updatedAt` field and version using the same mutation as the deletion marker. Creation timestamps remain unchanged; disabled/custom timestamp fields retain their configuration. Repeating a delete does not advance an already-deleted record, and forced deletion remains physical.
+
+The root `ModelInstance` export is usable with `instanceof` while retaining its generic document type and write-option checks. Obtain instances from `runtime.model()`; the typed constructor remains private. Synchronous pagination totals expose numeric `total` and `totalPages`.
+
+Injected schema-extension factories are checked with block, catch and loop bindings scoped to their actual regions. A name shadowed inside a block can still refer to a captured value outside it. Factories with unprovable captures remain conservative: reuse the same function object for intentional sharing, or use isolated schema runtimes for differing configuration.
+
 When versioning is enabled, soft delete and restore advance the version, including bulk and alias paths. Previously hydrated documents must be refreshed before saving after either operation. Protected relation deletes check the final `before` hook filter/session and retain that business filter plus the checked `_id` in the write. Ordinary protected deletes preserve soft deletion; explicit force deletes remain hook-free. Model `findByIds` enforces visibility before the original projection in one query, including computed and ID-only projections; final hook options apply and after-result replacement is preserved. Mutation hook factories receive the public ModelInstance; insert defaults are computed once before the before hook, argument/result replacements are honored, before errors prevent writes, and v1 after-hook errors do not undo completed writes. `ModelInstance` is available from both CJS and ESM entries.
 
 The Model layer adds schema validation, custom methods, lifecycle hooks, relations, and model-scoped write helpers on top of the MongoDB runtime. It keeps collection access explicit while giving repeated document workflows a consistent Model surface.

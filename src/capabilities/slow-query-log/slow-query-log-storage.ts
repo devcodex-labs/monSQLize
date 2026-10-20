@@ -4,7 +4,7 @@
  * Provides two backends: in-memory storage (SlowQueryLogMemoryStorage)
  * and MongoDB persistent storage (MongoDBSlowQueryLogStorage).
  */
-import type { Collection, MongoClient, MongoClientOptions } from 'mongodb';
+import type { Collection, Document, MongoClient, MongoClientOptions } from 'mongodb';
 import { MongoClient as MongoDriverClient } from 'mongodb';
 import { ErrorCodes, createError } from '../../core/errors';
 import type { LoggerLike } from '../../core/logger';
@@ -31,6 +31,20 @@ async function defaultClientFactory(uri: string, options?: MongoClientOptions): 
     const client = new MongoDriverClient(uri, options);
     await client.connect();
     return client;
+}
+
+/** Event timestamps may arrive out of order across queues or manager instances. */
+function buildSlowQueryLogUpdate(record: SlowQueryLogRecord): Document {
+    return {
+        $setOnInsert: {
+            queryHash: record.queryHash, database: record.database,
+            collection: record.collection, operation: record.operation,
+        },
+        $set: { sampleQuery: record.sampleQuery, metadata: record.metadata },
+        $inc: { count: 1, totalTimeMs: record.totalTimeMs },
+        $min: { firstSeen: record.firstSeen, minTimeMs: record.minTimeMs },
+        $max: { lastSeen: record.lastSeen, maxTimeMs: record.maxTimeMs },
+    };
 }
 
 export class SlowQueryLogMemoryStorage implements SlowQueryLogStorage {
@@ -150,30 +164,7 @@ export class MongoDBSlowQueryLogStorage implements SlowQueryLogStorage {
                 collection: record.collection,
                 operation: record.operation,
             },
-            {
-                $setOnInsert: {
-                    queryHash: record.queryHash,
-                    database: record.database,
-                    collection: record.collection,
-                    operation: record.operation,
-                    firstSeen: record.firstSeen,
-                },
-                $set: {
-                    lastSeen: record.lastSeen,
-                    sampleQuery: record.sampleQuery,
-                    metadata: record.metadata,
-                },
-                $inc: {
-                    count: 1,
-                    totalTimeMs: record.totalTimeMs,
-                },
-                $min: {
-                    minTimeMs: record.minTimeMs,
-                },
-                $max: {
-                    maxTimeMs: record.maxTimeMs,
-                },
-            },
+            buildSlowQueryLogUpdate(record),
             { upsert: true },
         );
     }
@@ -195,30 +186,7 @@ export class MongoDBSlowQueryLogStorage implements SlowQueryLogStorage {
                         collection: record.collection,
                         operation: record.operation,
                     },
-                    update: {
-                        $setOnInsert: {
-                            queryHash: record.queryHash,
-                            database: record.database,
-                            collection: record.collection,
-                            operation: record.operation,
-                            firstSeen: record.firstSeen,
-                        },
-                        $set: {
-                            lastSeen: record.lastSeen,
-                            sampleQuery: record.sampleQuery,
-                            metadata: record.metadata,
-                        },
-                        $inc: {
-                            count: 1,
-                            totalTimeMs: record.totalTimeMs,
-                        },
-                        $min: {
-                            minTimeMs: record.minTimeMs,
-                        },
-                        $max: {
-                            maxTimeMs: record.maxTimeMs,
-                        },
-                    },
+                    update: buildSlowQueryLogUpdate(record),
                     upsert: true,
                 },
             };
@@ -228,16 +196,28 @@ export class MongoDBSlowQueryLogStorage implements SlowQueryLogStorage {
 
     async query(filter: SlowQueryLogFilter = {}, options: SlowQueryLogQueryOptions = {}): Promise<SlowQueryLogRecord[]> {
         const collection = await this.getCollection();
-        const cursor = collection
-            .find(toMongoFilter(filter))
-            .sort(options.sort ?? { lastSeen: -1 });
-        if (options.skip) {
-            cursor.skip(options.skip);
+        const sort = options.sort ?? { lastSeen: -1 as const };
+        let rows: Document[];
+        if (Object.prototype.hasOwnProperty.call(sort, 'avgTimeMs')) {
+            // Compute the virtual field before sorting and selecting the page.
+            const pipeline: Document[] = [
+                { $match: toMongoFilter(filter) },
+                { $set: { avgTimeMs: { $cond: [
+                    { $gt: [{ $ifNull: ['$count', 0] }, 0] },
+                    { $divide: [{ $ifNull: ['$totalTimeMs', 0] }, '$count'] },
+                    0,
+                ] } } },
+                { $sort: sort },
+            ];
+            if (options.skip) pipeline.push({ $skip: options.skip });
+            if (options.limit) pipeline.push({ $limit: Math.abs(options.limit) });
+            rows = await collection.aggregate(pipeline).toArray();
+        } else {
+            const cursor = collection.find(toMongoFilter(filter)).sort(sort);
+            if (options.skip) cursor.skip(options.skip);
+            if (options.limit) cursor.limit(options.limit);
+            rows = await cursor.toArray();
         }
-        if (options.limit) {
-            cursor.limit(options.limit);
-        }
-        const rows = await cursor.toArray();
         return rows.map((row) => ({
             queryHash: String(row.queryHash),
             database: String(row.database),

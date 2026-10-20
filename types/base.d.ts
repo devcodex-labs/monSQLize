@@ -25,7 +25,7 @@ export interface LoggerLike {
 export interface LoggerOptions {
     /** Enable structured (JSON) log output. */
     structured?: boolean;
-    /** Enable automatic trace ID injection into log entries. */
+    /** Attach the current trace ID to structured logs by default; false disables injection. */
     enableTraceId?: boolean;
 }
 

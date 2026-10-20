@@ -1,5 +1,11 @@
 # ObjectId Conversion Diagnostics
 
+## Logger trace IDs
+
+Structured `Logger` output includes an active trace ID by default. `enableTraceId: false` omits that field without disabling trace-context propagation. `Logger.generateTraceId()` works in both CJS and pure ESM consumers. `new Logger(sink, options)` and `Logger.create(sink, options)` accept the same logger options.
+
+An `insertMany` diagnostic warning failure after a successful driver write does not replace the successful result or skip write-cache invalidation. Slow-query storage error policies remain a separate contract.
+
 ## Current Behavior
 
 In the current runtime, ObjectId conversion is value-based by default. Valid 24-character hex strings can be converted in query filters, write payloads, and aggregation pipelines when traversal reaches them.

@@ -13,6 +13,7 @@
 import { readThroughCache } from '../../../core/cache-coordination';
 import { getModelQueryFilter, MODEL_QUERY_FILTER } from '../../../core/model-query-context';
 import { Collection, Document, FindOptions, ObjectId } from 'mongodb';
+import { snapshotPipelineValue } from './pipeline-snapshot';
 
 import { createError, ErrorCodes } from '../../../core/errors';
 import type { QueryCacheLike, RuntimeDefaults } from '../../../types/internal/query';
@@ -31,6 +32,61 @@ import {
 
 function getCacheTtl(rawOptions: Record<string, unknown>): number {
     return typeof rawOptions.cache === 'number' && rawOptions.cache > 0 ? rawOptions.cache : 0;
+}
+
+type OrderedIdentityMode = 'native' | 'omit' | 'computed';
+
+/** Carries a real identity only where native projection semantics can be preserved. */
+function prepareOrderedIdentity(
+    options: Record<string, unknown>,
+    inherited: Collection['bsonOptions'] | undefined,
+): OrderedIdentityMode {
+    const unsupported = () => createError(ErrorCodes.INVALID_OPERATION,
+        'preserveOrder cannot preserve this _id projection or raw/returnKey option. Use preserveOrder: false or include the original _id.');
+    if (options.returnKey === true || (options.raw ?? inherited?.raw) === true) throw unsupported();
+    // Pin the accepted decoding mode before any cache or driver await.
+    options.raw = false;
+    const projection = options.projection as Record<string, unknown> | undefined;
+    if (!projection) return 'native';
+    if (Object.keys(projection).some((key) => key.startsWith('_id.'))) throw unsupported();
+    options.projection = projection;
+    if (!Object.prototype.propertyIsEnumerable.call(projection, '_id')) return 'native';
+    const value = projection._id;
+    const bsonType = value && typeof value === 'object' ? (value as { _bsontype?: string })._bsontype : undefined;
+    const numeric = typeof value === 'number' || typeof value === 'bigint'
+        || (bsonType !== undefined && ['Int32', 'Long', 'Double', 'Decimal128'].includes(bsonType));
+    if (typeof value === 'boolean' || numeric) {
+        // Decimal128 may be nonzero below the smallest JS Number; test its coefficient exactly.
+        const nativeValue = typeof value === 'bigint' ? BigInt.asIntN(64, value) : value;
+        const excluded = value === false || (numeric && /^[+-]?0+(?:\.0*)?(?:e[+-]?\d+)?$/i.test(String(nativeValue)));
+        if (!excluded) return 'native';
+        // Removing the exclusion preserves both inclusion and exclusion projection modes.
+        const captured = { ...projection };
+        delete captured._id;
+        options.projection = captured;
+        return 'omit';
+    }
+    if (value === undefined || typeof value === 'function' || typeof value === 'symbol') throw unsupported();
+    if (value !== null && typeof value === 'object' && !Array.isArray(value)
+        && !bsonType && !(value instanceof Date) && !(value instanceof RegExp) && !(value instanceof Uint8Array)) {
+        const keys = Object.keys(value);
+        if (keys.length === 0 || keys.some((key) => !key.startsWith('$'))
+            || keys.some((key) => ['$slice', '$elemMatch', '$meta', '$'].includes(key))) throw unsupported();
+    }
+    const fieldsAsRaw = (options.fieldsAsRaw ?? inherited?.fieldsAsRaw ?? {}) as Record<string, unknown>;
+    const prototype = Object.getPrototypeOf(fieldsAsRaw);
+    if (prototype !== Object.prototype && prototype !== null) throw unsupported();
+    const capturedRawFields: Record<string, unknown> = Object.create(prototype);
+    for (const key of Object.getOwnPropertyNames(fieldsAsRaw)) {
+        Object.defineProperty(capturedRawFields, key, { value: fieldsAsRaw[key], enumerable: true, writable: true, configurable: true });
+    }
+    // BSON applies these names at every nesting depth, including envelope.value arrays.
+    if (capturedRawFields._id || capturedRawFields.value) throw unsupported();
+    capturedRawFields._id = false;
+    capturedRawFields.value = false;
+    options.fieldsAsRaw = capturedRawFields;
+    options.projection = { ...projection, _id: { original: '$_id', value } };
+    return 'computed';
 }
 
 /**
@@ -149,6 +205,9 @@ export async function findByIdsDocuments<TSchema extends Document = Document>(
         ...(defaults.maxTimeMS !== undefined ? { maxTimeMS: defaults.maxTimeMS } : {}),
         ...rawOptions,
     });
+    const preserveOrder = baseOptions.preserveOrder === true;
+    baseOptions.projection = snapshotPipelineValue(baseOptions.projection);
+    const identityMode = preserveOrder ? prepareOrderedIdentity(baseOptions, collection.bsonOptions) : 'native';
     const driverOptions = buildFindDriverOptions(baseOptions);
     delete (driverOptions as Record<symbol, unknown>)[MODEL_QUERY_FILTER];
     const visibility = getModelQueryFilter(rawOptions);
@@ -158,7 +217,7 @@ export async function findByIdsDocuments<TSchema extends Document = Document>(
         : idFilter;
 
     const cacheTTL = getCacheTtl(rawOptions);
-    const cacheKey = cacheTTL > 0
+    const cacheKey = identityMode === 'native' && cacheTTL > 0
         && queryCache
         && (!visibility || Object.keys(visibility).length === 0 || typeof queryCache.delPattern === 'function')
         && !hasSessionOption(baseOptions)
@@ -177,14 +236,26 @@ export async function findByIdsDocuments<TSchema extends Document = Document>(
         ).toArray() as TSchema[];
     }
 
-    if (rawOptions.preserveOrder === true) {
+    if (preserveOrder) {
         const resultMap = new Map<string, TSchema>();
         for (const doc of results) {
-            const docId = (doc as Record<string, unknown>)._id;
+            const envelope = (doc as Record<string, unknown>)._id;
+            const docId = identityMode === 'computed'
+                ? (envelope as { original?: unknown } | null)?.original : envelope;
+            let output = doc;
+            if (identityMode !== 'native') {
+                const copy: Record<string, unknown> = { ...doc };
+                if (identityMode === 'computed' && envelope && Object.prototype.hasOwnProperty.call(envelope, 'value')) {
+                    copy._id = (envelope as { value: unknown }).value;
+                } else {
+                    delete copy._id;
+                }
+                output = copy as TSchema;
+            }
             if (docId instanceof ObjectId) {
-                resultMap.set(docId.toString(), doc);
+                resultMap.set(docId.toString(), output);
             } else if (docId !== undefined && docId !== null) {
-                resultMap.set(String(docId), doc);
+                resultMap.set(String(docId), output);
             }
         }
         return uniqueIds.map((item) => resultMap.get(item.toString())).filter((item): item is TSchema => item !== undefined);

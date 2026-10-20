@@ -1,5 +1,11 @@
 # Cache API
 
+Runtime remote-cache wrappers retain optional TTL capabilities and pass tag options through `set(key, value, ttl, { tags })`. Prefixes are applied to TTL lookups as well as values; batch TTL results are returned under the caller's original keys. A missing TTL method keeps the adapter's fallback behavior, `undefined` means no backfill, and `null` means no expiration. An empty batch TTL result is not silently replaced with per-key lookups.
+
+Runtime close revokes that wrapper's pending backfill tickets and drains already dispatched backfills before owned-resource cleanup. Failed cleanup keeps local reads/backfills disabled for that wrapper until a successful retry. Injected caches remain caller-owned. Public `MultiLevelCache.destroy()` stays synchronous and cannot wait for an arbitrary asynchronous setter that has already started.
+
+`MultiLevelCache` key/batch/pattern deletion and received key/pattern invalidation also prevent older remote reads from refilling L1 after deletion, while preserving deletion results and unrelated local entries. `clear()` only clears L1 and revokes older fills; it retains L2 for future reads. See [cache invalidation](./cache-invalidation.md) for failure, reentry and consistency boundaries.
+
 ## Overview
 
 monSQLize provides database query caching for collection reads, optional local/remote cache composition, manual invalidation and statistics. Cache invalidation is designed to keep read caches fresh enough for common application workloads, but it is not an atomic commit step with MongoDB writes.

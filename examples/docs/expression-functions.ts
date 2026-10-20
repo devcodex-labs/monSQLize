@@ -7,6 +7,7 @@
  *   node .generated/examples-dist/examples/docs/expression-functions.js
  */
 import MonSQLize from 'monsqlize';
+import assert from 'node:assert/strict';
 import { setupExample, teardownExample } from '../helpers/bootstrap.js';
 
 async function main() {
@@ -24,6 +25,14 @@ async function main() {
     // string. The returned object is compiled into a real MongoDB pipeline
     // operator when passed to aggregate().
     const { expr, compilePipelineExpressions } = MonSQLize;
+
+    // Stage-root predicates and quoted field-like text have distinct roles.
+    const literalLabels = await orders.aggregate([
+        { $match: expr('qty > 2') },
+        { $project: { _id: 0, product: 1, label: expr('"$unitPrice"') } },
+    ]);
+    assert.equal(literalLabels.length, 2);
+    assert.ok(literalLabels.every((row) => (row as { label: string }).label === '$unitPrice'));
 
     // Each expr wraps a self-contained expression string.
     // For arithmetic involving multiple fields, write the full expression:

@@ -1,6 +1,7 @@
 /** findPage execution layer: pagination, totals calculation, and meta tracking. */
 
 import { withCacheReads } from '../../../core/cache-coordination';
+import { snapshotPipelineValue } from './pipeline-snapshot';
 import { cacheNamespace } from '../../../core/cache-scope';
 import { Collection, Document } from 'mongodb';
 
@@ -105,6 +106,24 @@ function cloneFindPageResult<TSchema extends Document>(result: FindPageResult<TS
 
 // ── Core findPage execution ───────────────────────────────────────────────────
 
+/** Rejects find-only projection syntax before the aggregation/cache branches. */
+function assertPipelineProjectionSupported(projection: Record<string, unknown>): void {
+    for (const [field, value] of Object.entries(projection)) {
+        const record = value !== null && typeof value === 'object' && !Array.isArray(value)
+            && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)
+            ? value as Record<string, unknown> : undefined;
+        if (field.split('.').includes('$') || (record
+            && (Object.prototype.hasOwnProperty.call(record, '$slice')
+                || Object.prototype.hasOwnProperty.call(record, '$elemMatch')))) {
+            throw createError(ErrorCodes.INVALID_OPERATION, 'findPage with pipeline does not support find-only $slice, $elemMatch, or positional projections. Use aggregate with an aggregation projection instead.');
+        }
+        // Aggregation expressions (especially $literal) are not nested projection specs.
+        if (record && !Object.keys(record).some((key) => key.startsWith('$'))) {
+            assertPipelineProjectionSupported(record);
+        }
+    }
+}
+
 /**
  * Core findPage execution function (called by findPageDocuments).
  * Not exported; internal to this module.
@@ -115,6 +134,16 @@ export async function executeFindPage<TSchema extends Document = Document>(
     defaults: RuntimeDefaults = {},
     queryCache?: QueryCacheLike | null,
 ): Promise<FindPageResult<TSchema>> {
+    // Read-only pagination must check the same captured structure used by every branch.
+    if (options.pipeline !== undefined) {
+        const pipeline = snapshotPipelineValue(options.pipeline);
+        if (pipeline.some((stage) => stage !== null && typeof stage === 'object'
+            && (Object.prototype.hasOwnProperty.call(stage, '$out')
+                || Object.prototype.hasOwnProperty.call(stage, '$merge')))) {
+            throw createError(ErrorCodes.INVALID_OPERATION, 'findPage does not support write aggregation stages. Use aggregate instead.');
+        }
+        options = { ...options, pipeline };
+    }
     const metaEnabled = options.meta === true || (typeof options.meta === 'object' && options.meta !== null);
     const metaOptions = (options.meta && typeof options.meta === 'object' ? options.meta : {}) as MetaOptions;
     const metaLevel = options.meta === true ? 'op' : (metaOptions.level ?? 'op');
@@ -181,6 +210,9 @@ export async function executeFindPage<TSchema extends Document = Document>(
     const projection = resolveProjectionOption(ext) ?? driverOpts.projection;
     if (projection !== undefined) {
         driverOpts.projection = buildEffectiveProjection(projection, sort);
+        if (options.pipeline?.length) {
+            assertPipelineProjectionSupported(driverOpts.projection as Record<string, unknown>);
+        }
     }
 
     const jumpOpts = ext.jump as { step: number; maxHops: number } | undefined;
@@ -341,6 +373,10 @@ export async function executeFindPage<TSchema extends Document = Document>(
             if (extra.skip) stages.push({ $skip: extra.skip });
             stages.push({ $limit: fetchLimit });
             stages.push(...(options.pipeline as Document[]));
+            const effectiveProjection = driverOpts.projection as Document | undefined;
+            if (effectiveProjection && Object.keys(effectiveProjection).length > 0) {
+                stages.push({ $project: effectiveProjection });
+            }
             const aggOpts = buildAggregateDriverOptions<TSchema>(driverOpts) as Record<string, unknown>;
             delete aggOpts.projection;
             rows = await collection

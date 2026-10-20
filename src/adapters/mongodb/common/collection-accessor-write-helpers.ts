@@ -240,16 +240,20 @@ export async function insertManyForAccessor<TSchema extends Document = Document>
     const elapsed = Date.now() - startedAt;
     const threshold = context.defaults?.slowQueryMs ?? 500;
     if (elapsed >= threshold && context.logger) {
-        context.logger.warn('[insertMany] slow operation warning', {
-            ns: `${context.dbName}.${context.collectionName}`,
-            threshold,
-            duration: elapsed,
-            documentCount: documents.length,
-            insertedCount: result.insertedCount,
-            ordered: (options as Record<string, unknown> | undefined)?.ordered ?? true,
-            comment: (options as Record<string, unknown> | undefined)?.comment,
-            op: 'insertMany',
-        });
+        try {
+            context.logger.warn('[insertMany] slow operation warning', {
+                ns: `${context.dbName}.${context.collectionName}`,
+                threshold,
+                duration: elapsed,
+                documentCount: documents.length,
+                insertedCount: result.insertedCount,
+                ordered: (options as Record<string, unknown> | undefined)?.ordered ?? true,
+                comment: (options as Record<string, unknown> | undefined)?.comment,
+                op: 'insertMany',
+            });
+        } catch {
+            // Diagnostics must preserve the successful write and its cache invalidation.
+        }
     }
 
     await runPostWriteInvalidation(context, options);

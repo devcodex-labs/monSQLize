@@ -4,6 +4,10 @@ The errorHandling policy covers initialization and persistence. In throw mode, s
 
 Storage `close()` waits for pending initialization, cancels its ability to publish a late collection, and closes only its owned client. Concurrent closes share cleanup. A failed owned-client close retains ownership for a later close retry; initialization is blocked until cleanup succeeds. An explicit initialization after successful close can start a new lifecycle. A shared business connection remains open.
 
+Manager `initialize()`, `save()` and `query()` register admission synchronously. `close()` seals new admission, drains accepted operations and queued batches, then attempts both queue and storage cleanup. A failed cleanup remains retryable and blocks new work; successful cleanup permits a fresh lifecycle. This ordering is the same for all error-handling policies.
+
+Persistent `firstSeen`/`lastSeen` use minimum/maximum event timestamps, even when owners or batches arrive out of order. Sorting by `avgTimeMs` computes the guarded average before sorting, skip and limit; a record with zero count has average zero. Other sorts retain the native find path. Existing historical timestamp errors are not reconstructed automatically.
+
 ## Overview
 
 Slow query log persistence records operations that exceed the configured `slowQueryMs` threshold and lets you query aggregated slow-query statistics later. In the current MongoDB runtime, records are stored in MongoDB by default and may use memory storage for local or custom scenarios.

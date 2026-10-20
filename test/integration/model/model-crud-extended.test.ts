@@ -421,19 +421,27 @@ describe('ModelInstance — automatic index preflight', () => {
             config: { uri },
             autoIndex: true,
         });
+        const indexErrors: unknown[] = [];
+        const onIndexError = (error: unknown) => indexErrors.push(error);
+        runtime.on('model-index-error', onIndexError);
         try {
             await runtime.connect();
             const model = runtime.model(modelName);
             let indexes: any[] = [];
-            for (let attempt = 0; attempt < 20; attempt += 1) {
+            const deadline = Date.now() + 5000;
+            while (true) {
                 indexes = await model.listIndexes();
+                assert.deepEqual(indexErrors, [], 'Automatic index creation reported an error');
                 if (indexes.some((index) => index.name === indexName)) {
                     break;
                 }
-                await new Promise((resolve) => setTimeout(resolve, 25));
+                const remaining = deadline - Date.now();
+                assert.ok(remaining > 0, `Automatic index ${indexName} was not observed within 5s; last indexes: ${indexes.map((index) => index.name).join(', ')}`);
+                await new Promise((resolve) => setTimeout(resolve, Math.min(25, remaining)));
             }
             assert.ok(indexes.some((index) => index.name === indexName));
         } finally {
+            runtime.off('model-index-error', onIndexError);
             await runtime.close();
             MonSQLize.Model.undefine(modelName);
         }

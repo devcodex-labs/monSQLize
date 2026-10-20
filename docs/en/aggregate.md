@@ -1,5 +1,9 @@
 # aggregate method detailed documentation
 
+Pipeline documents are captured when the chain is created, before asynchronous cache or driver work. Later edits to the caller's stages or write targets do not change that chain's `await`, `toArray()`, `stream()` or `explain()` execution. Document classes, Maps and `toBSON()` conversions are materialized at capture time; BSON values retain their serialized meaning. Write-path checks and execution use the captured target.
+
+When `meta: true` is enabled, awaiting the chain and calling `toArray()` both return a `ResultWithMeta` envelope; read its `data` field for the result array.
+
 ## Overview
 
 `aggregate` is the aggregation pipeline method provided by monSQLize, which is used to perform MongoDB's aggregation framework operations. Supports complex data processing, statistical analysis, joint table query, group calculation, streaming processing, caching and other functions.

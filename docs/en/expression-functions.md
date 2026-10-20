@@ -1,5 +1,9 @@
 # Expression function reference
 
+Quoted DSL strings are literals: `expr('"$price"')` and `expr('LITERAL("$price")')` return the text `$price`; unquoted `expr('$price')` references the field. `LITERAL` preserves literal objects and arrays without interpreting their contents as DSL.
+
+For `$match`, place an expression at the stage root (`{ $match: expr('price > 10') }`) or inside native `$expr`. A DSL marker used as a field-query value throws `INVALID_EXPRESSION`; native predicates, BSON/Date/RegExp values and `$literal` data remain native. Quoted strings use backslash parity when locating delimiters; escaping does not create an extra expression scope.
+
 Nested facet/lookup/unionWith pipelines and merge whenMatched pipelines retain their stage context. Numeric arguments to SUBSTR/SUBSTR_CP/SLICE/ARRAY_ELEM_AT accept expressions without integer truncation. MAP/FILTER variables resolve lexically, including scalar variables, nesting and quoted literals; LET bindings use balanced separators and still require explicit `$$name` references. SWITCH preserves an explicit null/false/0/empty-string default; omitting a default keeps native MongoDB failure behavior. Scientific notation such as `price * 1e-3` is supported; malformed numeric expressions fail with INVALID_EXPRESSION.
 
 DSL lambda names and explicit MongoDB `$$` variables have separate scopes. MAP/FILTER bind their named variable; REDUCE exposes native `$$value`/`$$this` only inside its body, while input and initial value use the outer scope. LET initializers use the outer scope and its body uses the declared explicit variables. Native JSON `$map`, `$filter`, `$reduce` and `$let` follow these lexical boundaries. Quoted text and `$literal` payloads remain unchanged.

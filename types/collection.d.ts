@@ -365,7 +365,7 @@ export interface FindChain<TSchema = any, TPromise = TSchema[]> extends Promise<
     batchSize(value: number): FindChain<TSchema, TPromise>;
     explain(verbosity?: boolean | string): Promise<unknown>;
     stream(): NodeJS.ReadableStream;
-    toArray(): Promise<TSchema[]>;
+    toArray(): Promise<TPromise>;
 }
 
 export interface AggregateChain<TResult = unknown, TPromise = TResult[]> extends Promise<TPromise> {
@@ -377,7 +377,7 @@ export interface AggregateChain<TResult = unknown, TPromise = TResult[]> extends
     batchSize(value: number): AggregateChain<TResult, TPromise>;
     explain(verbosity?: boolean | string): Promise<unknown>;
     stream(): NodeJS.ReadableStream;
-    toArray(): Promise<TResult[]>;
+    toArray(): Promise<TPromise>;
 }
 
 /** Write concern options for batch operations. */

@@ -1,5 +1,9 @@
 # aggregate 方法详细文档
 
+管道文档在创建链时固定，早于异步缓存或驱动工作。调用方之后修改阶段或写目标，不会改变该链的 `await`、`toArray()`、`stream()`、`explain()` 执行。文档类、Map 和 `toBSON()` 转换在捕获时物化，BSON 值保留序列化语义。写路径检查与执行使用同一份目标。
+
+开启 `meta: true` 时，等待链和调用 `toArray()` 都返回 `ResultWithMeta` 信封，结果数组位于 `data` 字段。
+
 
 ## 概述
 

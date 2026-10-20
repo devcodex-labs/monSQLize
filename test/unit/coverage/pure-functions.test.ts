@@ -1657,10 +1657,10 @@ describe('model populate and schema helpers — additional branch coverage', () 
                 scopedCollection: (_name: string, scope: unknown) => {
                     scopes.push(scope);
                     return {
-                        find: async () => [
-                            { parentId: 'p1', name: 'B' },
-                            { parentId: 'p1', name: 'A' },
-                        ],
+                        find: async (_filter: unknown, options: { sort?: unknown }) => {
+                            assert.deepEqual(options.sort, { name: 1 });
+                            return [{ parentId: 'p1', name: 'A' }, { parentId: 'p1', name: 'B' }];
+                        },
                     };
                 },
                 scopedModel: (_name: string, scope: unknown) => {

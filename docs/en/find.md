@@ -1,5 +1,13 @@
 # find()
 
+With `meta: true`, both awaiting the find chain and calling `toArray()` return a `ResultWithMeta` envelope, with rows in `data`. Without metadata they return the row array. The TypeScript return types distinguish these forms.
+
+## ID-list queries and projection
+
+`findByIds(ids, { preserveOrder: true })` deduplicates ObjectIds and returns the selected documents in input order using one native query. MongoDB applies global `sort`/`skip`/`limit` before reordering. Ordinary `_id` exclusion and supported computed `_id` expressions, including `$$REMOVE`, retain that order; internal identity paths bypass result caching. Model queries keep soft-delete visibility and final hook options.
+
+With input-order preservation, find-only `_id` projections (`$slice`, `$elemMatch`, `$meta`), nested/dotted `_id` rewrites, explicit `_id: undefined`, `returnKey: true` and effective `raw: true` throw `INVALID_OPERATION`. Computed `_id` also rejects truthy `fieldsAsRaw._id`/`value` and non-plain maps. Collection BSON settings are inherited; per-call `raw: false` and `fieldsAsRaw: {}` override them. Other fields retain supported native special projections. Use `preserveOrder: false` for the original native projection path. Native cached results distinguish effective BSON decoding modes, and exact invalidation uses the same keys.
+
 ## Overview
 
 `find()` reads multiple documents from a MongoDB collection. Use it for filtered lists, sorted lists, pagination, projections, streaming, cached reads, and any query where you expect zero or more documents.

@@ -9,6 +9,7 @@ import type { FindPageOptions } from '../../../../types/collection';
 import { resolveCursorStrategy } from './cursor-strategy';
 import { convertObjectIdStrings } from '../utils/objectid-converter';
 import { DEFAULT_FIND_PAGE_LIMIT, hashPayload } from './find-page-cache-helpers';
+import { snapshotPipelineValue } from './pipeline-snapshot';
 import {
     buildCollectionCacheNamespace,
     buildResultCacheKeyOptions,
@@ -155,7 +156,22 @@ export function buildFindByIdsCacheKey<TSchema extends Document = Document>(
 ): string {
     const uniqueIds = Array.from(new Set(ids.map((id) => parseRequiredObjectId(id).toString())));
     const namespace = buildCollectionCacheNamespace(collection, defaults);
-    const key = `findByIds:${namespace}:${stableCacheKeyString({ ids: uniqueIds, options: buildResultCacheKeyOptions(normalizeFindProjectionOptions(options ?? {})) })}`;
+    const capturedOptions = normalizeFindProjectionOptions(options ?? {});
+    capturedOptions.projection = snapshotPipelineValue(capturedOptions.projection);
+    // Native BSON result modes must never share entries (including inherited options).
+    // This dimension also separates entries created before decoding options were keyed.
+    const bson: Record<string, unknown> = {};
+    for (const field of ['raw', 'useBigInt64', 'promoteLongs', 'promoteValues', 'promoteBuffers',
+        'ignoreUndefined', 'bsonRegExp', 'serializeFunctions', 'enableUtf8Validation']) {
+        bson[field] = options?.[field] ?? (collection.bsonOptions as unknown as Record<string, unknown> | undefined)?.[field];
+    }
+    const fieldsAsRaw = (options?.fieldsAsRaw ?? collection.bsonOptions?.fieldsAsRaw ?? {}) as Record<string, unknown>;
+    const rawFieldNames = new Set<string>();
+    for (let level = fieldsAsRaw; level; level = Object.getPrototypeOf(level)) {
+        for (const field of Object.getOwnPropertyNames(level)) rawFieldNames.add(field);
+    }
+    bson.fieldsAsRaw = [...rawFieldNames].sort().map((field) => [field, Boolean(fieldsAsRaw[field])]);
+    const key = `findByIds:${namespace}:${hashPayload({ ids: uniqueIds, options: buildResultCacheKeyOptions(capturedOptions), bson })}`;
     const visibility = getModelQueryFilter(options);
     return visibility && Object.keys(visibility).length > 0
         ? `${key}:model:${hashPayload(stableCacheKeyString(visibility))}`

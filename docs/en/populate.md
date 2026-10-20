@@ -1,5 +1,7 @@
 # Populate API - Related Query
 
+When a nonempty `sort` is supplied, related documents are read sequentially per parent using MongoDB sorting, including native null/missing, BSON, array and related-collection collation rules. `skip` and `limit` apply within each parent's related query. This increases database queries compared with unsorted population; it avoids a second JavaScript ordering rule. The parent's collation is not automatically copied to related reads. Unsorted population retains batches of up to 200 distinct keys.
+
 **Function**: Model layer related query, supports 6 methods ()
 
 ---

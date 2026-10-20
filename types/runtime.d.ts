@@ -1,5 +1,5 @@
 import type { BookmarkClearResult, BookmarkListResult, BookmarkPrewarmResult, DeleteBatchResult, DeleteResult, IncrementOneResult, IndexCreateResult, InsertBatchResult, InsertManyResult, UpdateBatchResult, UpdateResult } from './collection';
-import type { LoggerLike, ExpressionFunction, ExpressionObject } from './base';
+import type { LoggerLike, LoggerOptions, ExpressionFunction, ExpressionObject } from './base';
 import type { ModelDefinition, ModelDescriptor, ModelEnsureIndexesOptions, ModelIndexEnsureResult, ModelInstance as ModelInstanceContract, RegisteredModel, RelationConfig } from './model';
 import type { LockOptions, LockStats } from './lock';
 import type { ConnectionPoolManagerOptions, FallbackStrategy, PoolConfig, PoolHealthStatus, PoolRole, PoolStats, PoolStrategy } from './pool';
@@ -39,12 +39,18 @@ export { ChangeStreamSyncManager, ResumeTokenStore } from './sync';
 export { CacheLockManager, Transaction, TransactionManager } from './transaction';
 
 export declare class Logger {
-    constructor(logger?: LoggerLike | null);
+    constructor(logger?: LoggerLike | null, options?: LoggerOptions);
     debug(...args: unknown[]): void;
     info(...args: unknown[]): void;
     warn(...args: unknown[]): void;
     error(...args: unknown[]): void;
-    static create(logger?: LoggerLike | null): Logger;
+    static create(logger?: LoggerLike | null, options?: LoggerOptions): Logger;
+    static createSilent(): Pick<Logger, 'debug' | 'info' | 'warn' | 'error'>;
+    static generateTraceId(): string;
+    static isValidLogger(logger: unknown): boolean;
+    static withTraceId: ((fn: () => void | Promise<void>, traceId?: string) => void | Promise<void>) | undefined;
+    static getTraceId: (() => string | null) | undefined;
+    static createWithTimestamp(customLogger?: LoggerLike | null): Pick<Logger, 'debug' | 'info' | 'warn' | 'error'>;
 }
 
 export type CacheLockLike = HubCacheLockLike;
@@ -315,26 +321,8 @@ export declare class ModelInstance<TDocument = any> implements ModelInstanceCont
     findOneById(id: unknown, options?: unknown): import('./model').PopulateProxy<import('./model').ModelDocument<TDocument> | null>;
     findById(id: unknown, options?: unknown): import('./model').PopulateProxy<import('./model').ModelDocument<TDocument> | null>;
     findByIds(ids: unknown[], options?: unknown): import('./model').PopulateProxy<Array<import('./model').ModelDocument<TDocument>>>;
-    findPage(options: { totals: { mode: 'sync'; } & Record<string, unknown>; } & Record<string, unknown>): import('./model').PopulateProxy<{
-        items: Array<import('./model').ModelDocument<TDocument>>;
-        pageInfo: import('./model').ModelInstance<TDocument> extends {
-            findPage(options?: unknown): import('./model').PopulateProxy<infer TResult>;
-        } ? TResult extends { pageInfo: infer TPageInfo } ? TPageInfo : never : never;
-        totals: import('./model').ModelInstance<TDocument> extends {
-            findPage(options: { totals: { mode: 'sync'; } & Record<string, unknown>; } & Record<string, unknown>): import('./model').PopulateProxy<infer TResult>;
-        } ? TResult extends { totals: infer TTotals } ? TTotals : never : never;
-        meta?: import('./collection').MetaInfo;
-    }>;
-    findPage(options?: unknown): import('./model').PopulateProxy<{
-        items: Array<import('./model').ModelDocument<TDocument>>;
-        pageInfo: import('./model').ModelInstance<TDocument> extends {
-            findPage(options?: unknown): import('./model').PopulateProxy<infer TResult>;
-        } ? TResult extends { pageInfo: infer TPageInfo } ? TPageInfo : never : never;
-        totals?: import('./model').ModelInstance<TDocument> extends {
-            findPage(options?: unknown): import('./model').PopulateProxy<infer TResult>;
-        } ? TResult extends { totals?: infer TTotals } ? TTotals : never : never;
-        meta?: import('./collection').MetaInfo;
-    }>;
+    findPage(options: { totals: { mode: 'sync'; } & Record<string, unknown>; } & Record<string, unknown>): import('./model').PopulateProxy<import('./model').ModelSyncPageResult<TDocument>>;
+    findPage(options?: unknown): import('./model').PopulateProxy<import('./model').ModelPageResult<TDocument>>;
     findAndCount(query?: unknown, options?: unknown): import('./model').PopulateProxy<{ data: Array<import('./model').ModelDocument<TDocument>>; total: number; }>;
     vectorSearch(options: import('./model').ModelVectorSearchOptions): Promise<Array<import('./collection').VectorSearchHit<import('./model').ModelDocument<TDocument>>>>;
     count(query?: unknown, options?: unknown): Promise<number>;

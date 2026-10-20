@@ -9,6 +9,7 @@ export { MemoryCache } from './memory-cache';
 export { createRedisCacheAdapter } from './redis-cache-adapter';
 export { DistributedCacheInvalidator } from './distributed-cache-invalidator';
 import { MultiLevelCache as BaseMultiLevelCache } from 'cache-hub';
+import { createBackfillFence, registerBackfillFence, type BackfillFence } from './multi-level-backfill-fence';
 
 export type {
     CacheLike,
@@ -26,7 +27,7 @@ export type {
     RedisPubSubLike,
 } from './distributed-cache-invalidator';
 
-import type { CacheLike, LockManager as CacheLockLike } from 'cache-hub';
+import type { CacheLike, CacheSetOptions, LockManager as CacheLockLike } from 'cache-hub';
 
 type PublishMessage =
     | { type: 'del' | 'delete' | 'invalidateKey'; key: string; ts: number }
@@ -39,19 +40,70 @@ type MultiLevelCacheOptions = Omit<HubMultiLevelCacheOptions, 'publish'> & {
 };
 
 export class MultiLevelCache extends BaseMultiLevelCache {
+    private readonly _backfillFence: BackfillFence;
     private readonly _localCompat: CacheLike;
     private readonly _remoteCompat: CacheLike | undefined;
     private readonly _publishRef: { current?: PublishFn };
 
     constructor(options: MultiLevelCacheOptions) {
         const publishRef: { current?: PublishFn } = { current: options.publish };
+        const fence = createBackfillFence(options.local, !!options.remote && options.backfillOnRemoteHit !== false);
         super({
             ...options,
+            local: fence.local,
             publish: (msg) => publishRef.current?.(msg),
         });
+        this._backfillFence = fence;
+        registerBackfillFence(this, fence);
         this._localCompat = options.local;
         this._remoteCompat = options.remote;
         this._publishRef = publishRef;
+    }
+
+    override get<T = any>(key: string): Promise<T | undefined> {
+        return this._backfillFence.read(() => super.get<T>(key));
+    }
+
+    override getMany(keys: string[]): ReturnType<BaseMultiLevelCache['getMany']> {
+        return this._backfillFence.read(() => super.getMany(keys));
+    }
+
+    override set(key: string, value: unknown, ttl?: number, options?: CacheSetOptions): Promise<void> {
+        return this._backfillFence.write(() => super.set(key, value, ttl, options));
+    }
+
+    override setMany(entries: Record<string, unknown>, ttl?: number): Promise<boolean> {
+        return this._backfillFence.write(() => super.setMany(entries, ttl));
+    }
+
+    /** Deletes one key after revoking and draining older anonymous backfills. */
+    override del(key: string): Promise<boolean> {
+        return this._backfillFence.mutate(() => super.del(key));
+    }
+
+    /** Preserves the L1 deletion count and the empty-batch fast path. */
+    override delMany(keys: string[]): Promise<number> {
+        const selectedKeys = [...keys];
+        return selectedKeys.length === 0 ? super.delMany(selectedKeys) : this._backfillFence.mutate(() => super.delMany(selectedKeys));
+    }
+
+    /** Deletes matching keys without clearing unrelated L1 entries. */
+    override delPattern(pattern: string): Promise<number> {
+        return this._backfillFence.mutate(() => super.delPattern(pattern));
+    }
+
+    /** Clears only L1 and prevents older remote reads from refilling it. */
+    override clear(): Promise<void> {
+        return this._backfillFence.mutate(() => super.clear(), true);
+    }
+
+    override invalidateByTag(tag: string): Promise<void> {
+        return this._backfillFence.invalidate(() => super.invalidateByTag(tag));
+    }
+
+    override destroy(): void {
+        this._backfillFence.revoke();
+        super.destroy();
     }
 
     setPublish(publish: PublishFn): void {
@@ -64,13 +116,15 @@ export class MultiLevelCache extends BaseMultiLevelCache {
     }
 
     async invalidateFromRemote(kind: 'pattern' | 'key', value: string): Promise<void> {
-        if (kind === 'pattern') {
-            await this._localCompat.delPattern(value);
-            await this._remoteCompat?.delPattern(value);
-        } else {
-            await this._localCompat.del(value);
-            await this._remoteCompat?.del(value);
-        }
+        await this._backfillFence.mutate(async () => {
+            if (kind === 'pattern') {
+                await this._localCompat.delPattern(value);
+                await this._remoteCompat?.delPattern(value);
+            } else {
+                await this._localCompat.del(value);
+                await this._remoteCompat?.del(value);
+            }
+        });
     }
 }
 

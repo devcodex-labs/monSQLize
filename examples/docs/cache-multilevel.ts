@@ -3,7 +3,7 @@
  * See: docs/cache-and-function-cache.md
  *
  * This example demonstrates the database-runtime cache hierarchy:
- *   L1 — MemoryCache (process-local, sub-millisecond)
+ *   L1 — MemoryCache (process-local)
  *   L2 — Redis adapter (cross-process, optional)
  *   Distributed invalidation — push a single signal to flush all nodes
  *
@@ -21,7 +21,7 @@ import { setupExample, teardownExample } from '../helpers/bootstrap.js';
 interface UserDoc { username: string; email: string; role: string; score: number; }
 
 // ── Minimal Redis-compatible stub (no real Redis required) ────────────────────
-// Fully simulates the Redis client surface, including pub/sub on('message').
+// Covers the example's basic Redis/pub-sub surface; it does not validate real Redis behavior.
 class InMemoryRedisStub {
     constructor(private readonly peers: InMemoryRedisStub[] = []) {}
     private store = new Map<string, { value: string; exp?: number }>();

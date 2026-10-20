@@ -1,5 +1,13 @@
 # find()
 
+开启 `meta: true` 时，等待 find 链和调用 `toArray()` 都返回 `ResultWithMeta` 信封，记录数组位于 `data`；未开启 metadata 时返回记录数组。TypeScript 返回类型区分这两种形式。
+
+## ID 列表查询与投影
+
+`findByIds(ids, { preserveOrder: true })` 对 ObjectId 去重，以单次原生查询取得记录，再按输入顺序返回。MongoDB 先应用全局 `sort`/`skip`/`limit` 选择子集。普通 `_id` 排除及支持的计算 `_id` 表达式（含 `$$REMOVE`）仍保留该顺序；内部身份路径旁路结果缓存。Model 查询保留软删除可见性和最终 hook 选项。
+
+保留输入顺序时，find 专用 `_id` 投影（`$slice`、`$elemMatch`、`$meta`）、嵌套或点路径 `_id` 改写、显式 `_id: undefined`、`returnKey: true` 和有效 `raw: true` 会报 `INVALID_OPERATION`。计算 `_id` 还拒绝真值的 `fieldsAsRaw._id`/`value` 及非普通映射。BSON 配置继承 Collection 设置，调用级 `raw: false` 和 `fieldsAsRaw: {}` 可覆盖。其他字段仍保留支持的原生特殊投影；需要原生投影路径时使用 `preserveOrder: false`。原生结果缓存区分有效 BSON 解码模式，精确失效使用相同缓存键。
+
 ## 概述
 
 `find()` 用于从 MongoDB 集合读取多条文档。列表查询、排序、分页、投影、流式读取、缓存读取，以及任何返回零条或多条记录的查询，都可以从这个方法开始。

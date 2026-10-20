@@ -1,5 +1,9 @@
 # 表达式函数参考
 
+DSL 中带引号的字符串是字面量：`expr('"$price"')` 与 `expr('LITERAL("$price")')` 返回文本 `$price`，不带引号的 `expr('$price')` 引用字段。`LITERAL` 保留对象与数组数据，不把其中内容解释为 DSL。
+
+在 `$match` 中，请把表达式放在阶段根部（`{ $match: expr('price > 10') }`）或原生 `$expr` 中。将 DSL 标记用作字段查询值会报 `INVALID_EXPRESSION`；原生谓词、BSON/Date/RegExp 值和 `$literal` 数据继续按原生处理。引号内字符串按连续反斜杠的奇偶性识别分隔符，转义不会额外创建表达式作用域。
+
 嵌套 facet/lookup/unionWith pipeline 及 merge.whenMatched pipeline 保留各 stage 上下文。SUBSTR/SUBSTR_CP/SLICE/ARRAY_ELEM_AT 的数值参数支持表达式，不截断为整数。MAP/FILTER 按词法作用域处理标量变量、嵌套及引号字面量；LET 按平衡分隔符拆绑定，仍使用显式 `$$name` 引用。SWITCH 保留显式 null/false/0/空字符串 default；省略 default 时沿用 MongoDB 原生失败行为。支持 `price * 1e-3` 等科学计数，损坏数值表达式报 INVALID_EXPRESSION。
 
 DSL 裸 lambda 名字与 MongoDB 显式 `$$` 变量分别绑定。MAP/FILTER 绑定自己的命名变量；REDUCE 只在主体内引入原生 `$$value`/`$$this`，input 与 initialValue 使用外层作用域。LET 的初始值使用外层作用域，主体使用其声明的显式变量。原生 JSON `$map`、`$filter`、`$reduce`、`$let` 遵循相同词法边界。引号文本与 `$literal` 内容保持原样。

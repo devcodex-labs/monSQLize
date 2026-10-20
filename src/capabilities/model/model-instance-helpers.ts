@@ -15,7 +15,7 @@ import type {
 import { PopulatePromise, type ModelCollectionLike, type ModelRuntimeLike, type PopulatePath } from './populate-promise';
 import { normalizePopulateConfig, normalizeRelationSelect } from './definition-validator';
 import { Model } from './model-registry';
-import { applySort, getByPath, groupBy, pickFields, serializeDocument, toKey, unique } from './model-utils';
+import { getByPath, groupBy, pickFields, serializeDocument, toKey, unique } from './model-utils';
 import {
     applyModelInsertTimestamps,
     applyModelInsertVersion,
@@ -153,12 +153,10 @@ function dedupeDocuments<TDocument extends Record<string, unknown>>(documents: T
 function rebuildPopulateMatches<TDocument extends Record<string, unknown>>(
     localValue: unknown,
     grouped: Map<string, TDocument[]>,
-    sort?: Record<string, 1 | -1>,
 ): TDocument[] {
     const matches = flattenComparableValues(localValue)
         .flatMap((value) => grouped.get(toKey(value)) ?? []);
-    const deduped = dedupeDocuments(matches);
-    return sort ? applySort(deduped, sort) : deduped;
+    return dedupeDocuments(matches);
 }
 
 function projectPopulatedDocument(
@@ -265,7 +263,9 @@ export async function populateModelPath<TDocument>(
         return hydrated;
     };
 
-    if (config.limit !== undefined || config.skip !== undefined) {
+    // MongoDB owns BSON/null/array/collation ordering; keep unsorted reads batched.
+    const hasSort = Boolean(config.sort && Object.keys(config.sort).length > 0);
+    if (hasSort || config.limit !== undefined || config.skip !== undefined) {
         const scopedOptions = {
             ...readOptions,
             ...(config.skip !== undefined ? { skip: config.skip } : {}),
@@ -287,7 +287,7 @@ export async function populateModelPath<TDocument>(
         const hydrated = await hydrateRelated(rows);
         const grouped = groupBy(hydrated, (item) => getByPath(item, relation.foreignField));
         for (const [index, doc] of docs.entries()) {
-            const matches = rebuildPopulateMatches(localValues[index], grouped, config.sort);
+            const matches = rebuildPopulateMatches(localValues[index], grouped);
             const projectedMatches = matches.map((item) => projectPopulatedDocument(item, effectiveSelect, nestedPaths));
             (doc as Record<string, unknown>)[config.path] = relation.single ? (projectedMatches[0] ?? null) : projectedMatches;
         }

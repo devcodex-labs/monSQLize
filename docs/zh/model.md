@@ -1,5 +1,11 @@
 # Model API 文档
 
+`deleteOne`、`deleteMany` 及其带关系保护的入口执行软删除时，在同次更新中推进配置的 `updatedAt` 字段和 version。创建时间不变，自定义或关闭时间戳的配置保持有效；重复删除不会推进已删除记录，force 删除仍为物理删除。
+
+根导出的 `ModelInstance` 可用于 `instanceof`，并保留泛型文档类型和写选项约束。实例请从 `runtime.model()` 获取，类型层构造函数仍为私有。同步分页 totals 的 `total`、`totalPages` 为数值类型。
+
+注入 schema 扩展工厂按实际区块处理 block、catch、循环绑定；区块内同名局部变量不会遮住区块外的闭包引用。不确定的捕获继续保守处理：有意共享时复用同一函数对象，不同配置使用隔离的 schema runtime。
+
 启用 version 时，软删除和恢复（包括批量及别名路径）都会推进版本；此前 hydrate 的文档应重新读取后再保存。受保护关系删除检查最终 `before` hook 的 filter/session，写入保留该业务条件并绑定已检查的 `_id`。普通受保护删除保留软删除，显式 force 路径不执行 Model hook。Model `findByIds` 在同一次查询中先过滤可见性、再执行原投影，覆盖计算及 id-only 投影；使用最终 hook 选项并保留 after 改结果。写 hook 工厂取得公开 ModelInstance；插入 defaults 在 before hook 前计算一次，保留改参/改结果语义，before 抛错阻断写入，v1 after 抛错不会撤销已完成写入。CJS 与 ESM 入口均导出 ModelInstance。
 
 Model 层在 MongoDB runtime 之上提供 schema 校验、自定义方法、生命周期钩子、relations 和 Model 作用域写入能力。它不会隐藏 collection 访问，而是把重复的文档工作流收口到稳定的 Model 表面。

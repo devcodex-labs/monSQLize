@@ -1,5 +1,7 @@
 # Populate API - 关联查询
 
+传入非空 `sort` 时，关联记录按父文档逐个顺序查询，由 MongoDB 执行排序，遵从原生 null/missing、BSON、数组及关联集合的 collation 规则。`skip`、`limit` 应用于每个父文档的关联查询。这会比无排序 populate 增加数据库查询次数，避免维护另一套 JavaScript 排序规则。父查询的 collation 不会自动复制到关联读取。无排序时保留每批最多 200 个不同 key 的批读路径。
+
 **功能**: Model层关联查询，支持6个方法（）
 
 ---

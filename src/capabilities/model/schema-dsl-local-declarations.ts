@@ -123,3 +123,82 @@ export function findLocalDeclarationEnd(source: string, start: number): number {
     }
     return source.length;
 }
+
+type LocalBindingScope = { start: number; end: number };
+type LocalDeclarationBinding = {
+    kind: string;
+    pattern: string;
+    index: number;
+    // Undefined denotes a function binding; null means the scope could not be proven.
+    scope: LocalBindingScope | null | undefined;
+};
+
+function findClosingPair(source: string, start: number, open: string, close: string): number {
+    let depth = 0;
+    for (let index = start; index < source.length; index++) {
+        if (source[index] === open) depth++;
+        else if (source[index] === close && --depth === 0) return index;
+    }
+    return -1;
+}
+
+/** Resolves only proven lexical ranges; uncertain syntax stays closure-sensitive. */
+function resolveLocalBindingScope(source: string, start: number, index: number): LocalBindingScope | null | undefined {
+    const braces: number[] = [];
+    const parens: number[] = [];
+    for (let at = start; at < index; at++) {
+        if (source[at] === '{') braces.push(at);
+        else if (source[at] === '}') braces.pop();
+        else if (source[at] === '(') parens.push(at);
+        else if (source[at] === ')') parens.pop();
+    }
+    for (const paren of [...parens].reverse()) {
+        const header = /\bfor(?:\s+await)?\s*$/.exec(source.slice(start, paren));
+        if (!header) continue;
+        const close = findClosingPair(source, paren, '(', ')');
+        const body = nextNonWhitespaceIndex(source, close + 1);
+        if (close < 0 || source[body] !== '{') return null;
+        const end = findClosingPair(source, body, '{', '}');
+        return end < 0 ? null : { start: start + header.index, end };
+    }
+    if (braces.length <= 1) return undefined;
+    const block = braces[braces.length - 1];
+    const end = findClosingPair(source, block, '{', '}');
+    return end < 0 ? null : { start: block, end };
+}
+
+/** Collects declarations from masked source without hoisting block bindings into the function. */
+export function collectLocalDeclarationBindings(
+    source: string, start: number, end: number,
+    excluded: ReadonlyArray<{ start: number; end: number }>,
+): LocalDeclarationBinding[] {
+    const result: LocalDeclarationBinding[] = [];
+    const text = source.slice(start, end + 1);
+    const excludedAt = (index: number) => excluded.some((range) => index >= range.start && index <= range.end);
+    const declarations = /\b(const|let|var)\b/g;
+    let match: RegExpExecArray | null;
+    while ((match = declarations.exec(text)) !== null) {
+        const index = start + match.index;
+        if (excludedAt(index)) continue;
+        const from = nextNonWhitespaceIndex(text, match.index + match[0].length);
+        if (from < 0) continue;
+        const to = findLocalDeclarationEnd(text, from);
+        result.push({ kind: match[1], pattern: text.slice(from, to), index,
+            scope: match[1] === 'var' ? undefined : resolveLocalBindingScope(source, start, index) });
+        declarations.lastIndex = Math.max(declarations.lastIndex, to);
+    }
+    for (const item of text.matchAll(/\bclass\s+([$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*)/gu)) {
+        const index = start + (item.index ?? 0);
+        if (!excludedAt(index)) result.push({ kind: 'class', pattern: item[1], index,
+            scope: resolveLocalBindingScope(source, start, index) });
+    }
+    for (const item of text.matchAll(/\bcatch\s*\(([^)]*)\)/g)) {
+        const index = start + (item.index ?? 0);
+        if (excludedAt(index)) continue;
+        const body = nextNonWhitespaceIndex(source, index + item[0].length);
+        const last = source[body] === '{' ? findClosingPair(source, body, '{', '}') : -1;
+        result.push({ kind: 'catch', pattern: item[1], index,
+            scope: last < 0 ? null : { start: index, end: last } });
+    }
+    return result;
+}

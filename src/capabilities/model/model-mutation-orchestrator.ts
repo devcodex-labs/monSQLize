@@ -234,7 +234,13 @@ async function runStrictUpdateBatch<TDocument>(
 
 function buildSoftDeleteUpdate<TDocument>(context: ModelMutationContext<TDocument>): unknown {
     const config = context.softDeleteConfig!;
-    return applyModelVersionIncrement({ $set: { [config.field]: config.type === 'boolean' ? true : context.nowDate() } }, context.versionConfig);
+    const now = context.nowDate();
+    const update = applyModelUpdateTimestamps(
+        { $set: { [config.field]: config.type === 'boolean' ? true : now } },
+        context.timestampsConfig,
+        () => now,
+    );
+    return applyModelVersionIncrement(update, context.versionConfig);
 }
 
 function buildSoftDeleteFilter(filter: unknown, config: ModelSoftDeleteConfig): Record<string, unknown> {

@@ -4,6 +4,10 @@ Totals cache keys distinguish BSON/RegExp queries and the effective count option
 
 ## Overview
 
+`findPage` is read-only: a top-level `$out` or `$merge` in `pipeline` throws `INVALID_OPERATION` before cache or database access. Pipeline structure is captured when called. Use `aggregate` for write pipelines, subject to write-path policy.
+
+With a custom pipeline, `projection`/`project` is applied after the user stages, and cursor sort fields remain in returned items. Inclusion, exclusion and array projections are supported. Find-only `$slice`, `$elemMatch` and positional projections with a pipeline throw `INVALID_OPERATION`; use aggregation expressions with `aggregate` instead. Without a pipeline, native find projections keep their existing path.
+
 `findPage` is an advanced paging query method provided by monSQLize. It supports multiple paging modes, including cursor paging, page jump, streaming query, and total statistics.
 
 ## Method signature

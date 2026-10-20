@@ -10,7 +10,9 @@ import {
     MemoryCache,
     MultiLevelCache,
     type CacheLike,
+    type CacheSetOptions,
 } from '../capabilities/cache';
+import { withMultiLevelBackfillCleanup } from '../capabilities/cache/multi-level-backfill-fence';
 
 function isCacheLike(value: unknown): value is CacheLike {
     if (!value || typeof value !== 'object') return false;
@@ -109,7 +111,23 @@ function wrapRemoteCache(
                 case 'get':
                     return (cacheKey: string) => target.get(key(cacheKey));
                 case 'set':
-                    return (cacheKey: string, value: unknown, ttl?: number) => target.set(key(cacheKey), value, resolveTtl(ttl));
+                    return (cacheKey: string, value: unknown, ttl?: number, setOptions?: CacheSetOptions) => target.set(key(cacheKey), value, resolveTtl(ttl), setOptions);
+                case 'getRemainingTtl': {
+                    const getTtl = target.getRemainingTtl;
+                    return typeof getTtl === 'function'
+                        ? (cacheKey: string) => getTtl.call(target, key(cacheKey))
+                        : undefined;
+                }
+                case 'getRemainingTtlMany': {
+                    const getTtls = target.getRemainingTtlMany;
+                    if (typeof getTtls !== 'function') return undefined;
+                    return async (cacheKeys: string[]) => {
+                        const result = await getTtls.call(target, keys(cacheKeys));
+                        return Object.fromEntries(cacheKeys
+                            .filter((cacheKey) => Object.prototype.hasOwnProperty.call(result, key(cacheKey)))
+                            .map((cacheKey) => [cacheKey, result[key(cacheKey)]]));
+                    };
+                }
                 case 'del':
                     return (cacheKey: string) => target.del(key(cacheKey));
                 case 'exists':
@@ -219,10 +237,10 @@ export function normalizeRuntimeCacheWithLifecycle(
         });
         return {
             cache: multi,
-            close: async () => {
+            close: () => withMultiLevelBackfillCleanup(multi, async () => {
                 await local.close?.();
                 await remote?.close?.();
-            },
+            }),
         };
     }
 
@@ -248,10 +266,10 @@ export function normalizeRuntimeCacheWithLifecycle(
         });
         return {
             cache: multi,
-            close: async () => {
+            close: () => withMultiLevelBackfillCleanup(multi, async () => {
                 await local.close?.();
                 await remote?.close?.();
-            },
+            }),
         };
     }
 

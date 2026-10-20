@@ -408,6 +408,17 @@ type LegacyModelSyncTotalsInfo<TDocument = any> = unknown extends TDocument ? an
 });
 export type RestoreResult = Pick<UpdateResult, 'modifiedCount'> & Partial<UpdateResult>;
 
+export interface ModelPageResult<TDocument = any> {
+    items: Array<ModelDocument<TDocument>>;
+    pageInfo: LegacyModelPageInfo<TDocument>;
+    totals?: LegacyModelTotalsInfo<TDocument>;
+    meta?: import('./collection').MetaInfo;
+}
+
+export interface ModelSyncPageResult<TDocument = any> extends Omit<ModelPageResult<TDocument>, 'totals'> {
+    totals: LegacyModelSyncTotalsInfo<TDocument>;
+}
+
 export type ModelDocument<TDocument = any> = TDocument & Record<string, unknown> & {
     save(): Promise<ModelDocument<TDocument>>;
     remove(): Promise<boolean>;
@@ -470,18 +481,8 @@ export interface ModelInstance<TDocument = any> {
      * @param options Pagination options including `limit`, `cursor`/`page`, `filter`, and `sort`.
      * @returns Result object containing items, page information, and optional totals.
      */
-    findPage(options: { totals: { mode: 'sync'; } & Record<string, unknown>; } & Record<string, unknown>): PopulateProxy<{
-        items: Array<ModelDocument<TDocument>>;
-        pageInfo: LegacyModelPageInfo<TDocument>;
-        totals: LegacyModelSyncTotalsInfo<TDocument>;
-        meta?: import('./collection').MetaInfo;
-    }>;
-    findPage(options?: unknown): PopulateProxy<{
-        items: Array<ModelDocument<TDocument>>;
-        pageInfo: LegacyModelPageInfo<TDocument>;
-        totals?: LegacyModelTotalsInfo<TDocument>;
-        meta?: import('./collection').MetaInfo;
-    }>;
+    findPage(options: { totals: { mode: 'sync'; } & Record<string, unknown>; } & Record<string, unknown>): PopulateProxy<ModelSyncPageResult<TDocument>>;
+    findPage(options?: unknown): PopulateProxy<ModelPageResult<TDocument>>;
     /**
      * Finds documents and returns the unpaginated total count.
      * @param query Optional filter.

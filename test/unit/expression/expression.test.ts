@@ -56,7 +56,7 @@ describe('P2-B expression helpers', () => {
         const literal: any = compile('REDUCE([10],0,(acc,item)=>MAP([1],value,LITERAL({"name":"$$value","$map":{"as":"value","in":"$$value"}})))');
         assert.deepEqual(literal.$reduce.in.$map.in, { $literal: { name: '$$value', $map: { as: 'value', in: '$$value' } } });
         const text: any = compile("REDUCE([10],0,(acc,item)=>MAP([1],value,CONCAT('$$value', TO_STRING($$value))))");
-        assert.equal(text.$reduce.in.$map.in.$concat[0], '$$value');
+        assert.deepEqual(text.$reduce.in.$map.in.$concat[0], { $literal: '$$value' });
         const dotted: any = compile('REDUCE([10],0,(acc,item)=>MAP(items,value,$$value.name))');
         assert.equal(dotted.$reduce.in.$map.in, '$$' + dotted.$reduce.in.$map.as + '.name');
     });

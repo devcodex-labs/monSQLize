@@ -1,6 +1,7 @@
 import { expectAssignable, expectNotAssignable, expectType } from 'tsd';
 import MonSQLize, {
     compilePipelineExpressions,
+    Logger,
     type AdminAccessor,
     type CacheLike,
     type CacheLockLike,
@@ -38,7 +39,7 @@ import MonSQLize, {
     type LoggerLike,
     type ModelAccessor,
     type ModelBindingAccessor,
-    type ModelInstance,
+    ModelInstance,
     type MonSQLizeOptions,
     type MonSQLizeSchemaDslRuntime,
     type PageResult,
@@ -221,6 +222,9 @@ findChain.project({ name: 1 });
 expectType<Promise<unknown>>(findChain.explain());
 const metaFindChain = users.find({ name: 'Ada' }, { meta: true });
 expectAssignable<Promise<ResultWithMeta<{ name: string; }[]>>>(metaFindChain);
+expectType<Promise<ResultWithMeta<{ name: string; }[]>>>(metaFindChain.toArray());
+expectNotAssignable<Promise<{ name: string; }[]>>(metaFindChain.toArray());
+expectType<Promise<{ name: string; }[]>>(findChain.toArray());
 metaFindChain.limit(1);
 expectType<Promise<ResultWithMeta<{ name: string; } | null>>>(users.findOne({ name: 'Ada' }, { meta: true }));
 
@@ -231,6 +235,9 @@ aggregateChain.batchSize(100);
 expectType<Promise<unknown>>(aggregateChain.explain());
 const metaAggregateChain = users.aggregate<{ total: number }>([], { meta: true });
 expectAssignable<Promise<ResultWithMeta<Array<{ total: number }>>>>(metaAggregateChain);
+expectType<Promise<ResultWithMeta<Array<{ total: number }>>>>(metaAggregateChain.toArray());
+expectNotAssignable<Promise<Array<{ total: number }>>>(metaAggregateChain.toArray());
+expectType<Promise<unknown[]>>(aggregateChain.toArray());
 expectType<Promise<Array<VectorSearchHit<{ name: string; }>>>>(users.vectorSearch({
     index: 'users_embedding_index',
     path: 'embedding',
@@ -278,6 +285,35 @@ expectType<Promise<unknown>>(functionCache.execute('lookup'));
 expectType<FunctionCacheStats | Record<string, FunctionCacheStats> | null>(functionCache.getStats('lookup'));
 
 declare const modelInstance: ModelInstance<{ name: string }>;
+declare const runtimeModelInstance: import('../../types/runtime').ModelInstance<{ name: string }>;
+expectAssignable<ModelInstance<{ name: string }>>(runtimeModelInstance);
+expectAssignable<import('../../types/runtime').ModelInstance<{ name: string }>>(modelInstance);
+// @ts-expect-error Runtime constructors remain private.
+new ModelInstance();
+// @ts-expect-error Preserve the original ModelWriteOptions constraint.
+modelInstance.updateOne({}, { $set: { name: 'Grace' } }, { expectedVersion: 'invalid' });
+if (modelInstance instanceof ModelInstance) {
+    // @ts-expect-error instanceof must not loosen an already typed model's options.
+    modelInstance.updateOne({}, {}, { expectedVersion: 'invalid' });
+    modelInstance.findPage({ totals: { mode: 'sync' } }).then((page) => {
+        expectType<number>(page.totals.total);
+        expectType<number>(page.totals.totalPages);
+        expectType<boolean>(page.pageInfo.hasNext);
+        type IsAny<T> = 0 extends (1 & T) ? true : false;
+        type IsNever<T> = [T] extends [never] ? true : false;
+        expectType<false>(false as IsAny<typeof page.totals.total>);
+        expectType<false>(false as IsNever<typeof page.totals.total>);
+    });
+}
+const declaredLogger = new Logger(logger, { structured: true, enableTraceId: false });
+expectType<Logger>(declaredLogger);
+expectType<Logger>(Logger.create(logger, { enableTraceId: true }));
+expectType<string>(Logger.generateTraceId());
+expectType<boolean>(Logger.isValidLogger(logger));
+expectType<Pick<Logger, 'debug' | 'info' | 'warn' | 'error'>>(Logger.createSilent());
+expectType<Pick<Logger, 'debug' | 'info' | 'warn' | 'error'>>(Logger.createWithTimestamp(logger));
+if (Logger.withTraceId) expectType<void | Promise<void>>(Logger.withTraceId(() => undefined));
+if (Logger.getTraceId) expectType<string | null>(Logger.getTraceId());
 declare const inferredModelAccessor: ReturnType<MonSQLize['model']>;
 declare const inferredCollectionAccessor: ReturnType<MonSQLize['collection']>;
 expectType<Record<string, RelationConfig>>(modelInstance.getRelations());

@@ -69,12 +69,14 @@ try {
     assert(!paths.some((entry) => entry.endsWith('.map')), 'packed artifact must not contain sourcemaps');
 
     const tarballPath = path.join(tempRoot, packResult.filename);
-    run('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', ...localRehearsalTarballs, tarballPath], { cwd: consumerRoot });
+    run('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', ...localRehearsalTarballs, tarballPath,
+        `@types/node@${packageJson.devDependencies['@types/node']}`], { cwd: consumerRoot });
 
     run(process.execPath, ['-e', "const M=require('monsqlize'); const p=require('monsqlize/package.json'); if(!M || p.version!==process.argv[1] || typeof M.defineModel!=='function' || typeof M.dataTasks?.preview!=='function' || typeof M.dataTasks?.restore!=='function') process.exit(1)", packageJson.version], { cwd: consumerRoot });
     run(process.execPath, ['--input-type=module', '-e', "import M,{dataTasks,defineModel} from 'monsqlize'; import {createRequire} from 'node:module'; const p=createRequire(import.meta.url)('monsqlize/package.json'); if(!M || p.version!==process.argv[1] || typeof M.defineModel!=='function' || typeof defineModel!=='function' || M.dataTasks!==undefined || typeof dataTasks?.apply!=='function' || typeof dataTasks?.previewRestore!=='function') process.exit(1)", packageJson.version], { cwd: consumerRoot });
     run(process.execPath, ['-e', "const assert=require('node:assert/strict'); const M=require('monsqlize'); assert.equal(typeof M.ModelInstance,'function'); const instance=new M.ModelInstance({}, {options:{}}, {collectionName:'packed',dbName:'packed',definition:{autoIndex:false}}); assert(instance instanceof M.ModelInstance);"], { cwd: consumerRoot });
     run(process.execPath, ['--input-type=module', '-e', "import assert from 'node:assert/strict'; import M,{ModelInstance} from 'monsqlize'; assert.strictEqual(M.ModelInstance,ModelInstance); const instance=new ModelInstance({}, {options:{}}, {collectionName:'packed',dbName:'packed',definition:{autoIndex:false}}); assert(instance instanceof ModelInstance);"], { cwd: consumerRoot });
+    run(process.execPath, ['--input-type=module', '-e', "import assert from 'node:assert/strict'; import {Logger} from 'monsqlize'; assert.equal(typeof globalThis.require,'undefined'); assert.match(Logger.generateTraceId(),/^[0-9a-f]{16}$/); const entries=[]; const sink=Object.fromEntries(['debug','info','warn','error'].map(level=>[level,message=>entries.push(message)])); await Logger.withTraceId(()=>Logger.create(sink,{structured:true}).info('packed ESM')); assert.match(JSON.parse(entries[0]).traceId,/^[0-9a-f]{16}$/);"], { cwd: consumerRoot });
     const dependencyTree = JSON.parse(run('npm', ['ls', '--all', '--json'], { cwd: consumerRoot, quiet: true }));
     const installedSchemaDslVersion = findDependencyVersion(dependencyTree, 'schema-dsl');
     assert(
@@ -84,7 +86,11 @@ try {
 
     const typeFixture = path.join(consumerRoot, 'consumer.ts');
     fs.writeFileSync(typeFixture, "import MonSQLize, { dataTasks, defineModel, Model, type DataTaskJob, type InferModelDocument } from 'monsqlize';\nconst source = { type: 'mongodb' as const, databaseName: 'source', config: { uri: 'mongodb://localhost:27017' } };\nconst target = { ...source, databaseName: 'target' };\nconst job: DataTaskJob = { name: 'smoke', source, target, targetEnvironment: 'test', collections: [{ name: 'items', indexes: [{ key: { code: 1 }, options: { unique: true } }], data: { all: true, identity: { mode: 'fields', fields: ['code'] }, maxDocuments: 100 } }], backup: { maxBytes: 1048576 } };\nconst User = defineModel('typed_users', { schema: { email: 'email!', age: 'number?' } });\ntype IsAny<T> = 0 extends (1 & T) ? true : false;\ntype AssertFalse<T extends false> = T;\ntype DescriptorDocumentIsNotAny = AssertFalse<IsAny<InferModelDocument<typeof User>>>;\nModel.define(User);\nconst typedRuntime = new MonSQLize(source);\nconst typedUsers = typedRuntime.model(User);\nvoid (null as DescriptorDocumentIsNotAny | null); void typedUsers; void dataTasks.preview(job);\n");
-    fs.writeFileSync(path.join(consumerRoot, 'tsconfig.json'), JSON.stringify({ compilerOptions: { strict: true, noEmit: true, module: 'NodeNext', moduleResolution: 'NodeNext', target: 'ES2022', skipLibCheck: true }, files: ['consumer.ts'] }, null, 2));
+    for (const extension of ['cts', 'mts']) {
+        fs.copyFileSync(path.join(root, 'test', 'fixtures', 'package-consumers', `root-contract.${extension}`),
+            path.join(consumerRoot, `root-contract.${extension}`));
+    }
+    fs.writeFileSync(path.join(consumerRoot, 'tsconfig.json'), JSON.stringify({ compilerOptions: { strict: true, noEmit: true, module: 'NodeNext', moduleResolution: 'NodeNext', target: 'ES2022', skipLibCheck: false }, files: ['consumer.ts', 'root-contract.cts', 'root-contract.mts'] }, null, 2));
     run(process.execPath, [require.resolve('typescript/bin/tsc'), '-p', path.join(consumerRoot, 'tsconfig.json')]);
 
     const installedPackage = JSON.parse(fs.readFileSync(path.join(consumerRoot, 'node_modules', 'monsqlize', 'package.json'), 'utf8'));

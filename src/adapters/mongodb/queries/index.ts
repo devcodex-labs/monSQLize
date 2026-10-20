@@ -14,6 +14,7 @@
  */
 
 import { readThroughCache } from '../../../core/cache-coordination';
+import { snapshotPipelineValue } from './pipeline-snapshot';
 import { ChangeStream, Collection, Document, FindOptions, Sort } from 'mongodb';
 
 import { createError, ErrorCodes } from '../../../core/errors';
@@ -509,9 +510,10 @@ export function createAggregateChain<TSchema extends Document = Document, TResul
     queryCache?: QueryCacheLike | null,
     writePipelineHooks?: AggregateWritePipelineHooks,
 ): AggregateChainContract<TResult> {
-    const processedPipeline = hasExpressionInPipeline(pipeline)
-        ? compilePipelineExpressions(pipeline)
-        : pipeline;
+    const pipelineSnapshot = snapshotPipelineValue(pipeline);
+    const processedPipeline = hasExpressionInPipeline(pipelineSnapshot)
+        ? compilePipelineExpressions(pipelineSnapshot)
+        : pipelineSnapshot;
 
     return new AggregateChain<TResult, TSchema>(
         collection,

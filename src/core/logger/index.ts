@@ -8,17 +8,10 @@
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
-import type { LoggerLike } from '../../../types/base';
+import { randomBytes } from 'node:crypto';
+import type { LoggerLike, LoggerOptions } from '../../../types/base';
 
-export type { LoggerLike } from '../../../types/base';
-
-/** Options for {@link Logger.create}. */
-export interface LoggerOptions {
-    /** When true, format log messages as JSON with level/timestamp/message/context fields. */
-    structured?: boolean;
-    /** When true, attach a trace ID from AsyncLocalStorage context to structured logs. */
-    enableTraceId?: boolean;
-}
+export type { LoggerLike, LoggerOptions } from '../../../types/base';
 
 // Single shared AsyncLocalStorage instance for trace IDs.
 let _storage: AsyncLocalStorage<{ traceId: string }> | null = null;
@@ -44,7 +37,7 @@ export class Logger {
             timestamp: new Date().toISOString(),
             message: msg,
         };
-        if (_storage) {
+        if (this._options.enableTraceId !== false && _storage) {
             const store = _storage.getStore();
             if (store?.traceId) {
                 entry.traceId = store.traceId;
@@ -128,8 +121,7 @@ export class Logger {
      * @since v1.4.0
      */
     static generateTraceId(): string {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        return require('crypto').randomBytes(8).toString('hex');
+        return randomBytes(8).toString('hex');
     }
 
     /**

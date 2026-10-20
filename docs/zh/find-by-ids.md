@@ -1,8 +1,18 @@
 # findByIds Reference
 
-Model `findByIds` 在同一次数据库查询中应用软删除可见性条件，使用最终 `before` hook 选项。包含、排除、计算投影与 `project` 别名保持原生语义，包括显式投影的删除标记。`onlyDeleted`、`withDeleted` 沿用原有优先级和校验。原始 Collection 查询不增加此过滤；`after` 替换的结果不会再次按删除标记过滤。
+Model `findByIds` 在同一次数据库查询中应用软删除可见性条件，使用最终 `before` hook 选项。受支持的包含、排除、计算投影与 `project` 别名保持原生语义，包括显式投影的删除标记；`preserveOrder` 的兼容边界见下文。`onlyDeleted`、`withDeleted` 沿用原有优先级和校验。原始 Collection 查询不增加此过滤；`after` 替换的结果不会再次按删除标记过滤。
 
-Model 过滤结果缓存按可见性条件隔离，并纳入精确 `findByIds` 写失效 descriptor。不支持 pattern 删除的缓存跳过这些过滤结果，带 session 的读取也绕过缓存。ID 校验、去重与 `preserveOrder` 行为不变。
+Model 过滤结果缓存按可见性条件隔离，并纳入精确 `findByIds` 写失效 descriptor。不支持 pattern 删除的缓存跳过这些过滤结果，带 session 的读取也绕过缓存。ID 校验与去重规则不变。
+
+## 投影与输入顺序
+
+`preserveOrder: true` 支持普通 `_id: 0`/`false` 排除和可保真还原的计算 `_id` 表达式（含 `$$REMOVE`），结果按输入 ID 顺序返回。内部身份在返回前移除或还原，这些路径旁路结果缓存。MongoDB 仍先应用 `sort`、`skip`、`limit` 选出子集，整个操作保持一次原生查询。
+
+find 专用的 `_id` 投影（`$slice`、`$elemMatch`、`$meta`）、嵌套或点路径改写 `_id`、显式 `_id: undefined` 无法可靠保留排序身份，会报 `INVALID_OPERATION`。保序与 `returnKey: true` 组合也会报错，包括指定 `_id_` hint 的情况，因为投影元数据仍可能替换返回的身份。其他字段的特殊投影在保留身份时继续由原生处理。需要原始原生投影路径时使用 `preserveOrder: false`。
+
+原生 raw BSON 结果模式（`raw: true`）同样不能与输入顺序保留组合。计算 `_id` 不能与真值的 `fieldsAsRaw._id` 或 `fieldsAsRaw.value` 同用：BSON 会在每层嵌套中应用这些字段名，可能将内部身份包装解码为原始字节。计算身份要求 `fieldsAsRaw` 为普通对象或空原型对象。检查采用 Collection 的有效配置；调用级 `raw: false` 和 `fieldsAsRaw: {}` 按原生驱动优先级覆盖继承配置。
+
+原生结果缓存会区分有效的 BSON 序列化和解码配置，包括继承配置及不可枚举的 `fieldsAsRaw` 标记。raw 结果不会预热普通解码文档的同一缓存项；精确 `findByIds` 失效使用相同的缓存键计算。
 
 ## 方法概述
 

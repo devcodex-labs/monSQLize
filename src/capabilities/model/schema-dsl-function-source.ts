@@ -4,6 +4,7 @@ import {
     findNestedFunctionScopes,
     findParentFunctionScope,
     isBoundByNestedFunctionScope,
+    type FunctionScopeInfo,
 } from './schema-dsl-function-scopes';
 
 const functionIdentifierPattern = /[$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*/gu;
@@ -383,7 +384,7 @@ function maskNumericLiterals(source: string): string {
     return masked;
 }
 
-function extractFunctionBoundIdentifiers(maskedSource: string): Set<string> {
+function extractFunctionBoundIdentifiers(maskedSource: string, blockScopes: FunctionScopeInfo[]): Set<string> {
     const identifiers = new Set<string>();
     const functionMatch = /^\s*(?:async\s+)?function(?:\s+([$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*))?\s*\(([^)]*)\)/u.exec(maskedSource);
     const arrowIndex = maskedSource.indexOf('=>');
@@ -405,7 +406,7 @@ function extractFunctionBoundIdentifiers(maskedSource: string): Set<string> {
         addParameterIdentifiers(methodMatch[2] ?? '', identifiers);
     }
 
-    addScopedLocalIdentifiers(maskedSource, 0, maskedSource.length - 1, identifiers, nestedFunctionScopes);
+    addScopedLocalIdentifiers(maskedSource, 0, maskedSource.length - 1, identifiers, nestedFunctionScopes, blockScopes);
     for (const nestedScope of nestedFunctionScopes) {
         if (nestedScope.kind !== 'function' || !nestedScope.name) {
             continue;
@@ -483,10 +484,11 @@ export function isClosureSensitiveFunctionSource(source: string, functionName?: 
     const templateExpressions = extractTemplateExpressionSource(source);
     const sourceWithTemplateExpressions = templateExpressions ? `${source}\n${templateExpressions}` : source;
     const maskedSource = maskNumericLiterals(maskFunctionLiteralsAndComments(sourceWithTemplateExpressions));
-    const boundIdentifiers = extractFunctionBoundIdentifiers(maskedSource);
+    const blockScopes: FunctionScopeInfo[] = [];
+    const boundIdentifiers = extractFunctionBoundIdentifiers(maskedSource, blockScopes);
     const functionMatch = /^\s*(?:async\s+)?function(?:\s+([$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*))?\s*\(([^)]*)\)/u.exec(maskedSource);
     const rootFunctionIndex = functionMatch ? maskedSource.indexOf('function', functionMatch.index ?? 0) : -1;
-    const nestedFunctionScopes = findNestedFunctionScopes(maskedSource, maskedSource.indexOf('=>'), rootFunctionIndex);
+    const nestedFunctionScopes = [...findNestedFunctionScopes(maskedSource, maskedSource.indexOf('=>'), rootFunctionIndex), ...blockScopes];
     if (functionName) {
         boundIdentifiers.add(functionName);
     }

@@ -69,6 +69,9 @@ async function main() {
     ]);
     console.log('\nCompleted orders:', (total[0] as Record<string, unknown>)?.completedOrders);
 
+    const withMeta = await orders.aggregate([{ $match: { status: 'completed' } }], { meta: true }).toArray();
+    console.log('Metadata result rows:', withMeta.data.length);
+
     await teardownExample(msq, server);
     console.log('✅ Aggregate example complete');
 }

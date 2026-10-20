@@ -2,6 +2,12 @@
 
 ## Changes after v3.3.1
 
+- Capture aggregate pipelines before policy checks; reject pagination write stages and unsupported find-only pipeline projections, and apply supported page projections after custom stages.
+- Preserve input ID order with ordinary excluded/computed identities in one native query, bypassing internal-identity caches; reject combinations that cannot retain identity. Use MongoDB sorting for sorted population and update soft-delete timestamps in the original mutation.
+- Correct quoted/literal DSL strings, escaped delimiters, match-expression roles and block-scoped schema factories; align generic ModelInstance, synchronous totals and metadata toArray types.
+- Drain admitted slow-log work before close, preserve event-time bounds and sort derived averages before pagination. Retain remote TTL/tag capabilities and coordinate shared-L1 backfills across tag/key/batch/pattern invalidation, L1 clear, cleanup and retry; preserve deletion results and unrelated keys.
+- Generate Logger trace IDs in pure ESM, honor explicit trace-output disabling and preserve successful insertMany results if diagnostic logging fails. Bilingual user documentation and strict packed CJS/ESM consumers accompany these unreleased changes.
+
 - Repair review follow-ups: guard relation deletes after final hooks; filter Model ID lookups before unchanged projections and isolate visibility caches, including exact invalidation and caches without pattern deletion.
 - Include effective let/collation and ordered BSON let literals in bookmark identities; forward let to totals and start bookmark/totals v4 keys cold. Separate DSL lambda and native variable scopes through nested JSON expressions without rewriting literal data.
 - Fence slow-log initialization against close, retain failed owned-client and sync-target cleanup for retry, and encode sync idempotency keys as v2 JSON tuples. Upgrades and rollback require the documented stop/drain, checkpoint/store preservation and replay safeguards; legacy concatenated markers are not unconditionally trusted.
