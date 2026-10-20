@@ -331,6 +331,140 @@ describe('Model P0 vector, populate, and protected relation deletion', () => {
         assert.deepEqual(deleteCalls, [[{ _id: { $in: [] } }, { comment: 'no-target' }]]);
     });
 
+    it('guards final V1 hook arguments, preserves raw after results, and keeps force deletion hook-free', async () => {
+        const originalSession = { name: 'original' };
+        const finalSession = { name: 'final' };
+        let nextFilter: Record<string, unknown> = { _id: 'b' };
+        let nextOptions: Record<string, unknown> = { session: finalSession };
+        let referenced = true;
+        let beforeCalls = 0;
+        let afterCalls = 0;
+        const targetReads: Array<{ filter: unknown; options: any }> = [];
+        const writes: Array<{ filter: unknown; options: unknown }> = [];
+        Model.define('guarded_targets', {
+            schema: {},
+            options: { autoIndex: false },
+            hooks: () => ({
+                delete: {
+                    before(_context: unknown, _filter: unknown, options: any) {
+                        beforeCalls++;
+                        assert.equal(options.maxSamples, undefined);
+                        return [nextFilter, nextOptions];
+                    },
+                    after(_context: unknown, result: any) {
+                        afterCalls++;
+                        assert.deepEqual(result, { acknowledged: true, deletedCount: 1 });
+                        return { ...result, replaced: true };
+                    },
+                },
+            }),
+        });
+        Model.define('guarded_refs', {
+            schema: {},
+            relations: { target: { from: 'guarded_targets', localField: 'targetId', foreignField: '_id' } },
+        });
+        const collection = {
+            getNamespace: () => ({ iid: 'guarded', type: 'mongodb' as const, db: 'unit', collection: 'guarded_targets' }),
+            raw: () => ({}),
+            findOne: async (filter: any, options: any) => {
+                targetReads.push({ filter, options });
+                return { _id: filter._id };
+            },
+            deleteOne: async (filter: unknown, options: unknown) => {
+                writes.push({ filter, options });
+                return { acknowledged: true, deletedCount: 1 };
+            },
+        };
+        const runtime = {
+            options: { autoIndex: false },
+            scopedCollection: () => ({
+                count: async (query: any, options: any) => {
+                    if (query.targetId.$in[0] === 'b') {
+                        assert.strictEqual(options.session, finalSession);
+                        return referenced ? 1 : 0;
+                    }
+                    return 0;
+                },
+                find: async () => [],
+            }),
+        };
+        const model = new ModelInstance(collection as never, runtime as never, {
+            collectionName: 'guarded_targets', modelName: 'guarded_targets', dbName: 'unit',
+            definition: Model.get('guarded_targets')!.definition,
+        });
+        const options = { session: originalSession, maxSamples: 1 } as never;
+        await assert.rejects(() => model.deleteOneWithRelations({ _id: 'a' }, options), { code: 'RELATION_IN_USE' });
+        assert.deepEqual(targetReads[0].filter, { _id: 'b' });
+        assert.strictEqual(targetReads[0].options.session, finalSession);
+        assert.equal(writes.length, 0);
+        assert.equal(beforeCalls, 1);
+        assert.equal(afterCalls, 0);
+
+        const countBeforeInvalidInput = beforeCalls;
+        await assert.rejects(() => model.deleteOneWithRelations({}), { code: 'INVALID_ARGUMENT' });
+        assert.equal(beforeCalls, countBeforeInvalidInput);
+        nextFilter = {};
+        await assert.rejects(() => model.deleteOneWithRelations({ _id: 'a' }, options), { code: 'INVALID_ARGUMENT' });
+        nextFilter = { _id: 'b' };
+        nextOptions = { session: finalSession, excludeRelations: ['guarded_refs.target'] };
+        await assert.rejects(() => model.deleteOneWithRelations({ _id: 'a' }, options), { code: 'INVALID_ARGUMENT' });
+        assert.equal(writes.length, 0);
+
+        referenced = false;
+        nextOptions = { session: finalSession };
+        const deleted = await model.deleteOneWithRelations({ _id: 'a' }, options);
+        assert.deepEqual(deleted.result, { acknowledged: true, deletedCount: 1, replaced: true });
+        assert.equal(deleted.usage.used, false);
+        assert.deepEqual(writes[0], {
+            filter: { $and: [{ _id: 'b' }, { _id: 'b' }] },
+            options: { session: finalSession },
+        });
+        const beforeForce = beforeCalls;
+        const afterForce = afterCalls;
+        await model.forceDeleteWithRelations({ _id: 'a' });
+        assert.equal(beforeCalls, beforeForce);
+        assert.equal(afterCalls, afterForce);
+        assert.deepEqual(writes[1].filter, { $and: [{ _id: 'a' }, { _id: 'a' }] });
+    });
+
+    it('checks standard beforeDelete in-place retargeting before any write', async () => {
+        let beforeCalls = 0;
+        let writes = 0;
+        Model.define('standard_targets', {
+            schema: {},
+            options: { autoIndex: false },
+            hooks: {
+                beforeDelete(context) {
+                    beforeCalls++;
+                    (context.filter as Record<string, unknown>)._id = 'b';
+                },
+            },
+        });
+        Model.define('standard_refs', {
+            schema: {},
+            relations: { target: { from: 'standard_targets', localField: 'targetId', foreignField: '_id' } },
+        });
+        const collection = {
+            getNamespace: () => ({ iid: 'standard', type: 'mongodb' as const, db: 'unit', collection: 'standard_targets' }),
+            raw: () => ({}),
+            findOne: async (filter: any) => {
+                assert.equal(filter._id, 'b');
+                return { _id: 'b' };
+            },
+            deleteOne: async () => { writes++; return { acknowledged: true, deletedCount: 1 }; },
+        };
+        const model = new ModelInstance(collection as never, {
+            options: { autoIndex: false },
+            scopedCollection: () => ({ count: async () => 1, find: async () => [] }),
+        } as never, {
+            collectionName: 'standard_targets', modelName: 'standard_targets', dbName: 'unit',
+            definition: Model.get('standard_targets')!.definition,
+        });
+        await assert.rejects(() => model.deleteOneWithRelations({ _id: 'a' }), { code: 'RELATION_IN_USE' });
+        assert.equal(beforeCalls, 1);
+        assert.equal(writes, 0);
+    });
+
     it('rejects unsupported default relation select syntax when the Model is defined', () => {
         assert.throws(
             () => Model.define('invalid_select', {

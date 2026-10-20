@@ -154,11 +154,12 @@ export function createEmptyPoolStats(name: string): PoolStats {
  * Default MongoClient factory: creates and connects a new MongoClient from the given `PoolConfig`.
  * Can be overridden via the `ConnectionPoolManager` constructor options.
  */
-export async function defaultClientFactory(config: PoolConfig): Promise<MongoClient> {
+export async function defaultClientFactory(config: PoolConfig, onCreated?: (client: MongoClient) => void): Promise<MongoClient> {
     const client = new MongoDriverClient(config.uri, {
         ...DEFAULT_POOL_CONNECT_OPTIONS,
         ...(config.options ?? {}),
     });
+    onCreated?.(client);
     await client.connect();
     return client;
 }

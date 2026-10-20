@@ -6,6 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { BSON, Long, ObjectId } from 'mongodb';
 import { createMemoryServerBootstrap } from '../../bootstrap/memory-server';
+import { exactDataTaskDocumentFilter } from '../../../src/capabilities/data-tasks/document-utils';
 
 const MonSQLize = require('../../../dist/cjs/index.cjs');
 
@@ -15,6 +16,108 @@ describe('dataTasks job facade integration', () => {
 
     before(async () => { uri = (await bootstrap.setup()).uri; });
     after(async () => { await bootstrap.teardown(); });
+
+    it('B01 rejects array drift through public apply and both restore operations', async () => {
+        for (const mode of ['apply', 'replace', 'delete']) {
+            const backupDir = await fs.mkdtemp(path.join(os.tmpdir(), 'monsqlize-b01-'));
+            const source = new MonSQLize({ type: 'mongodb', databaseName: `b01_source_${mode}`, config: { uri } });
+            const target = new MonSQLize({ type: 'mongodb', databaseName: `b01_target_${mode}`, config: { uri } });
+            try {
+                await Promise.all([source.connect(), target.connect()]);
+                await source.collection('items').insertOne({ _id: 'row', a: 1, value: 9 });
+                if (mode !== 'delete') await target.collection('items').insertOne({ _id: 'row', a: 1, value: 0 });
+                const method = mode === 'apply' ? 'updateOne' : mode === 'replace' ? 'replaceOne' : 'deleteOne';
+                let injected = false;
+                const guarded = {
+                    options: target.options,
+                    collection(name: string) {
+                        const base = target.collection(name);
+                        if (name !== 'items') return base;
+                        return new Proxy(base, {
+                            get(object, property) {
+                                if (property === method) return async (...args: any[]) => {
+                                    if (!injected) {
+                                        injected = true;
+                                        await object.raw().updateOne({ _id: 'row' }, { $set: { a: [1, 2] } });
+                                    }
+                                    return object[method](...args);
+                                };
+                                const value = Reflect.get(object, property);
+                                return typeof value === 'function' ? value.bind(object) : value;
+                            },
+                        });
+                    },
+                };
+                const job = {
+                    name: `b01-${mode}`, source, target: mode === 'apply' ? guarded : target,
+                    targetEnvironment: 'test',
+                    collections: [{ name: 'items', data: { all: true, identity: { mode: 'source-id' as const } } }],
+                    backup: { dir: backupDir, compression: 'none' as const },
+                };
+                const preview = await MonSQLize.dataTasks.preview(job);
+                assert.equal(preview.passed, true, preview.errors.join('\n'));
+                const applied = await MonSQLize.dataTasks.apply(job, { approval: preview.approval });
+                if (mode === 'apply') {
+                    assert.equal(applied.passed, false);
+                    assert.match(applied.errors.join('\n'), /drifted before update/);
+                } else {
+                    assert.equal(applied.passed, true, applied.errors.join('\n'));
+                    const restorePreview = await MonSQLize.dataTasks.previewRestore(applied.backup, { target: guarded });
+                    assert.equal(restorePreview.passed, true, restorePreview.errors.join('\n'));
+                    const restored = await MonSQLize.dataTasks.restore(applied.backup, {
+                        target: guarded, approval: restorePreview.approval,
+                    });
+                    assert.equal(restored.passed, false);
+                    assert.match(restored.errors.join('\n'), /restore (replace|delete) did not affect/);
+                }
+                assert.equal(injected, true);
+                const current = await target.collection('items').findOne({ _id: 'row' });
+                assert.deepEqual(current.a, [1, 2]);
+                assert.equal(current.value, mode === 'apply' ? 0 : 9);
+            } finally {
+                const closed = await Promise.allSettled([source.close(), target.close()]);
+                assert.equal(path.dirname(path.resolve(backupDir)), path.resolve(os.tmpdir()));
+                assert.ok(path.basename(backupDir).startsWith('monsqlize-b01-'));
+                await fs.rm(backupDir, { recursive: true, force: true });
+                for (const result of closed) assert.equal(result.status, 'fulfilled');
+            }
+        }
+    });
+
+    it('B01 compares BSON values and records collation-dependent CAS query cost', async (t) => {
+        const runtime = new MonSQLize({ type: 'mongodb', databaseName: 'b01_value_guards', config: { uri } });
+        try {
+            await runtime.connect();
+            await runtime._adapter.db.createCollection('items', { collation: { locale: 'en', strength: 2 } });
+            const raw = runtime.collection('items').raw();
+            const scenarios: Array<{ name: string; before: any; after: any; matches?: boolean }> = [
+                { name: 'scalar-array', before: { a: 1 }, after: { a: [1, 2] } },
+                { name: 'nested-array', before: { a: [1, 2] }, after: { a: [[1, 2]] } },
+                { name: 'missing-null', before: { a: null }, after: { b: null } },
+                { name: 'extra-field', before: { a: 1 }, after: { a: 1, b: 2 } },
+                { name: 'literal-operator', before: { a: { $gt: 5 } }, after: { a: 10 } },
+                { name: 'regex-string', before: { a: /a/i }, after: { a: 'a' } },
+                { name: 'nested-key-order', before: { a: { x: 1, y: 2 } }, after: { a: { y: 2, x: 1 } } },
+                { name: 'binary-string', before: { a: 'a' }, after: { a: 'A' } },
+                { name: 'numeric-equivalence', before: { a: new BSON.Int32(1) }, after: { a: new BSON.Double(1) }, matches: true },
+                { name: 'unchanged-bson', before: { a: new Date(0), b: Long.fromString('9007199254740993') }, after: { a: new Date(0), b: Long.fromString('9007199254740993') }, matches: true },
+            ];
+            for (const scenario of scenarios) {
+                await raw.insertOne({ _id: scenario.name, ...scenario.after });
+                const filter = exactDataTaskDocumentFilter({ _id: scenario.name, ...scenario.before });
+                const result = await raw.updateOne(filter, { $set: { checked: true } }, { collation: { locale: 'simple' } });
+                assert.equal(result.matchedCount, scenario.matches ? 1 : 0, scenario.name);
+            }
+            const explain = await raw.find(
+                exactDataTaskDocumentFilter({ _id: 'binary-string', a: 'a' }),
+                { collation: { locale: 'simple' } },
+            ).explain('executionStats');
+            assert.equal(explain.executionStats.nReturned, 0);
+            t.diagnostic(`B01 CAS explain: ${JSON.stringify(explain.executionStats)}`);
+        } finally {
+            await runtime.close();
+        }
+    });
 
     it('preserves an unsafe-range Long identity through apply, reopen, and restore', async () => {
         const backupDir = await fs.mkdtemp(path.join(os.tmpdir(), 'monsqlize-job-long-'));

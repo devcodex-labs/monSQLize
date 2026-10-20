@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 
 const MonSQLize = require('../../../dist/cjs/index.cjs');
 
@@ -13,6 +14,45 @@ function createStatsMgr() {
 }
 
 describe('PoolStatsManager (via ConnectionPoolManager._stats)', () => {
+
+    it('B27 tracks CMAP identities across addresses and removes only owned listeners', async () => {
+        const clients: EventEmitter[] = [];
+        const manager = new MonSQLize.ConnectionPoolManager({
+            poolStrategy: 'leastConnections',
+            clientFactory: async () => {
+                const client = Object.assign(new EventEmitter(), { close: async () => undefined, db: () => ({}) });
+                clients.push(client); return client;
+            },
+        });
+        try {
+            await manager.addPool({ name: 'a', role: 'primary', uri: 'mongodb://a' });
+            await manager.addPool({ name: 'b', role: 'primary', uri: 'mongodb://b' });
+            const external = () => undefined;
+            clients[0].on('connectionCreated', external);
+            for (const address of ['host-a', 'host-b']) {
+                clients[0].emit('connectionCreated', { address, connectionId: 1 });
+                clients[0].emit('connectionReady', { address, connectionId: 1 });
+            }
+            clients[1].emit('connectionCreated', { address: 'host-b', connectionId: 1 });
+            clients[1].emit('connectionReady', { address: 'host-b', connectionId: 1 });
+            clients[0].emit('connectionCheckOutStarted', { address: 'host-a' });
+            assert.equal(manager.getPoolStats().a.waiting, 1);
+            clients[0].emit('connectionCheckedOut', { address: 'host-a', connectionId: 1 });
+            assert.equal(manager.getPoolStats().a.available, 1);
+            assert.equal(manager.getPoolStats().a.waiting, 0);
+            assert.equal(manager.selectPool('write').name, 'b');
+            clients[0].emit('connectionClosed', { address: 'host-a', connectionId: 1, serviceId: 'service' });
+            clients[0].emit('connectionClosed', { address: 'host-a', connectionId: 1 });
+            clients[0].emit('connectionCheckedIn', { address: 'host-a', connectionId: 1 });
+            assert.equal(manager.getPoolStats().a.connections, 1);
+            assert.equal(manager.getPoolStats().a.available, 1);
+            await manager.removePool('a');
+            assert.equal(clients[0].listenerCount('connectionCreated'), 1);
+            assert.strictEqual(clients[0].listeners('connectionCreated')[0], external);
+            assert.equal(clients[0].listenerCount('connectionClosed'), 0);
+        } finally { await manager.close(); }
+        assert.equal(clients[1].listenerCount('connectionCreated'), 0);
+    });
 
     it('recordSelection increments totalRequests', () => {
         const mgr = createStatsMgr();

@@ -4,6 +4,8 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { Timestamp } from 'mongodb';
+import { createInitialSyncCheckpoint, decodeStoredSyncCheckpoint } from '../../../src/capabilities/sync/resume-token-store';
 
 const MonSQLize = require('../../../dist/cjs/index.cjs');
 
@@ -19,7 +21,283 @@ function wait(ms: number) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function mockHello() {
+    return Promise.resolve({ operationTime: new Timestamp({ t: 1792377444, i: 42 }) });
+}
+
+function isInitialCheckpoint(value: unknown): boolean {
+    return value !== null && typeof value === 'object'
+        && (value as Record<string, unknown>).__monsqlizeSyncCheckpoint === 1;
+}
+
+function checkpointHarness(initial: unknown = null, config: Record<string, unknown> = {}) {
+    const calls: string[] = [];
+    const watchOptions: Record<string, unknown>[] = [];
+    let stored = initial;
+    const stream = new EventEmitter() as EventEmitter & { close(): Promise<boolean> };
+    stream.close = async () => true;
+    const store = {
+        load: async () => { calls.push('load'); return stored; },
+        save: async (value: unknown) => { calls.push('save'); stored = JSON.parse(JSON.stringify(value)); },
+        clear: async () => { calls.push('clear'); stored = null; },
+    };
+    const db: any = {
+        databaseName: 'b02_source',
+        command: async () => { calls.push('hello'); return mockHello(); },
+        watch: (_pipeline: unknown, options: Record<string, unknown>) => {
+            calls.push('watch'); watchOptions.push(options);
+            return options.maxAwaitTimeMS === 1 ? { close: async () => true } : stream;
+        },
+    };
+    const manager = new MonSQLize.ChangeStreamSyncManager({
+        db, tokenStore: store,
+        config: { enabled: true, targets: [{ name: 'target', apply: async () => undefined }], ...config },
+    });
+    return { manager, db, store, stream, calls, watchOptions, stored: () => stored };
+}
+
 describe('P4-C sync', () => {
+    it('AR07 encodes collision-free opaque tuples and preserves raw key TTL and mark modes', async () => {
+        for (const markMode of ['start', 'success']) {
+            const h = checkpointHarness();
+            const prefix = 'prefix:\u4e2d"';
+            const entries = new Map<string, unknown>([[prefix + ':a:b:c', true]]);
+            const keys: string[] = [];
+            const event = { _id: { token: 7 }, operationType: 'insert', ns: { db: 'source', coll: 'events' }, documentKey: { _id: 1 }, fullDocument: { _id: 1 } };
+            const manager = new MonSQLize.ChangeStreamSyncManager({
+                db: h.db, tokenStore: h.store,
+                config: {
+                    enabled: true,
+                    idempotency: { enabled: true, keyPrefix: prefix, ttl: 1234, markMode,
+                        keyBuilder: (received: unknown, name: string) => { assert.strictEqual(received, event); return name === 'a:b' ? 'c' : 'b:c'; },
+                        store: { get: (key: string) => entries.get(key), set: (key: string, value: any, ttl: number) => {
+                            assert.equal(ttl, 1234); assert.equal(value.phase, markMode); entries.set(key, value);
+                        } },
+                    },
+                    targets: ['a:b', 'a'].map(name => ({ name, apply: async (_event: unknown, _doc: unknown, context: any) => {
+                        const key = context.idempotencyKey;
+                        assert.deepEqual(JSON.parse(key), ['v2', prefix, name, name === 'a:b' ? 'c' : 'b:c']);
+                        assert.equal(entries.has(key), markMode === 'start'); keys.push(key);
+                    } })),
+                },
+            });
+            await manager.start();
+            h.stream.emit('change', event);
+            h.stream.emit('change', event);
+            await manager.stop();
+            assert.equal(new Set(keys).size, 2);
+            assert.equal(entries.size, 3, 'ambiguous legacy markers are retained but not trusted');
+            assert.equal(manager.getStats().duplicateTargetCount, 2);
+            assert.equal(manager.getStats().syncedCount, 2);
+        }
+        for (const rawKey of [null, undefined, '']) {
+            const h = checkpointHarness({ _data: 'legacy' }, {
+                idempotency: { enabled: true, keyBuilder: () => rawKey, store: { get: () => assert.fail('disabled key read'), set: () => assert.fail('disabled key write') } },
+                targets: [{ name: 'no-key', apply: async (_event: unknown, _doc: unknown, context: any) => assert.equal(context.idempotencyKey, undefined) }],
+            });
+            await h.manager.start();
+            h.stream.emit('change', { _id: { token: 1 }, operationType: 'insert', ns: { coll: 'events' }, fullDocument: {} });
+            await h.manager.stop();
+            assert.equal(h.manager.getStats().syncedCount, 1);
+        }
+    });
+
+    it('B15 rejects exact duplicate target names before opening connections or watches', () => {
+        for (const enabled of [false, true]) {
+            let opened = 0;
+            const options = {
+                db: { command: () => { opened++; }, watch: () => { opened++; } },
+                clientFactory: () => { opened++; },
+                config: { enabled: true, idempotency: { enabled }, targets: [
+                    { name: 'same', uri: 'mongodb://target' },
+                    { name: 'same', apply: async () => undefined },
+                ] },
+            };
+            assert.throws(() => new MonSQLize.ChangeStreamSyncManager(options), (error: any) => error.code === 'INVALID_CONFIG' && /duplicate target name/.test(error.message));
+            assert.equal(opened, 0);
+            assert.doesNotThrow(() => MonSQLize.validateSyncConfig({
+                enabled: true, idempotency: { enabled }, targets: [
+                    { name: 'same', apply: async () => undefined },
+                    { name: 'Same', apply: async () => undefined },
+                    { name: ' same', apply: async () => undefined },
+                ],
+            }));
+        }
+    });
+
+    it('B02 persists the initial checkpoint before any watch and without counting an event', async () => {
+        const h = checkpointHarness();
+        let release!: () => void;
+        let entered!: () => void;
+        const pending = new Promise<void>((resolve) => { release = resolve; });
+        const saving = new Promise<void>((resolve) => { entered = resolve; });
+        let checkpoint: unknown;
+        h.store.save = async (value) => { h.calls.push('save'); checkpoint = value; entered(); await pending; };
+        const starting = h.manager.start();
+        try {
+            await saving;
+            assert.deepEqual(h.calls, ['load', 'hello', 'save']);
+            assert.equal(h.watchOptions.length, 0);
+            assert.equal(h.manager.getStats().eventCount, 0);
+            assert.equal(h.manager.getStats().syncedCount, 0);
+            release();
+            await starting;
+            assert.equal(isInitialCheckpoint(checkpoint), true);
+            const options = h.watchOptions[h.watchOptions.length - 1]!;
+            assert.ok(options.startAtOperationTime instanceof Timestamp);
+            assert.equal('resumeAfter' in options, false);
+            assert.equal('startAfter' in options, false);
+        } finally {
+            release();
+            await starting.catch(() => undefined);
+            await h.manager.stop();
+        }
+    });
+
+    it('B02 round trips initial checkpoints and legacy tokens through file Redis and JSON stores', async () => {
+        const file = path.join(os.tmpdir(), `monsqlize-b02-${process.pid}-${Date.now()}.json`);
+        let redisValue: string | null = null;
+        let customValue: string | null = null;
+        const stores = [
+            new MonSQLize.ResumeTokenStore({ storage: 'file', path: file }),
+            new MonSQLize.ResumeTokenStore({ storage: 'redis', redis: {
+                get: async () => redisValue,
+                set: async (_key: string, value: string) => { redisValue = value; },
+                del: async () => { redisValue = null; },
+            } }),
+            { load: async () => customValue === null ? null : JSON.parse(customValue),
+                save: async (value: unknown) => { customValue = JSON.stringify(value); },
+                clear: async () => { customValue = null; } },
+        ];
+        try {
+            for (const store of stores) {
+                const initial = createInitialSyncCheckpoint(new Timestamp({ t: 1792377444, i: 42 }));
+                await store.save(initial);
+                const decoded = decodeStoredSyncCheckpoint(await store.load());
+                assert.ok('startAtOperationTime' in decoded);
+                assert.ok(decoded.startAtOperationTime instanceof Timestamp);
+                assert.ok(decoded.startAtOperationTime.equals(new Timestamp({ t: 1792377444, i: 42 })));
+                const rawToken = { _data: 'legacy-token', metadata: 7 };
+                await store.save(rawToken);
+                assert.deepEqual(decodeStoredSyncCheckpoint(await store.load()), { resumeAfter: rawToken });
+                await store.clear();
+            }
+        } finally {
+            await fs.rm(file, { force: true });
+            await fs.rm(`${file}.bak`, { force: true });
+        }
+    });
+
+    it('B02 restarts directly from the persisted operation time without resetting it', async () => {
+        const initial = JSON.parse(JSON.stringify(createInitialSyncCheckpoint(new Timestamp({ t: 1792377444, i: 42 }))));
+        const h = checkpointHarness(initial);
+        try {
+            await h.manager.start();
+            assert.deepEqual(h.calls, ['load', 'watch', 'watch']);
+            const operationTime = h.watchOptions[h.watchOptions.length - 1]!.startAtOperationTime as Timestamp;
+            assert.ok(operationTime.equals(new Timestamp({ t: 1792377444, i: 42 })));
+            assert.equal(h.watchOptions[h.watchOptions.length - 1]!.resumeAfter, undefined);
+        } finally { await h.manager.stop(); }
+    });
+
+    it('B02 preserves raw legacy resume tokens without obtaining a new operation time', async () => {
+        const token = { _data: 'legacy-token' };
+        const h = checkpointHarness(token);
+        await h.manager.start();
+        try {
+            assert.deepEqual(h.calls, ['load', 'watch', 'watch']);
+            assert.strictEqual(h.watchOptions[h.watchOptions.length - 1]!.resumeAfter, token);
+            assert.equal('startAtOperationTime' in h.watchOptions[h.watchOptions.length - 1]!, false);
+        } finally { await h.manager.stop(); }
+    });
+
+    it('B02 validates checkpoint envelopes even when best-effort loading was requested', async () => {
+        const valid = createInitialSyncCheckpoint(new Timestamp({ t: 10, i: 1 }));
+        const malformed = [
+            { ...valid, __monsqlizeSyncCheckpoint: 2 }, { ...valid, kind: 'unknown' },
+            { ...valid, value: undefined }, { ...valid, value: { $timestamp: { t: '10', i: 1 } } },
+            ...[-1, 1.5, 0x100000000].map(t => ({ ...valid, value: { $timestamp: { t, i: 1 } } })),
+            { ...valid, value: { $timestamp: { t: 10, i: -1 } } },
+        ];
+        for (const value of malformed) {
+            const h = checkpointHarness(value, { resumeToken: { strictLoad: false } });
+            await assert.rejects(() => h.manager.start(), /invalid persisted operation-time checkpoint/);
+            assert.deepEqual(h.calls, ['load']);
+            await h.manager.stop();
+        }
+    });
+
+    it('B02 accepts only server BSON timestamps and fails before watch on strict store errors', async () => {
+        const fallback = checkpointHarness();
+        fallback.db.command = async () => ({ operationTime: 'invalid', $clusterTime: { clusterTime: new Timestamp({ t: 10, i: 2 }) } });
+        await fallback.manager.start();
+        assert.ok(fallback.watchOptions[fallback.watchOptions.length - 1]!.startAtOperationTime instanceof Timestamp);
+        await fallback.manager.stop();
+        for (const failure of ['time', 'load', 'save']) {
+            const h = checkpointHarness();
+            if (failure === 'time') h.db.command = async () => ({ operationTime: new Date() });
+            if (failure === 'load') h.store.load = async () => { throw new Error('strict load failed'); };
+            if (failure === 'save') h.store.save = async () => { throw new Error('strict save failed'); };
+            await assert.rejects(() => h.manager.start(), /valid BSON operation time|strict (load|save) failed/);
+            assert.equal(h.watchOptions.length, 0);
+            await h.manager.stop();
+        }
+    });
+
+    it('B02 preserves explicit best-effort store behavior without claiming durable progress', async () => {
+        let attempts = 0;
+        const store = new MonSQLize.ResumeTokenStore({
+            storage: 'redis', strictLoad: false, strictSave: false, saveRetries: 0,
+            logger: { warn: () => undefined, error: () => undefined },
+            redis: {
+                get: async () => { throw new Error('offline'); },
+                set: async () => { attempts += 1; throw new Error('offline'); },
+                del: async () => undefined,
+            },
+        });
+        const h = checkpointHarness();
+        h.store.load = () => store.load();
+        h.store.save = value => store.save(value);
+        await h.manager.start();
+        try {
+            assert.equal(attempts, 1);
+            assert.equal(h.watchOptions.length, 2);
+            assert.equal(h.manager.getStats().syncedCount, 0);
+            assert.equal(h.stored(), null);
+        } finally { await h.manager.stop(); }
+    });
+
+    it('B02 retains the persisted point after history errors instead of clearing or resetting it', async () => {
+        const initial = createInitialSyncCheckpoint(new Timestamp({ t: 10, i: 1 }));
+        const h = checkpointHarness(JSON.parse(JSON.stringify(initial)));
+        await h.manager.start();
+        h.stream.emit('error', Object.assign(new Error('ChangeStreamHistoryLost'), { code: 286 }));
+        await h.manager.stop();
+        assert.equal(h.manager.getStats().isRunning, false);
+        assert.deepEqual(h.stored(), initial);
+        await h.manager.start();
+        await h.manager.stop();
+        assert.equal(h.calls.includes('clear'), false);
+        assert.equal(h.calls.includes('hello'), false);
+        assert.equal(h.calls.includes('save'), false);
+        assert.ok(h.watchOptions.filter(o => 'startAtOperationTime' in o).length >= 2);
+    });
+
+    it('B02 stops startup before watch when stop supersedes an initial save', async () => {
+        const h = checkpointHarness();
+        let entered!: () => void;
+        let release!: () => void;
+        const saving = new Promise<void>(resolve => { entered = resolve; });
+        const pending = new Promise<void>(resolve => { release = resolve; });
+        h.store.save = async () => { entered(); await pending; };
+        const starting = h.manager.start();
+        const rejected = assert.rejects(starting, /superseded/);
+        await saving;
+        const stopping = h.manager.stop();
+        release();
+        await Promise.all([rejected, stopping]);
+        assert.equal(h.watchOptions.length, 0);
+    });
     it('supports ResumeTokenStore file read/write round trip', async () => {
         const tokenPath = path.join(os.tmpdir(), `monsqlize-sync-${Date.now()}.json`);
         const store = new MonSQLize.ResumeTokenStore({
@@ -67,10 +345,11 @@ describe('P4-C sync', () => {
         const liveStream = new EventEmitter() as EventEmitter & { close(): Promise<boolean> };
         liveStream.close = () => Promise.resolve(true);
         const applied: Array<{ event: ChangeEvent; document: ChangeEvent['fullDocument'] }> = [];
-        let savedToken: ChangeEvent['_id'] | null = null;
+        let savedToken: unknown = null;
 
         const db = {
             databaseName: 'source_db',
+            command: mockHello,
             watch() {
                 watchCount += 1;
                 if (watchCount === 1) {
@@ -99,7 +378,7 @@ describe('P4-C sync', () => {
             },
             tokenStore: {
                 load: () => Promise.resolve(savedToken),
-                save: (token: ChangeEvent['_id']) => {
+                save: (token: unknown) => {
                     savedToken = token;
                     return Promise.resolve();
                 },
@@ -142,6 +421,7 @@ describe('P4-C sync', () => {
 
         const db = {
             databaseName: 'source_db',
+            command: mockHello,
             watch(pipeline: unknown[], options: Record<string, unknown>) {
                 if (options?.maxAwaitTimeMS === 1) {
                     return { close: () => Promise.resolve(true) };
@@ -168,7 +448,8 @@ describe('P4-C sync', () => {
             },
             tokenStore: {
                 load: () => Promise.resolve(null),
-                save: () => {
+                save: (token: unknown) => {
+                    if (isInitialCheckpoint(token)) return Promise.resolve();
                     saved += 1;
                     return Promise.resolve();
                 },
@@ -208,6 +489,7 @@ describe('P4-C sync', () => {
 
         const db = {
             databaseName: 'source_db',
+            command: mockHello,
             watch() {
                 watchCount += 1;
                 if (watchCount === 1) {
@@ -257,6 +539,7 @@ describe('P4-C sync', () => {
 
         const db = {
             databaseName: 'source_db',
+            command: mockHello,
             watch(_pipeline: unknown[], options: Record<string, unknown>) {
                 if (options?.maxAwaitTimeMS === 1) {
                     return { close: () => Promise.resolve(true) };
@@ -284,8 +567,9 @@ describe('P4-C sync', () => {
             },
             tokenStore: {
                 load: () => Promise.resolve(null),
-                save: (token: ChangeEvent['_id']) => {
-                    savedTokens.push(token.token);
+                save: (token: unknown) => {
+                    if (isInitialCheckpoint(token)) return Promise.resolve();
+                    savedTokens.push((token as ChangeEvent['_id']).token);
                     return Promise.resolve();
                 },
                 clear: () => Promise.resolve(),
@@ -321,6 +605,7 @@ describe('P4-C sync', () => {
 
         const db = {
             databaseName: 'source_db',
+            command: mockHello,
             watch(_pipeline: unknown[], options: Record<string, unknown>) {
                 if (options?.maxAwaitTimeMS === 1) {
                     return { close: () => Promise.resolve(true) };
@@ -360,8 +645,9 @@ describe('P4-C sync', () => {
             },
             tokenStore: {
                 load: () => Promise.resolve(null),
-                save: (token: ChangeEvent['_id']) => {
-                    savedTokens.push(token.token);
+                save: (token: unknown) => {
+                    if (isInitialCheckpoint(token)) return Promise.resolve();
+                    savedTokens.push((token as ChangeEvent['_id']).token);
                     return Promise.resolve();
                 },
                 clear: () => Promise.resolve(),
@@ -395,6 +681,7 @@ describe('P4-C sync', () => {
         const manager = new MonSQLize.ChangeStreamSyncManager({
             db: {
                 databaseName: 'source_db',
+            command: mockHello,
                 watch(_pipeline: unknown[], options: Record<string, unknown>) {
                     return options?.maxAwaitTimeMS === 1 ? { close: async () => true } : stream;
                 },
@@ -406,7 +693,7 @@ describe('P4-C sync', () => {
             },
             tokenStore: {
                 load: async () => null,
-                save: async (token: ChangeEvent['_id']) => { saved.push(token.token); },
+                save: async (token: unknown) => { if (!isInitialCheckpoint(token)) saved.push((token as ChangeEvent['_id']).token); },
                 clear: async () => undefined,
             },
         });
@@ -428,6 +715,7 @@ describe('P4-C sync', () => {
         const manager = new MonSQLize.ChangeStreamSyncManager({
             db: {
                 databaseName: 'source_db',
+            command: mockHello,
                 watch(_pipeline: unknown[], options: Record<string, unknown>) {
                     if (options?.maxAwaitTimeMS === 1) return { close: async () => true };
                     const stream = new EventEmitter() as EventEmitter & { close(): Promise<boolean> };
@@ -469,6 +757,7 @@ describe('P4-C sync', () => {
         let failOnce = true;
         const db = {
             databaseName: 'source_db',
+            command: mockHello,
             watch(_pipeline: unknown[], options: Record<string, unknown>) {
                 if (options?.maxAwaitTimeMS === 1) return { close: () => Promise.resolve(true) };
                 const stream = new EventEmitter() as EventEmitter & { close(): Promise<boolean> };
@@ -541,6 +830,7 @@ describe('P4-C sync', () => {
         const manager = new MonSQLize.ChangeStreamSyncManager({
             db: {
                 databaseName: 'source_db',
+            command: mockHello,
                 watch(_pipeline: unknown[], options: Record<string, unknown>) {
                     if (options?.maxAwaitTimeMS === 1) return { close: async () => true };
                     const stream = new EventEmitter() as EventEmitter & { close(): Promise<boolean> };
@@ -559,7 +849,7 @@ describe('P4-C sync', () => {
             },
             tokenStore: {
                 load: async () => null,
-                save: async (token: ChangeEvent['_id']) => { saved.push(token.token); },
+                save: async (token: unknown) => { if (!isInitialCheckpoint(token)) saved.push((token as ChangeEvent['_id']).token); },
                 clear: async () => undefined,
             },
             logger: { error: () => undefined, warn: () => undefined, info: () => undefined, debug: () => undefined },
@@ -600,6 +890,7 @@ describe('P4-C sync', () => {
         const savedTokens: number[] = [];
         const makeDb = (liveStream: EventEmitter & { close(): Promise<boolean> }) => ({
             databaseName: 'source_db',
+            command: mockHello,
             watch(_pipeline: unknown[], options: Record<string, unknown>) {
                 if (options?.maxAwaitTimeMS === 1) {
                     return { close: () => Promise.resolve(true) };
@@ -634,7 +925,7 @@ describe('P4-C sync', () => {
             },
             tokenStore: {
                 load: () => Promise.resolve(null),
-                save: () => Promise.reject(new Error('token store down')),
+                save: async (token: unknown) => { if (!isInitialCheckpoint(token)) throw new Error('token store down'); },
                 clear: () => Promise.resolve(),
             },
             logger: { error: () => undefined, warn: () => undefined, info: () => undefined, debug: () => undefined },
@@ -665,8 +956,9 @@ describe('P4-C sync', () => {
             },
             tokenStore: {
                 load: () => Promise.resolve(null),
-                save: (token: ChangeEvent['_id']) => {
-                    savedTokens.push(token.token);
+                save: (token: unknown) => {
+                    if (isInitialCheckpoint(token)) return Promise.resolve();
+                    savedTokens.push((token as ChangeEvent['_id']).token);
                     return Promise.resolve();
                 },
                 clear: () => Promise.resolve(),
@@ -689,6 +981,7 @@ describe('P4-C sync', () => {
         const warnings: string[] = [];
         const db = {
             databaseName: 'source_db',
+            command: mockHello,
             watch: () => ({ close: () => Promise.resolve(true) }),
         };
 
@@ -714,6 +1007,7 @@ describe('P4-C sync', () => {
         const warnings: string[] = [];
         const db = {
             databaseName: 'source_db',
+            command: mockHello,
             watch: () => ({ close: () => Promise.resolve(true) }),
         };
 
@@ -752,6 +1046,7 @@ describe('P4-C sync', () => {
 
         const db = {
             databaseName: 'source_db',
+            command: mockHello,
             watch(_pipeline: unknown[], options: Record<string, unknown>) {
                 if (options?.maxAwaitTimeMS === 1) {
                     return { close: () => Promise.resolve(true) };
@@ -776,7 +1071,7 @@ describe('P4-C sync', () => {
             },
             tokenStore: {
                 load: () => Promise.resolve(null),
-                save: () => Promise.reject(new Error('token store down')),
+                save: async (token: unknown) => { if (!isInitialCheckpoint(token)) throw new Error('token store down'); },
                 clear: () => Promise.resolve(),
             },
             logger: { error: () => undefined, warn: () => undefined, info: () => undefined, debug: () => undefined },
@@ -820,6 +1115,7 @@ describe('P4-C sync', () => {
 
         const db = {
             databaseName: 'source_db',
+            command: mockHello,
             watch(_pipeline: unknown[], options: Record<string, unknown>) {
                 if (options?.maxAwaitTimeMS === 1) {
                     return { close: () => Promise.resolve(true) };

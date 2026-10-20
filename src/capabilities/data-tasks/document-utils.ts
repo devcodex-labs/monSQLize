@@ -20,27 +20,27 @@ export function cloneDocument(document: GenericRecord): GenericRecord {
     return cloneDocumentValue(document) as GenericRecord;
 }
 
+/**
+ * Compare a before-image atomically without query equality's array-element matching.
+ * Callers use simple collation so collection defaults cannot weaken the guard.
+ */
 export function exactDataTaskDocumentFilter(document: GenericRecord): GenericRecord {
     const entries = Object.entries(document);
-    const fields = entries.map(([field, value]) => ({ [field]: value }));
-    const originalFieldsExist = entries.map(([field]) => ({
-        $ne: [
-            { $type: { $getField: { field: { $literal: field }, input: '$$ROOT' } } },
-            'missing',
-        ],
-    }));
+    const fieldChecks = entries.flatMap(([field, value]) => {
+        const actual = { $getField: { field: { $literal: field }, input: '$$ROOT' } };
+        return [
+            { $ne: [{ $type: actual }, 'missing'] },
+            { $eq: [actual, { $literal: value }] },
+        ];
+    });
     return {
-        $and: [
-            ...fields,
-            {
-                $expr: {
-                    $and: [
-                        { $eq: [{ $size: { $objectToArray: '$$ROOT' } }, fields.length] },
-                        ...originalFieldsExist,
-                    ],
-                },
-            },
-        ],
+        ...(document._id === undefined ? {} : { _id: document._id }),
+        $expr: {
+            $and: [
+                { $eq: [{ $size: { $objectToArray: '$$ROOT' } }, entries.length] },
+                ...fieldChecks,
+            ],
+        },
     };
 }
 

@@ -62,7 +62,7 @@ export interface WithCacheOptions<
 export type CachedFunction<
     TArgs extends unknown[] = unknown[],
     TResult = unknown,
-> = ((...args: TArgs) => Promise<TResult>) & {
+> = HubWrappedFunction<(...args: TArgs) => Promise<TResult>> & {
     /** v1 backward-compat alias for stats(). */
     getCacheStats(): WithCacheStats;
     stats(): WithCacheStats;
@@ -249,6 +249,8 @@ export function withCache<TArgs extends unknown[], TResult>(
 
     cachedFn.getCacheStats = getCacheStats;
     cachedFn.stats = getCacheStats;
+    cachedFn.invalidate = wrapped.invalidate.bind(wrapped);
+    cachedFn.invalidateAll = wrapped.invalidateAll.bind(wrapped);
     return cachedFn;
 }
 

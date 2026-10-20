@@ -1,3 +1,4 @@
+import { DEFAULT_FIND_PAGE_LIMIT } from '../queries/find-page-cache-helpers';
 /**
  * Management operation helper functions for the collection accessor.
  *
@@ -29,6 +30,7 @@ import {
 
 type BookmarkContext<TSchema extends Document> = {
     defaults?: RuntimeDefaults;
+    cvFilter?: (query: Document) => Document;
     namespace: string;
     cache?: BookmarkCacheLike | null;
     getCache?: () => BookmarkCacheLike | null | undefined;
@@ -74,11 +76,22 @@ export function dropIndexesForAccessor<TSchema extends Document>(collectionRef: 
     return dropIndexDefinitions(collectionRef);
 }
 
+function normalizeAccessorBookmarkDims<TSchema extends Document>(
+    context: BookmarkContext<TSchema>, keyDims: BookmarkKeyDims<TSchema>,
+): BookmarkKeyDims<TSchema> {
+    const requested = keyDims.limit ?? DEFAULT_FIND_PAGE_LIMIT;
+    if (!Number.isInteger(requested) || requested <= 0) throw createError(ErrorCodes.INVALID_PAGINATION, 'limit must be a positive integer.');
+    const limit = context.defaults?.findPageMaxLimit !== undefined
+        ? Math.min(requested, context.defaults.findPageMaxLimit) : requested;
+    return { ...keyDims, limit, query: context.cvFilter?.(keyDims.query ?? {}) ?? keyDims.query ?? {} };
+}
+
 export function prewarmBookmarksForAccessor<TSchema extends Document>(
     context: BookmarkContext<TSchema>,
     keyDims: BookmarkKeyDims<TSchema> = {},
     pages: number[] = [],
 ): Promise<BookmarkPrewarmResult> {
+    keyDims = normalizeAccessorBookmarkDims(context, keyDims);
     const strategy = resolveCursorStrategy(keyDims as Record<string, unknown>, context.defaults);
     if (!strategy.cacheable) throw createError(ErrorCodes.INVALID_ARGUMENT, 'Bookmark prewarming with a custom cursor normalizer requires cursorValueNormalizerVersion.');
     return prewarmBookmarks({
@@ -98,7 +111,7 @@ export function listBookmarksForAccessor<TSchema extends Document>(
     return listBookmarks({
         namespace: context.namespace,
         cache: resolveBookmarkCache(context as BookmarkContext<Document>),
-        keyDims: keyDims ? { ...keyDims, ...resolveCursorStrategy(keyDims as Record<string, unknown>, context.defaults) } : undefined,
+        keyDims: keyDims ? { ...normalizeAccessorBookmarkDims(context, keyDims), ...resolveCursorStrategy(keyDims as Record<string, unknown>, context.defaults) } : undefined,
     });
 }
 
@@ -109,7 +122,7 @@ export function clearBookmarksForAccessor<TSchema extends Document>(
     return clearBookmarks({
         namespace: context.namespace,
         cache: resolveBookmarkCache(context as BookmarkContext<Document>),
-        keyDims: keyDims ? { ...keyDims, ...resolveCursorStrategy(keyDims as Record<string, unknown>, context.defaults) } : undefined,
+        keyDims: keyDims ? { ...normalizeAccessorBookmarkDims(context, keyDims), ...resolveCursorStrategy(keyDims as Record<string, unknown>, context.defaults) } : undefined,
     });
 }
 
@@ -267,6 +280,9 @@ export async function collModForAccessor<TSchema extends Document>(
 ): Promise<Record<string, unknown>> {
     if (modifications === null || typeof modifications !== 'object') {
         throw createError(ErrorCodes.INVALID_ARGUMENT, 'Modifications must be a non-null object');
+    }
+    if (Object.prototype.hasOwnProperty.call(modifications, 'collMod')) {
+        throw createError(ErrorCodes.INVALID_ARGUMENT, 'Modifications must not override the collMod target.');
     }
     return resolveDb(collectionRef, dbRef).command({
         collMod: collectionName,

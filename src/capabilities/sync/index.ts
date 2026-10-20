@@ -7,7 +7,7 @@
  */
 
 import type { ChangeStream, Db, Document, MongoClient, MongoClientOptions } from 'mongodb';
-import { MongoClient as MongoDriverClient } from 'mongodb';
+import { MongoClient as MongoDriverClient, Timestamp } from 'mongodb';
 import { ErrorCodes, createError } from '../../core/errors';
 import type { LoggerLike } from '../../core/logger';
 import type { ConnectionPoolManager } from '../pool';
@@ -29,7 +29,7 @@ import {
     type SyncIdempotencyRuntime,
     validateSyncIdempotencyConfig,
 } from './idempotency';
-import { normalizeError, ResumeTokenStore, validateResumeTokenConfig, type ResumeTokenStoreLike } from './resume-token-store';
+import { createInitialSyncCheckpoint, decodeStoredSyncCheckpoint, normalizeError, ResumeTokenStore, validateResumeTokenConfig, type ResumeTokenStoreLike } from './resume-token-store';
 export { ResumeTokenStore, validateResumeTokenConfig } from './resume-token-store';
 
 export type {
@@ -145,8 +145,11 @@ export function validateSyncConfig(config: SyncConfig): void {
     }
     validateSyncIdempotencyConfig(config.idempotency);
 
+    const targetNames = new Set<string>();
     config.targets.forEach((target, index) => {
         validateTargetConfig(target as SyncTargetConfig | null, index);
+        if (targetNames.has(target.name)) throw createError(ErrorCodes.INVALID_CONFIG, `[Sync] duplicate target name: ${target.name}`);
+        targetNames.add(target.name);
     });
 
     if (config.resumeToken) {
@@ -168,6 +171,7 @@ export class ChangeStreamSyncManager {
     private readonly clientFactory: (uri: string, options?: MongoClientOptions) => Promise<MongoClient>;
     private readonly idempotency: SyncIdempotencyRuntime;
     private readonly targets: ResolvedTarget[] = [];
+    private readonly pendingTargetCleanup = new Set<ResolvedTarget>();
     private changeStream: ChangeStream | null = null;
     private startPromise: Promise<void> | null = null;
     private closingStreamPromise: Promise<void> | null = null;
@@ -228,15 +232,13 @@ export class ChangeStreamSyncManager {
             let stagedTargets: ResolvedTarget[] = [];
             let stream: ChangeStream | null = null;
             try {
-                await this.validateEnvironment();
-                this.assertCurrentGeneration(generation);
                 stagedTargets = await this.initializeTargets();
                 this.assertCurrentGeneration(generation);
 
-                const resumeAfter = await this.tokenStore.load();
+                const resumeOptions = await this.loadResumeOptions(generation);
+                await this.validateEnvironment();
                 this.assertCurrentGeneration(generation);
-                const options: Record<string, unknown> = { fullDocument: 'updateLookup' };
-                if (resumeAfter) options.resumeAfter = resumeAfter;
+                const options: Record<string, unknown> = { fullDocument: 'updateLookup', ...resumeOptions };
 
                 stream = this.db.watch(this.buildPipeline(), options as Parameters<Db['watch']>[1]);
                 const activeStream = stream;
@@ -270,7 +272,9 @@ export class ChangeStreamSyncManager {
                 this.stats.startTime = new Date();
             } catch (error) {
                 if (stream) await this.closeChangeStream(stream).catch(() => undefined);
-                for (const target of stagedTargets.reverse()) await target.close().catch(() => undefined);
+                if (stagedTargets.length > 0) await this.closeTargets(stagedTargets).catch((cleanupError) => {
+                    try { this.logger?.warn?.('[Sync] target cleanup failed after startup error', cleanupError); } catch { /* Preserve the startup error. */ }
+                });
                 throw error;
             }
         })();
@@ -297,9 +301,13 @@ export class ChangeStreamSyncManager {
             this.running = false;
             const stream = this.changeStream;
             this.changeStream = null;
-            if (stream) await this.closeChangeStream(stream);
-            else await this.closingStreamPromise;
-            await this.closeTargets();
+            let cleanupError: unknown;
+            try {
+                if (stream) await this.closeChangeStream(stream);
+                else await this.closingStreamPromise;
+            } catch (error) { cleanupError = error; }
+            try { await this.closeTargets(); } catch (error) { cleanupError ??= error; }
+            if (cleanupError) throw cleanupError;
         })();
         this.stopPromise = cleanup;
         try {
@@ -317,10 +325,21 @@ export class ChangeStreamSyncManager {
         if (!allowPreviousFatal && this.fatalSyncError) throw this.fatalSyncError;
     }
 
-    private async closeTargets(): Promise<void> {
-        while (this.targets.length > 0) {
-            await this.targets.pop()?.close();
+    private async closeTargets(targets: ResolvedTarget[] = this.targets): Promise<void> {
+        const closing = [...new Set([...targets, ...this.pendingTargetCleanup])].reverse();
+        const errors: Error[] = [];
+        for (const target of closing) {
+            this.pendingTargetCleanup.add(target);
+            const index = this.targets.indexOf(target);
+            if (index >= 0) this.targets.splice(index, 1);
+            try {
+                await target.close();
+                this.pendingTargetCleanup.delete(target);
+            } catch (error) {
+                errors.push(normalizeError(error));
+            }
         }
+        if (errors.length > 0) throw errors[0];
     }
 
     /**
@@ -352,6 +371,24 @@ export class ChangeStreamSyncManager {
                     : `${((target.stats.syncCount / (target.stats.syncCount + target.stats.errorCount)) * 100).toFixed(2)}%`,
             })),
         };
+    }
+
+    /** Persist an initial replay anchor before opening any watch, including the environment probe. */
+    private async loadResumeOptions(generation: number): Promise<ReturnType<typeof decodeStoredSyncCheckpoint>> {
+        const stored = await this.tokenStore.load();
+        this.assertCurrentGeneration(generation);
+        if (stored !== null && stored !== undefined) return decodeStoredSyncCheckpoint(stored);
+
+        const hello = await this.db.command({ hello: 1 });
+        this.assertCurrentGeneration(generation);
+        const operationTime = hello.operationTime instanceof Timestamp ? hello.operationTime
+            : hello.$clusterTime?.clusterTime instanceof Timestamp ? hello.$clusterTime.clusterTime : null;
+        if (!operationTime) {
+            throw createError(ErrorCodes.INVALID_CONFIG, '[Sync] server did not return a valid BSON operation time');
+        }
+        await this.tokenStore.save(createInitialSyncCheckpoint(operationTime));
+        this.assertCurrentGeneration(generation);
+        return { startAtOperationTime: operationTime };
     }
 
     private async validateEnvironment(): Promise<void> {
@@ -397,7 +434,9 @@ export class ChangeStreamSyncManager {
             for (const target of this.config.targets) staged.push(await this.resolveTarget(target));
             return staged;
         } catch (error) {
-            for (const target of staged.reverse()) await target.close().catch(() => undefined);
+            await this.closeTargets(staged).catch((cleanupError) => {
+                try { this.logger?.warn?.('[Sync] target cleanup failed during initialization', cleanupError); } catch { /* Preserve the startup error. */ }
+            });
             throw error;
         }
     }
@@ -544,7 +583,7 @@ export class ChangeStreamSyncManager {
         if (rawKey === null || rawKey === undefined || rawKey === '') {
             return null;
         }
-        return `${this.idempotency.keyPrefix}:${targetName}:${rawKey}`;
+        return JSON.stringify(['v2', this.idempotency.keyPrefix, targetName, rawKey]);
     }
 
     private async hasAppliedTargetEvent(key: string): Promise<boolean> {

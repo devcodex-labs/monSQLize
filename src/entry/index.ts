@@ -39,6 +39,7 @@ import {
     MemoryCache,
     MultiLevelCache,
     Model,
+    ModelInstance,
     MonSQLizeRuntime,
     normalizeProjection,
     normalizeSort,
@@ -88,6 +89,7 @@ MonSQLize.validatePoolConfig = validatePoolConfig;
 MonSQLize.validatePoolConfigSafe = validatePoolConfigSafe;
 MonSQLize.defineModel = defineModel;
 MonSQLize.Model = Model;
+MonSQLize.ModelInstance = ModelInstance;
 MonSQLize.expr = expr;
 MonSQLize.createExpression = createExpression;
 MonSQLize.compilePipelineExpressions = compilePipelineExpressions;

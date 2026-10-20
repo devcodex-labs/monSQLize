@@ -1,5 +1,7 @@
 ﻿# findPage 方法详细文档
 
+totals 缓存键区分 BSON/RegExp 查询和实际 count 选项，包括继承的 `let`、collation、hint。参数化 `$expr` 筛选在数据读取与计数时都接收 `let`，保留 BSON 文档字段顺序。已定义的顶层选项覆盖嵌套 `options`；totals 专属 hint/collation/maxTimeMS 覆盖仍优先。带 session 的读取绕过 totals 缓存。书签保留复合排序顺序，并与维护 API 共用生效查询选项。totals 与书签 `v4` 键冷启动，旧条目通过 TTL 或已有集合失效机制退出。
+
 
 ## 概述
 

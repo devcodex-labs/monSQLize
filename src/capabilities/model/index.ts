@@ -34,6 +34,7 @@ import { PopulatePromise } from './populate-promise';
 import type { ExtendedModelCollectionLike, PopulatePath, ModelCollectionLike, ModelRuntimeLike } from './populate-promise';
 import { validateRelationConfig, normalizePopulateConfig } from './definition-validator';
 import { Model } from './model-registry';
+import { MODEL_QUERY_FILTER } from '../../core/model-query-context';
 import {
     applyModelDefaults,
     hydrateModelDocument,
@@ -48,7 +49,6 @@ import {
     applySoftDeleteFindPageOptions,
     countOnlyDeletedDocuments,
     countWithDeletedDocuments,
-    filterVisibleBySoftDelete,
     findOneOnlyDeletedDocument,
     findOneWithDeletedDocument,
     findOnlyDeletedDocuments,
@@ -57,7 +57,6 @@ import {
     forceDeleteManyDocuments,
     restoreManySoftDeletedDocuments,
     restoreSoftDeletedDocuments,
-    withSoftDeleteProjection,
 } from './model-soft-delete-helpers';
 import {
     attachModelStatics,
@@ -335,24 +334,17 @@ export class ModelInstance<TDocument = Record<string, unknown>> {
 
     findByIds(ids: unknown[], options?: unknown): PopulateProxy<Array<TDocument & Record<string, unknown>>> {
         return new PopulatePromise(async (paths) => {
-            let stripField = false;
             const lookupByIds = (nextIds: unknown, nextOptions: unknown) => {
-                const projection = withSoftDeleteProjection(nextOptions, this._softDeleteConfig);
-                stripField = projection.stripField;
-                return this.collection.findByIds(nextIds as unknown[], projection.options) as Promise<Array<TDocument | null | undefined>>;
+                const queryOptions = {
+                    ...(nextOptions as Record<string, unknown> ?? {}),
+                    [MODEL_QUERY_FILTER]: applyModelSoftDeleteFilter({}, nextOptions, this._softDeleteConfig),
+                };
+                return this.collection.findByIds(nextIds as unknown[], queryOptions) as Promise<Array<TDocument | null | undefined>>;
             };
             const docs = this._v1HooksFactory
                 ? await this.runV1HookedOperation('find', [ids, options], lookupByIds)
                 : await lookupByIds(ids, options);
-            const visible = filterVisibleBySoftDelete(docs, options, this._softDeleteConfig);
-            const projected = stripField && this._softDeleteConfig
-                ? visible.map((doc) => {
-                    const copy = { ...doc } as TDocument & Record<string, unknown>;
-                    delete copy[this._softDeleteConfig!.field];
-                    return copy;
-                })
-                : visible;
-            return this.populateDocuments(this.hydrateDocuments(projected), paths);
+            return this.populateDocuments(this.hydrateDocuments(docs), paths);
         });
     }
 
@@ -715,7 +707,9 @@ export class ModelInstance<TDocument = Record<string, unknown>> {
             dbName: this.dbName,
             poolName: this.poolName,
             hydrateDocument: (doc) => this.hydrateDocument(doc),
-            deleteOne: (filter, options) => this.deleteOne(filter, options),
+            deleteOne: (filter, options, protectedDeleteGuard) => this.runModelWrite(() => orchestrateModelDeleteOne(
+                { ...this.mutationContext(), protectedDeleteGuard }, filter, options,
+            )),
             forceDelete: (filter, options) => this.forceDelete(filter, options),
         };
     }
@@ -724,6 +718,7 @@ export class ModelInstance<TDocument = Record<string, unknown>> {
         return {
             collection: this.collection,
             softDeleteConfig: this._softDeleteConfig,
+            versionConfig: this._versionConfig,
             hydrateDocuments: (docs: Array<TDocument | null | undefined>) => this.hydrateDocuments(docs),
             hydrateDocument: (doc: TDocument | null | undefined) => this.hydrateDocument(doc),
             populateDocuments: (docs: Array<TDocument & Record<string, unknown>>, paths: PopulatePath[]) => this.populateDocuments(docs, paths),
@@ -764,7 +759,7 @@ export class ModelInstance<TDocument = Record<string, unknown>> {
             schemaCache: this._schemaCache,
             schemaValidateFn: this._schemaValidateFn,
             schemaError: this._schemaError,
-            hooksFactory: this._v1HooksFactory,
+            hooksFactory: this._v1HooksFactory ? () => this._v1HooksFactory!(this) : null,
             runHook: (hookName: string, context: HookContext) => this.runHook(hookName, context),
         };
     }

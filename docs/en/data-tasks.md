@@ -1,5 +1,7 @@
 # Data Tasks API Reference
 
+Apply and restore use an atomic BSON before-image comparison with simple (binary) collation. A scalar changed to an array, a missing field changed to null, extra fields, or case-only string drift fails the comparison. Numeric BSON values follow MongoDB numeric equality; nested document key order remains significant. A string `_id` under a non-simple collection collation may require more scanning; review the query plan for large collections.
+
 `dataTasks` uses one `DataTaskJob` configuration for release-scoped index checks, filtered data synchronization, local field edits, reviewed preview, affected-scope backup, and restore.
 
 Backup manifests and data rows are read as canonical EJSON. Only manifest control fields (`version`, `entryCount`, `maxBytes`) are converted from safe numeric BSON values to JavaScript numbers. Identity, target IDs, before/after images, and index keys retain their BSON types and key order. An unsafe or ambiguous legacy control value fails backup validation instead of being guessed.

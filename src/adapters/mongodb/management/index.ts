@@ -10,7 +10,7 @@
 import { normalizeSortShape } from '../queries/query-helpers';
 import { coordinateInvalidation, withCacheReads } from '../../../core/cache-coordination';
 import type { QueryCacheLike } from '../../../types/internal/query';
-import { createHash } from 'node:crypto';
+import { buildBookmarkBaseKey } from '../queries/find-page-cache-helpers';
 import { Collection, Db, Document } from 'mongodb';
 
 import { createError, ErrorCodes } from '../../../core/errors';
@@ -422,55 +422,6 @@ function buildBookmarkPattern(namespace: string, keyDims?: BookmarkKeyDims): str
     return keyDims ? `${buildBookmarkBaseKey(namespace, keyDims)}:*` : `${namespace}:bm:*`;
 }
 
-function buildBookmarkBaseKey(namespace: string, keyDims: BookmarkKeyDims): string {
-    return `${namespace}:bm:${hash(stableStringify({
-        sort: keyDims.sort,
-        limit: keyDims.limit,
-        query: keyDims.query,
-        pipeline: keyDims.pipeline,
-        cursorTypes: keyDims.cursorTypes,
-        cursorValueNormalizerVersion: keyDims.cursorValueNormalizerVersion,
-    }))}`;
-}
-
-function stableStringify(value: unknown): string {
-    return stableStringifyValue(value, new WeakSet<object>());
-}
-
-function stableStringifyValue(value: unknown, seen: WeakSet<object>): string {
-    if (value === undefined) {
-        return 'u';
-    }
-    if (value === null) {
-        return 'l';
-    }
-    if (Array.isArray(value)) {
-        return `a[${value.map((item) => stableStringifyValue(item, seen)).join(',')}]`;
-    }
-    if (value instanceof Date) {
-        return `d${JSON.stringify(value.toISOString())}`;
-    }
-    if (typeof value === 'object') {
-        if (seen.has(value)) {
-            throw createError(ErrorCodes.INVALID_ARGUMENT, 'Cannot build a stable bookmark key for a circular value.');
-        }
-        seen.add(value);
-        const customJson = (value as { toJSON?: () => unknown }).toJSON;
-        try {
-            if (typeof customJson === 'function' && value.constructor?.name !== 'Object') {
-                return stableStringifyValue(customJson.call(value), seen);
-            }
-            const entries = Object.entries(value as Record<string, unknown>)
-                .sort(([left], [right]) => left.localeCompare(right))
-                .map(([key, item]) => `${JSON.stringify(key)}:${stableStringifyValue(item, seen)}`);
-            return `o{${entries.join(',')}}`;
-        } finally {
-            seen.delete(value);
-        }
-    }
-    return `${typeof value}:${JSON.stringify(value)}`;
-}
-
 async function resolveKeys(cache: BookmarkCacheLike, pattern: string): Promise<string[]> {
     const keys = await Promise.resolve(cache.keys?.(pattern) ?? []);
     return Array.isArray(keys) ? keys : [];
@@ -487,10 +438,6 @@ function extractBookmarkPage(key: string): number | null {
         return null;
     }
     return Number.parseInt(match[1], 10);
-}
-
-function hash(value: string): string {
-    return createHash('sha256').update(value).digest('hex');
 }
 
 function extractErrorMessage(cause: unknown): string {

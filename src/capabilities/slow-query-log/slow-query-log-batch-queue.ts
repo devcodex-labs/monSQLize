@@ -22,6 +22,7 @@ export class BatchQueue {
         private readonly storage: Pick<SlowQueryLogStorage, 'saveBatch'>,
         options: Partial<SlowQueryLogConfig['batch']> = {},
         logger: LoggerLike | null = null,
+        private readonly errorHandling: 'log' | 'silent' = 'log',
     ) {
         this.batchSize = options.size ?? DEFAULT_SLOW_QUERY_LOG_CONFIG.batch.size;
         this.flushInterval = options.interval ?? DEFAULT_SLOW_QUERY_LOG_CONFIG.batch.interval;
@@ -63,7 +64,9 @@ export class BatchQueue {
             await this.storage.saveBatch(payload);
             this.logger?.debug?.('[SlowQueryLog] batch flushed', { count: payload.length });
         } catch (error) {
-            this.logger?.error?.('[SlowQueryLog] batch flush failed', error);
+            if (this.errorHandling === 'log') {
+                try { this.logger?.error?.('[SlowQueryLog] batch flush failed', error); } catch { /* Scheduled flushes must settle. */ }
+            }
         } finally {
             this.flushing = false;
             this.flushPromise = null;

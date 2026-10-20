@@ -80,7 +80,7 @@ import {
     type TransactionStats,
     type MongoSession,
 } from '../capabilities/transaction';
-import { closeMongo, connectMongo } from '../adapters/mongodb/common/connect';
+import { connectMongo } from '../adapters/mongodb/common/connect';
 import type { SSHTunnelSSH2 } from '../capabilities/ssh';
 import {
     createExpression,
@@ -175,6 +175,8 @@ export class MonSQLizeRuntime {
         enableStats: false,
     });
     private _connectionPromise: Promise<ConnectResult<MonSQLizeRuntime>> | null = null;
+    private _connectionGeneration = 0;
+    private _closePromise: Promise<void> | null = null;
     private _sshTunnel: SSHTunnelSSH2 | null = null;
     private _distributedInvalidator: DistributedCacheInvalidator | null = null;
     private _schemaDslEngine: SchemaDslEngine;
@@ -237,90 +239,81 @@ export class MonSQLizeRuntime {
         this.autoConvertConfig = initAutoConvertConfig(options.autoConvertObjectId, options.type);
     }
     async connect(): Promise<ConnectResult<MonSQLizeRuntime>> {
-        if (this._connected) {
-            return createRuntimeCoreAccessors(this);
-        }
-        if (this._connectionPromise) {
-            return this._connectionPromise;
-        }
-        this._connectionPromise = (async () => {
+        if (this._closePromise) await this._closePromise;
+        if (this._connected) return createRuntimeCoreAccessors(this);
+        if (this._connectionPromise) return this._connectionPromise;
+        const generation = this._connectionGeneration;
+        const assertCurrent = () => {
+            if (generation !== this._connectionGeneration) {
+                throw createError(ErrorCodes.INVALID_OPERATION, 'Connection startup superseded by close');
+            }
+        };
+        const connecting = (async () => {
+            if (!(await this.releaseConnectionResources())) {
+                throw createError(ErrorCodes.INVALID_OPERATION, 'Previous connection cleanup must succeed before reconnect');
+            }
+            assertCurrent();
             this._schemaDslEngine = replaceRuntimeSchemaDslEngine(this._schemaDslEngine, this.options, this._logger);
             const databaseName = resolveDatabaseName(this.options);
-            let connectConfig = this.options.config;
-            const sshPrepared = await prepareSshTunnelConnectConfig(connectConfig, databaseName, this._logger);
-            connectConfig = sshPrepared.connectConfig;
+            const sshPrepared = await prepareSshTunnelConnectConfig(this.options.config, databaseName, this._logger);
             this._sshTunnel = sshPrepared.tunnel;
-            const { client } = await connectMongo({
-                databaseName,
-                config: connectConfig,
-                logger: this._logger,
-            });
+            assertCurrent();
+            const { client } = await connectMongo({ databaseName, config: sshPrepared.connectConfig, logger: this._logger, onCreated: (ownedClient) => { this._client = ownedClient; } });
             this._client = client;
+            assertCurrent();
             this._defaultDb = this.createDbFacade(databaseName);
-            if (!this._poolManager) {
-                this._poolManager = await createAndStartPoolManager(this.options);
-            }
+            await createAndStartPoolManager(this.options, (manager) => {
+                this._poolManager = manager;
+                assertCurrent();
+            });
+            assertCurrent();
             this.initializeSagaOrchestrator();
             this.initializeSlowQueryLogManager();
             await this.initializeSyncManager();
-            if (!this._distributedInvalidator) {
-                this._distributedInvalidator = await initializeDistributedCacheInvalidator(
-                    this.options, this._cache, this._logger,
-                );
-                if (this._distributedInvalidator && this._cache instanceof MemoryCache) {
-                    this._logger.warn?.(
-                        '[Cache] distributed invalidator created but cache has no publish hook — ' +
-                        'broadcast path disabled. Use cache: { local, remote, distributed } for full cross-instance sync.',
-                    );
-                }
+            assertCurrent();
+            this._distributedInvalidator = await initializeDistributedCacheInvalidator(this.options, this._cache, this._logger);
+            assertCurrent();
+            if (this._distributedInvalidator && this._cache instanceof MemoryCache) {
+                this._logger.warn?.('[Cache] distributed invalidator created but cache has no publish hook — broadcast path disabled. Use cache: { local, remote, distributed } for full cross-instance sync.');
             }
             await this._loadModels();
+            assertCurrent();
             this._connected = true;
-            this.emit('connected', {
-                type: this.options.type,
-                db: databaseName,
-            });
+            this.emit('connected', { type: this.options.type, db: databaseName });
             return createRuntimeCoreAccessors(this);
-        })();
-        try {
-            return await this._connectionPromise;
-        } catch (error) {
-            // Clean up partially initialized resources so a retry starts fresh.
-            // Only runs when _connected is still false (i.e., failure before the
-            // point-of-no-return assignment), which means client/pool may have
-            // been created but never handed off to callers.
-            if (!this._connected) {
-                const resources = {
-                    client: this._client,
-                    pool: this._poolManager,
-                    tunnel: this._sshTunnel,
-                    invalidator: this._distributedInvalidator,
-                    sync: this._syncManager,
-                    slowQuery: this._slowQueryLogManager,
-                    transaction: this._transactionManager,
-                    lock: this._lockManager,
-                };
-                this._client = null;
-                this._defaultDb = null;
-                this._poolManager = null;
-                this._sshTunnel = null;
-                this._distributedInvalidator = null;
-                this._syncManager = null;
-                this._slowQueryLogManager = null;
-                this._transactionManager = null;
-                this._lockManager = null;
-                this._sagaOrchestrator = null;
-                await cleanupFailedRuntimeConnection(resources, this._logger);
-            }
+        })().catch(async (error) => {
+            this._connected = false;
+            await this.releaseConnectionResources();
             this.emit('error', {
-                type: this.options.type,
-                db: resolveDatabaseName(this.options),
+                type: this.options.type, db: resolveDatabaseName(this.options),
                 error: error instanceof Error ? error.message : String(error),
             });
             throw error;
-        } finally {
-            this._connectionPromise = null;
-        }
+        }).finally(() => {
+            if (this._connectionPromise === connecting) this._connectionPromise = null;
+        });
+        this._connectionPromise = connecting;
+        return connecting;
+    }
+
+    private async releaseConnectionResources(reason = 'after failed connect'): Promise<boolean> {
+        const resources = {
+            client: this._client, pool: this._poolManager, tunnel: this._sshTunnel,
+            invalidator: this._distributedInvalidator, sync: this._syncManager,
+            slowQuery: this._slowQueryLogManager, transaction: this._transactionManager, lock: this._lockManager,
+        };
+        const failed = await cleanupFailedRuntimeConnection(resources, this._logger, reason);
+        if (!failed.has('client') && this._client === resources.client) this._client = null;
+        if (!failed.has('pool') && this._poolManager === resources.pool) this._poolManager = null;
+        if (!failed.has('tunnel') && this._sshTunnel === resources.tunnel) this._sshTunnel = null;
+        if (!failed.has('invalidator') && this._distributedInvalidator === resources.invalidator) this._distributedInvalidator = null;
+        if (!failed.has('sync') && this._syncManager === resources.sync) this._syncManager = null;
+        if (!failed.has('slowQuery') && this._slowQueryLogManager === resources.slowQuery) this._slowQueryLogManager = null;
+        if (!failed.has('transaction') && this._transactionManager === resources.transaction) this._transactionManager = null;
+        if (!failed.has('lock') && this._lockManager === resources.lock) this._lockManager = null;
+        this._defaultDb = null;
+        this._sagaOrchestrator = null;
+        return failed.size === 0;
     }
     getCache(): CacheLike { return this._cache; }
     getDefaults(): Record<string, unknown> {
@@ -347,53 +340,26 @@ export class MonSQLizeRuntime {
         });
 }
     async close(): Promise<void> {
-        // Run async cleanup concurrently; a single failure must not skip remaining steps.
-        const results = await Promise.allSettled([
-            this._syncManager?.stop(),
-            this._slowQueryLogManager?.close(),
-            this._transactionManager?.abortAll(),
-            this._poolManager?.close(),
-            this._distributedInvalidator?.close(),
-        ]);
-        for (const result of results) {
-            if (result.status === 'rejected') {
-                this._logger.warn('[MonSQLizeRuntime] cleanup error during close', result.reason);
-            }
-        }
-        // Synchronous cleanup — order matters: locks before mongo client.
-        this._cacheLockManager.stop();
-        this._lockManager?.close();
-        if (this._cacheClose) {
-            await this._cacheClose().catch((err) => {
-                this._logger.warn('[MonSQLizeRuntime] cache cleanup error during close', err);
-            });
-        }
-        disposeRuntimeSchemaDslEngine(this._schemaDslEngine, this._logger, 'during close');
-        await closeMongo(this._client, this._logger);
-        // Close SSH tunnel after MongoDB — the driver used the tunnel, so tear it down last.
-        if (this._sshTunnel) {
-            await this._sshTunnel.close().catch((err) => {
-                this._logger.warn('[SSH] Error closing SSH tunnel', err);
-            });
-        }
-        // Reset all state references.
-        this._client = null;
-        this._defaultDb = null;
+        if (this._closePromise) return this._closePromise;
         this._connected = false;
-        this._poolManager = null;
-        this._syncManager = null;
-        this._slowQueryLogManager = null;
-        this._transactionManager = null;
-        this._lockManager = null;
-        this._sagaOrchestrator = null;
-        this._iidCache = null;
-        this._sshTunnel = null;
-        this._distributedInvalidator = null;
-        this._modelInstances.clear();
-        this.emit('closed', {
-            type: this.options.type,
-            db: resolveDatabaseName(this.options),
-        });
+        this._connectionGeneration++;
+        const pendingConnect = this._connectionPromise;
+        const closing = (async () => {
+            await pendingConnect?.catch(() => undefined);
+            await this.releaseConnectionResources('during close');
+            this._cacheLockManager.stop();
+            if (this._cacheClose) {
+                await Promise.resolve().then(() => this._cacheClose!()).catch((error) => {
+                    this._logger.warn('[MonSQLizeRuntime] cache cleanup error during close', error);
+                });
+            }
+            disposeRuntimeSchemaDslEngine(this._schemaDslEngine, this._logger, 'during close');
+            this._iidCache = null;
+            this._modelInstances.clear();
+            this.emit('closed', { type: this.options.type, db: resolveDatabaseName(this.options) });
+        })().finally(() => { if (this._closePromise === closing) this._closePromise = null; });
+        this._closePromise = closing;
+        return closing;
     }
 
     async health(): Promise<HealthView> {

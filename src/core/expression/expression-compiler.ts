@@ -7,13 +7,154 @@
  */
 import { createError, ErrorCodes } from '../errors/index';
 
-const FUNC_REGEX =
-    /^(CONCAT|UPPER|LOWER|TRIM|SUBSTR|LENGTH|ABS|CEIL|FLOOR|ROUND|SQRT|POW|SIZE|IN|SLICE|FIRST|LAST|ARRAY_ELEM_AT|FILTER|MAP|INDEX_OF|CONCAT_ARRAYS|TYPE|NOT|EXISTS|IS_NUMBER|IS_ARRAY|SUM|AVG|MAX|MIN|COUNT|PUSH|ADD_TO_SET|YEAR|MONTH|DAY_OF_MONTH|HOUR|MINUTE|SECOND|SPLIT|REPLACE|INDEX_OF_STR|LTRIM|RTRIM|SUBSTR_CP|REGEX|MERGE_OBJECTS|TO_INT|TO_STRING|OBJECT_TO_ARRAY|ARRAY_TO_OBJECT|SET_UNION|SWITCH|DATE_ADD|DATE_SUBTRACT|DATE_DIFF|DATE_TO_STRING|DATE_FROM_STRING|TO_BOOL|TO_DATE|TO_DOUBLE|CONVERT|TO_DECIMAL|TO_LONG|TO_OBJECT_ID|REDUCE|ZIP|REVERSE_ARRAY|RANGE|DATE_FROM_PARTS|DATE_TO_PARTS|ISO_WEEK|ISO_WEEK_YEAR|ISO_DAY_OF_WEEK|DAY_OF_WEEK|DAY_OF_YEAR|WEEK|STR_LEN_BYTES|STR_LEN_CP|SUBSTR_BYTES|LOG|LOG10|ALL_ELEMENTS_TRUE|ANY_ELEMENT_TRUE|COND|IF_NULL|SET_FIELD|UNSET_FIELD|GET_FIELD|SET_DIFFERENCE|SET_EQUALS|SET_INTERSECTION|SET_IS_SUBSET|LET|LITERAL|RAND|SAMPLE_RATE)\s*\((.+)?\)$/i;
+const FUNCTION_NAMES = 'CONCAT|UPPER|LOWER|TRIM|SUBSTR|LENGTH|ABS|CEIL|FLOOR|ROUND|SQRT|POW|SIZE|IN|SLICE|FIRST|LAST|ARRAY_ELEM_AT|FILTER|MAP|INDEX_OF|CONCAT_ARRAYS|TYPE|NOT|EXISTS|IS_NUMBER|IS_ARRAY|SUM|AVG|MAX|MIN|COUNT|PUSH|ADD_TO_SET|YEAR|MONTH|DAY_OF_MONTH|HOUR|MINUTE|SECOND|SPLIT|REPLACE|INDEX_OF_STR|LTRIM|RTRIM|SUBSTR_CP|REGEX|MERGE_OBJECTS|TO_INT|TO_STRING|OBJECT_TO_ARRAY|ARRAY_TO_OBJECT|SET_UNION|SWITCH|DATE_ADD|DATE_SUBTRACT|DATE_DIFF|DATE_TO_STRING|DATE_FROM_STRING|TO_BOOL|TO_DATE|TO_DOUBLE|CONVERT|TO_DECIMAL|TO_LONG|TO_OBJECT_ID|REDUCE|ZIP|REVERSE_ARRAY|RANGE|DATE_FROM_PARTS|DATE_TO_PARTS|ISO_WEEK|ISO_WEEK_YEAR|ISO_DAY_OF_WEEK|DAY_OF_WEEK|DAY_OF_YEAR|WEEK|STR_LEN_BYTES|STR_LEN_CP|SUBSTR_BYTES|LOG|LOG10|ALL_ELEMENTS_TRUE|ANY_ELEMENT_TRUE|COND|IF_NULL|SET_FIELD|UNSET_FIELD|GET_FIELD|SET_DIFFERENCE|SET_EQUALS|SET_INTERSECTION|SET_IS_SUBSET|LET|LITERAL|RAND|SAMPLE_RATE';
+const FUNC_REGEX = new RegExp('^(' + FUNCTION_NAMES + ')\\s*\\((.+)?\\)$', 'i');
+const IS_FUNC_CALL_RE = new RegExp('^(' + FUNCTION_NAMES.slice(0, 391) + ')\\s*\\(', 'i');
 
-const IS_FUNC_CALL_RE =
-    /^(CONCAT|UPPER|LOWER|TRIM|SUBSTR|LENGTH|ABS|CEIL|FLOOR|ROUND|SQRT|POW|SIZE|IN|SLICE|FIRST|LAST|ARRAY_ELEM_AT|FILTER|MAP|INDEX_OF|CONCAT_ARRAYS|TYPE|NOT|EXISTS|IS_NUMBER|IS_ARRAY|SUM|AVG|MAX|MIN|COUNT|PUSH|ADD_TO_SET|YEAR|MONTH|DAY_OF_MONTH|HOUR|MINUTE|SECOND|SPLIT|REPLACE|INDEX_OF_STR|LTRIM|RTRIM|SUBSTR_CP|REGEX|MERGE_OBJECTS|TO_INT|TO_STRING|OBJECT_TO_ARRAY|ARRAY_TO_OBJECT|SET_UNION|SWITCH)\s*\(/i;
+const UNARY_FUNCTIONS: Readonly<Record<string, string>> = {
+    UPPER: '$toUpper',
+    LOWER: '$toLower',
+    LENGTH: '$strLenCP',
+    STR_LEN_BYTES: '$strLenBytes',
+    STR_LEN_CP: '$strLenCP',
+    ABS: '$abs',
+    CEIL: '$ceil',
+    FLOOR: '$floor',
+    SQRT: '$sqrt',
+    LOG10: '$log10',
+    SIZE: '$size',
+    FIRST: '$first',
+    LAST: '$last',
+    REVERSE_ARRAY: '$reverseArray',
+    TYPE: '$type',
+    IS_NUMBER: '$isNumber',
+    IS_ARRAY: '$isArray',
+    TO_INT: '$toInt',
+    TO_STRING: '$toString',
+    OBJECT_TO_ARRAY: '$objectToArray',
+    ARRAY_TO_OBJECT: '$arrayToObject',
+    TO_BOOL: '$toBool',
+    TO_DATE: '$toDate',
+    TO_DOUBLE: '$toDouble',
+    TO_DECIMAL: '$toDecimal',
+    TO_LONG: '$toLong',
+    TO_OBJECT_ID: '$toObjectId',
+    SUM: '$sum',
+    AVG: '$avg',
+    MAX: '$max',
+    MIN: '$min',
+    PUSH: '$push',
+    ADD_TO_SET: '$addToSet',
+    YEAR: '$year',
+    MONTH: '$month',
+    DAY_OF_MONTH: '$dayOfMonth',
+    HOUR: '$hour',
+    MINUTE: '$minute',
+    SECOND: '$second',
+    ISO_WEEK: '$isoWeek',
+    ISO_WEEK_YEAR: '$isoWeekYear',
+    ISO_DAY_OF_WEEK: '$isoDayOfWeek',
+    DAY_OF_WEEK: '$dayOfWeek',
+    DAY_OF_YEAR: '$dayOfYear',
+    WEEK: '$week',
+    LITERAL: '$literal',
+    SAMPLE_RATE: '$sampleRate',
+};
+
+const BINARY_FUNCTIONS: Readonly<Record<string, string>> = {
+    SPLIT: '$split',
+    POW: '$pow',
+    LOG: '$log',
+    IN: '$in',
+    ARRAY_ELEM_AT: '$arrayElemAt',
+    INDEX_OF: '$indexOfArray',
+    SET_DIFFERENCE: '$setDifference',
+    SET_IS_SUBSET: '$setIsSubset',
+};
+
+const VARIADIC_FUNCTIONS: Readonly<Record<string, string>> = {
+    CONCAT: '$concat',
+    CONCAT_ARRAYS: '$concatArrays',
+    MERGE_OBJECTS: '$mergeObjects',
+    SET_UNION: '$setUnion',
+    SET_EQUALS: '$setEquals',
+    SET_INTERSECTION: '$setIntersection',
+};
+
+type ExpressionScope = {
+    dsl: ReadonlyMap<string, string>;
+    native: ReadonlyMap<string, string>;
+};
+
+function cloneScope(scope: ExpressionScope) {
+    return { dsl: new Map(scope.dsl), native: new Map(scope.native) };
+}
+
+function bindVariable(scope: ExpressionScope, name: string, source: string, bindDsl: boolean) {
+    const bodyScope = cloneScope(scope);
+    let mongoName = name;
+    if ([...scope.dsl].some(([key, target]) => (!bindDsl || key !== name) && target === name)) {
+        const used = new Set([...scope.dsl.keys(), ...scope.dsl.values(), ...scope.native.values(), ...(source.match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? [])]);
+        for (let index = 0; used.has(mongoName); index++) mongoName = 'monsqlizeVariable' + index;
+    }
+    if (bindDsl) bodyScope.dsl.set(name, mongoName);
+    bodyScope.native.set(name, mongoName);
+    return { bodyScope, mongoName };
+}
+
+function resolveNativeVariable(value: string, scope: ExpressionScope): string {
+    const [name, ...path] = value.slice(2).split('.');
+    return '$$' + [scope.native.get(name) ?? name, ...path].join('.');
+}
+
+function compileNativeValue(value: unknown, scope: ExpressionScope): unknown {
+    if (typeof value === 'string') return value.startsWith('$$') ? resolveNativeVariable(value, scope) : value;
+    if (Array.isArray(value)) return value.map(item => compileNativeValue(item, scope));
+    if (!value || typeof value !== 'object') return value;
+    return Object.fromEntries(Object.entries(value).map(([operator, payload]) => {
+        if (operator === '$literal') return [operator, payload];
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return [operator, compileNativeValue(payload, scope)];
+        const definition = payload as Record<string, unknown>;
+        if (operator === '$map' || operator === '$filter') {
+            const name = typeof definition.as === 'string' ? definition.as : 'this';
+            const { bodyScope, mongoName } = bindVariable(scope, name, JSON.stringify(payload), false);
+            const bodyKey = operator === '$map' ? 'in' : 'cond';
+            return [operator, {
+                ...definition, input: compileNativeValue(definition.input, scope), as: mongoName,
+                [bodyKey]: compileNativeValue(definition[bodyKey], bodyScope),
+                ...(definition.limit !== undefined ? { limit: compileNativeValue(definition.limit, scope) } : {}),
+            }];
+        }
+        if (operator === '$reduce') {
+            const bodyScope = cloneScope(scope);
+            bodyScope.native.set('value', 'value');
+            bodyScope.native.set('this', 'this');
+            return [operator, {
+                ...definition, input: compileNativeValue(definition.input, scope),
+                initialValue: compileNativeValue(definition.initialValue, scope),
+                in: compileNativeValue(definition.in, bodyScope),
+            }];
+        }
+        if (operator === '$let') {
+            let bodyScope = scope;
+            const vars: Record<string, unknown> = {};
+            for (const [name, initial] of Object.entries(definition.vars as Record<string, unknown> ?? {})) {
+                const binding = bindVariable(bodyScope, name, JSON.stringify(payload), false);
+                bodyScope = binding.bodyScope;
+                vars[binding.mongoName] = compileNativeValue(initial, scope);
+            }
+            return [operator, { ...definition, vars, in: compileNativeValue(definition.in, bodyScope) }];
+        }
+        return [operator, compileNativeValue(payload, scope)];
+    }));
+}
 
 export function compileInnerExpression(expression: string): unknown {
+    return compileScopedExpression(expression, { dsl: new Map(), native: new Map() });
+}
+
+function compileScopedExpression(expression: string, scope: ExpressionScope): unknown {
+    const compileInnerExpression = (source: string) => compileScopedExpression(source, scope);
     const expr = expression.trim();
     if (!expr) throw createError(ErrorCodes.INVALID_EXPRESSION, 'Expression cannot be empty');
     const positions = topLevelPositions(expr);
@@ -38,41 +179,22 @@ export function compileInnerExpression(expression: string): unknown {
         );
     }
 
-    const orParts = splitTopLevel(expr, '||', positions);
-    if (orParts.length > 1) {
-        return { $or: orParts.map((part) => compileInnerExpression(part)) };
+    for (const [separator, operator] of [['||', '$or'], ['&&', '$and']]) {
+        const parts = splitTopLevel(expr, separator, positions);
+        if (parts.length > 1) return { [operator]: parts.map((part) => compileInnerExpression(part)) };
     }
 
-    const andParts = splitTopLevel(expr, '&&', positions);
-    if (andParts.length > 1) {
-        return { $and: andParts.map((part) => compileInnerExpression(part)) };
-    }
-
-    const comparison = findBinaryOperator(expr, positions, ['===', '!==', '>=', '<=', '>', '<']);
-    if (comparison) {
-        const operatorMap: Record<string, string> = {
+    const binary = findBinaryOperator(expr, positions, ['===', '!==', '>=', '<=', '>', '<'])
+        ?? findBinaryOperator(expr, positions, ['+', '-'], true)
+        ?? findBinaryOperator(expr, positions, ['*', '/', '%'], true);
+    if (binary) {
+        const operators: Record<string, string> = {
             '===': '$eq', '!==': '$ne', '>=': '$gte', '<=': '$lte', '>': '$gt', '<': '$lt',
+            '+': '$add', '-': '$subtract', '*': '$multiply', '/': '$divide', '%': '$mod',
         };
-        return { [operatorMap[comparison.operator]]: [
-            compileInnerExpression(expr.slice(0, comparison.index)),
-            compileInnerExpression(expr.slice(comparison.index + comparison.operator.length)),
-        ] };
-    }
-
-    const additive = findBinaryOperator(expr, positions, ['+', '-'], true);
-    if (additive) {
-        return { [additive.operator === '+' ? '$add' : '$subtract']: [
-            compileInnerExpression(expr.slice(0, additive.index)),
-            compileInnerExpression(expr.slice(additive.index + 1)),
-        ] };
-    }
-
-    const multiplicative = findBinaryOperator(expr, positions, ['*', '/', '%'], true);
-    if (multiplicative) {
-        const operatorMap: Record<string, string> = { '*': '$multiply', '/': '$divide', '%': '$mod' };
-        return { [operatorMap[multiplicative.operator]]: [
-            compileInnerExpression(expr.slice(0, multiplicative.index)),
-            compileInnerExpression(expr.slice(multiplicative.index + 1)),
+        return { [operators[binary.operator]]: [
+            compileInnerExpression(expr.slice(0, binary.index)),
+            compileInnerExpression(expr.slice(binary.index + binary.operator.length)),
         ] };
     }
 
@@ -83,7 +205,7 @@ export function compileInnerExpression(expression: string): unknown {
     const funcMatch = expr.match(FUNC_REGEX);
     if (funcMatch) {
         try {
-            return dispatchFunction(funcMatch[1].toUpperCase(), funcMatch[2] ?? '');
+            return dispatchFunction(funcMatch[1].toUpperCase(), funcMatch[2] ?? '', scope);
         } catch (error) {
             if (error && typeof error === 'object' && 'code' in error && error.code === ErrorCodes.INVALID_EXPRESSION) {
                 throw error;
@@ -98,10 +220,11 @@ export function compileInnerExpression(expression: string): unknown {
         throw createError(ErrorCodes.INVALID_EXPRESSION, `Unsupported expression function: ${funcName}`);
     }
 
-    return parseValue(expr);
+    return parseScopedValue(expr, scope);
 }
 
-function parseValue(value: string): unknown {
+function parseScopedValue(value: string, scope: ExpressionScope): unknown {
+    const compileInnerExpression = (source: string) => compileScopedExpression(source, scope);
     const normalized = stripOuterParentheses(value.trim());
 
     if ((normalized.startsWith("'") && normalized.endsWith("'")) || (normalized.startsWith('"') && normalized.endsWith('"'))) {
@@ -115,7 +238,7 @@ function parseValue(value: string): unknown {
         return compileInnerExpression(normalized);
     }
     if (normalized.startsWith('[') || normalized.startsWith('{')) {
-        try { return JSON.parse(normalized); } catch {
+        try { return compileNativeValue(JSON.parse(normalized), scope); } catch {
             throw createError(ErrorCodes.INVALID_EXPRESSION, 'Invalid array or object literal');
         }
     }
@@ -123,116 +246,97 @@ function parseValue(value: string): unknown {
     if (positions.some((index) => /[?+\-*/%><&|]/.test(normalized[index]))) {
         return compileInnerExpression(normalized);
     }
+    if (normalized.startsWith('$$')) return resolveNativeVariable(normalized, scope);
     if (normalized.startsWith('$')) return normalized;
-    return `$${normalized}`;
+    const [root, ...path] = normalized.split('.');
+    const variable = scope.dsl.get(root);
+    return variable === undefined ? `$${normalized}` : `$$${[variable, ...path].join('.')}`;
 }
 
-function dispatchFunction(name: string, argsStr: string): unknown {
+function dispatchFunction(name: string, argsStr: string, scope: ExpressionScope): unknown {
+    const parseValue = (source: string) => parseScopedValue(source, scope);
+    const compileInnerExpression = (source: string) => compileScopedExpression(source, scope);
     const args = splitArgsStr(argsStr);
+    if (name === 'LITERAL') {
+        const source = args[0].trim();
+        const literal = source.startsWith('{') || source.startsWith('[')
+            ? JSON.parse(source)
+            : parseScopedValue(source, { dsl: new Map(), native: new Map() });
+        return { $literal: literal };
+    }
+    if (UNARY_FUNCTIONS[name]) return { [UNARY_FUNCTIONS[name]]: parseValue(args[0]) };
+    if (BINARY_FUNCTIONS[name]) return { [BINARY_FUNCTIONS[name]]: [parseValue(args[0]), parseValue(args[1])] };
+    if (VARIADIC_FUNCTIONS[name]) return { [VARIADIC_FUNCTIONS[name]]: args.map((arg) => parseValue(arg)) };
 
     switch (name) {
-        case 'CONCAT': return { $concat: args.map((arg) => parseValue(arg)) };
-        case 'UPPER': return { $toUpper: parseValue(args[0]) };
-        case 'LOWER': return { $toLower: parseValue(args[0]) };
-        case 'TRIM': return { $trim: { input: parseValue(args[0]) } };
-        case 'LENGTH': return { $strLenCP: parseValue(args[0]) };
-        case 'SUBSTR': return { $substr: [parseValue(args[0]), parseInt(args[1], 10), parseInt(args[2], 10)] };
-        case 'SPLIT': return { $split: [parseValue(args[0]), parseValue(args[1])] };
+        case 'TRIM':
+        case 'LTRIM':
+        case 'RTRIM': return { [name === 'TRIM' ? '$trim' : name === 'LTRIM' ? '$ltrim' : '$rtrim']: { input: parseValue(args[0]) } };
+        case 'SUBSTR':
+        case 'SUBSTR_CP':
+        case 'SUBSTR_BYTES': return { [name === 'SUBSTR' ? '$substr' : name === 'SUBSTR_CP' ? '$substrCP' : '$substrBytes']: [parseValue(args[0]), parseValue(args[1]), parseValue(args[2])] };
         case 'REPLACE': return { $replaceOne: { input: parseValue(args[0]), find: parseValue(args[1]), replacement: parseValue(args[2]) } };
         case 'INDEX_OF_STR': {
             const base = [parseValue(args[0]), parseValue(args[1])];
             if (args[2]) return { $indexOfCP: [...base, parseValue(args[2])] };
             return { $indexOfCP: base };
         }
-        case 'LTRIM': return { $ltrim: { input: parseValue(args[0]) } };
-        case 'RTRIM': return { $rtrim: { input: parseValue(args[0]) } };
-        case 'SUBSTR_CP': return { $substrCP: [parseValue(args[0]), parseInt(args[1], 10), parseInt(args[2], 10)] };
-        case 'STR_LEN_BYTES': return { $strLenBytes: parseValue(args[0]) };
-        case 'STR_LEN_CP': return { $strLenCP: parseValue(args[0]) };
-        case 'SUBSTR_BYTES': return { $substrBytes: [parseValue(args[0]), parseValue(args[1]), parseValue(args[2])] };
-        case 'ABS': return { $abs: parseValue(args[0]) };
-        case 'CEIL': return { $ceil: parseValue(args[0]) };
-        case 'FLOOR': return { $floor: parseValue(args[0]) };
         case 'ROUND': return args[1] ? { $round: [parseValue(args[0]), parseValue(args[1])] } : { $round: [parseValue(args[0])] };
-        case 'SQRT': return { $sqrt: parseValue(args[0]) };
-        case 'POW': return { $pow: [parseValue(args[0]), parseValue(args[1])] };
-        case 'LOG': return { $log: [parseValue(args[0]), parseValue(args[1])] };
-        case 'LOG10': return { $log10: parseValue(args[0]) };
-        case 'SIZE': return { $size: parseValue(args[0]) };
-        case 'IN': return { $in: [parseValue(args[0]), parseValue(args[1])] };
         case 'SLICE': return args.length === 3
-            ? { $slice: [parseValue(args[0]), parseInt(args[1], 10), parseInt(args[2], 10)] }
-            : { $slice: [parseValue(args[0]), parseInt(args[1], 10)] };
-        case 'FIRST': return { $first: parseValue(args[0]) };
-        case 'LAST': return { $last: parseValue(args[0]) };
-        case 'ARRAY_ELEM_AT': return { $arrayElemAt: [parseValue(args[0]), parseInt(args[1], 10)] };
-        case 'INDEX_OF': return { $indexOfArray: [parseValue(args[0]), parseValue(args[1])] };
-        case 'CONCAT_ARRAYS': return { $concatArrays: args.map((arg) => parseValue(arg)) };
-        case 'FILTER': {
-            const filterArray = parseValue(args[0]);
-            const varName = args[1].replace(/['"]/g, '').trim();
-            const filterCondition = compileFilterCondition(args[2], varName);
-            return { $filter: { input: filterArray, as: varName, cond: filterCondition } };
-        }
+            ? { $slice: [parseValue(args[0]), parseValue(args[1]), parseValue(args[2])] }
+            : { $slice: [parseValue(args[0]), parseValue(args[1])] };
+        case 'FILTER':
         case 'MAP': {
-            const mapArray = parseValue(args[0]);
+            const input = parseValue(args[0]);
             const varName = args[1].replace(/['"]/g, '').trim();
-            const mapExpr = compileMapExpression(args[2], varName);
-            return { $map: { input: mapArray, as: varName, in: mapExpr } };
+            const { bodyScope, mongoName } = bindVariable(scope, varName, argsStr, true);
+            const body = compileScopedExpression(args[2], bodyScope);
+            return name === 'FILTER'
+                ? { $filter: { input, as: mongoName, cond: body } }
+                : { $map: { input, as: mongoName, in: body } };
         }
         case 'REDUCE': {
             const lambdaMatch = /\((\w+),\s*(\w+)\)\s*=>\s*(.+)/.exec(args[2]);
             if (!lambdaMatch) throw createError(ErrorCodes.INVALID_EXPRESSION, 'REDUCE requires a lambda: (acc, item) => expr');
             const [, accVar, itemVar, lambdaExpr] = lambdaMatch;
-            const compiledExpr = lambdaExpr
-                .replace(new RegExp(`\\b${accVar}\\b`, 'g'), () => '$$value')
-                .replace(new RegExp(`\\b${itemVar}\\b`, 'g'), () => '$$this');
-            return { $reduce: { input: parseValue(args[0]), initialValue: parseValue(args[1]), in: compileInnerExpression(compiledExpr) } };
+            const bodyScope = cloneScope(scope);
+            const captures: Record<string, unknown> = {};
+            const usedNames = new Set([...scope.dsl.keys(), ...scope.dsl.values(), ...scope.native.values(), ...(argsStr.match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? [])]);
+            for (const [name, target] of scope.dsl) {
+                if (name === accVar || name === itemVar || (target !== 'value' && target !== 'this')) continue;
+                let alias = 'monsqlizeCapture0';
+                for (let index = 1; usedNames.has(alias); index++) alias = 'monsqlizeCapture' + index;
+                usedNames.add(alias);
+                captures[alias] = '$$' + target;
+                bodyScope.dsl.set(name, alias);
+            }
+            bodyScope.dsl.set(accVar, 'value');
+            bodyScope.dsl.set(itemVar, 'this');
+            bodyScope.native.set('value', 'value');
+            bodyScope.native.set('this', 'this');
+            const reduced = { $reduce: { input: parseValue(args[0]), initialValue: parseValue(args[1]), in: compileScopedExpression(lambdaExpr, bodyScope) } };
+            return Object.keys(captures).length ? { $let: { vars: captures, in: reduced } } : reduced;
         }
         case 'ZIP': return { $zip: { inputs: args.map((arg) => parseValue(arg)) } };
-        case 'REVERSE_ARRAY': return { $reverseArray: parseValue(args[0]) };
         case 'RANGE': {
             const rangeArgs: unknown[] = [parseValue(args[0]), parseValue(args[1])];
             if (args[2]) rangeArgs.push(parseValue(args[2]));
             return { $range: rangeArgs };
         }
-        case 'TYPE': return { $type: parseValue(args[0]) };
         case 'NOT': return { $not: [compileInnerExpression(args[0])] };
         case 'EXISTS': return { $ne: [parseValue(args[0]), null] };
-        case 'IS_NUMBER': return { $isNumber: parseValue(args[0]) };
-        case 'IS_ARRAY': return { $isArray: parseValue(args[0]) };
-        case 'TO_INT': return { $toInt: parseValue(args[0]) };
-        case 'TO_STRING': return { $toString: parseValue(args[0]) };
-        case 'OBJECT_TO_ARRAY': return { $objectToArray: parseValue(args[0]) };
-        case 'ARRAY_TO_OBJECT': return { $arrayToObject: parseValue(args[0]) };
-        case 'TO_BOOL': return { $toBool: parseValue(args[0]) };
-        case 'TO_DATE': return { $toDate: parseValue(args[0]) };
-        case 'TO_DOUBLE': return { $toDouble: parseValue(args[0]) };
-        case 'TO_DECIMAL': return { $toDecimal: parseValue(args[0]) };
-        case 'TO_LONG': return { $toLong: parseValue(args[0]) };
-        case 'TO_OBJECT_ID': return { $toObjectId: parseValue(args[0]) };
         case 'CONVERT': {
             const result: Record<string, unknown> = { $convert: { input: parseValue(args[0]), to: args[1].replace(/['"]/g, '') } };
             if (args[2]) (result.$convert as Record<string, unknown>).onError = parseValue(args[2]);
             if (args[3]) (result.$convert as Record<string, unknown>).onNull = parseValue(args[3]);
             return result;
         }
-        case 'SUM': return { $sum: parseValue(args[0]) };
-        case 'AVG': return { $avg: parseValue(args[0]) };
-        case 'MAX': return { $max: parseValue(args[0]) };
-        case 'MIN': return { $min: parseValue(args[0]) };
         case 'COUNT': return { $sum: 1 };
-        case 'PUSH': return { $push: parseValue(args[0]) };
-        case 'ADD_TO_SET': return { $addToSet: parseValue(args[0]) };
-        case 'YEAR': return { $year: parseValue(args[0]) };
-        case 'MONTH': return { $month: parseValue(args[0]) };
-        case 'DAY_OF_MONTH': return { $dayOfMonth: parseValue(args[0]) };
-        case 'HOUR': return { $hour: parseValue(args[0]) };
-        case 'MINUTE': return { $minute: parseValue(args[0]) };
-        case 'SECOND': return { $second: parseValue(args[0]) };
-        case 'DATE_ADD': return { $dateAdd: { startDate: parseValue(args[0]), amount: parseValue(args[1]), unit: args[2].replace(/['"]/g, '') } };
-        case 'DATE_SUBTRACT': return { $dateSubtract: { startDate: parseValue(args[0]), amount: parseValue(args[1]), unit: args[2].replace(/['"]/g, '') } };
-        case 'DATE_DIFF': return { $dateDiff: { startDate: parseValue(args[0]), endDate: parseValue(args[1]), unit: args[2].replace(/['"]/g, '') } };
+        case 'DATE_ADD':
+        case 'DATE_SUBTRACT':
+        case 'DATE_DIFF': return { [name === 'DATE_ADD' ? '$dateAdd' : name === 'DATE_SUBTRACT' ? '$dateSubtract' : '$dateDiff']: {
+            startDate: parseValue(args[0]), [name === 'DATE_DIFF' ? 'endDate' : 'amount']: parseValue(args[1]), unit: args[2].replace(/['"]/g, ''),
+        } };
         case 'DATE_TO_STRING': {
             const result: Record<string, unknown> = { $dateToString: { format: args[1].replace(/['"]/g, ''), date: parseValue(args[0]) } };
             if (args[2]) (result.$dateToString as Record<string, unknown>).timezone = args[2].replace(/['"]/g, '');
@@ -254,43 +358,17 @@ function dispatchFunction(name: string, argsStr: string): unknown {
             if (args[1]) (result.$dateToParts as Record<string, unknown>).timezone = args[1].replace(/['"]/g, '');
             return result;
         }
-        case 'ISO_WEEK': return { $isoWeek: parseValue(args[0]) };
-        case 'ISO_WEEK_YEAR': return { $isoWeekYear: parseValue(args[0]) };
-        case 'ISO_DAY_OF_WEEK': return { $isoDayOfWeek: parseValue(args[0]) };
-        case 'DAY_OF_WEEK': return { $dayOfWeek: parseValue(args[0]) };
-        case 'DAY_OF_YEAR': return { $dayOfYear: parseValue(args[0]) };
-        case 'WEEK': return { $week: parseValue(args[0]) };
         case 'REGEX': return { $regexMatch: { input: parseValue(args[0]), regex: args[1].replace(/['"]/g, '') } };
-        case 'MERGE_OBJECTS': {
-            const mergeArgs = args.map((arg) => {
-                if (arg.trim().startsWith('{')) {
-                    try { return JSON.parse(arg.trim()); } catch { return parseValue(arg); }
-                }
-                return parseValue(arg);
-            });
-            return { $mergeObjects: mergeArgs };
-        }
-        case 'SET_UNION': {
-            const unionArgs = args.map((arg) => {
-                if (arg.trim().startsWith('[')) {
-                    try { return JSON.parse(arg.trim()); } catch { return parseValue(arg); }
-                }
-                return parseValue(arg);
-            });
-            return { $setUnion: unionArgs };
-        }
         case 'SWITCH': {
             if (args.length < 2) throw createError(ErrorCodes.INVALID_EXPRESSION, 'SWITCH requires at least 2 arguments');
             const branches: Array<{ case: unknown; then: unknown }> = [];
-            let defaultValue: unknown = null;
             for (let index = 0; index < args.length - 1; index += 2) {
                 if (index + 1 < args.length) {
                     branches.push({ case: compileInnerExpression(args[index]), then: parseValue(args[index + 1]) });
                 }
             }
-            if (args.length % 2 === 1) defaultValue = parseValue(args[args.length - 1]);
             const result: { $switch: { branches: unknown[]; default?: unknown } } = { $switch: { branches } };
-            if (defaultValue !== null) result.$switch.default = defaultValue;
+            if (args.length % 2 === 1) result.$switch.default = parseValue(args[args.length - 1]);
             return result;
         }
         case 'ALL_ELEMENTS_TRUE': return { $allElementsTrue: [parseValue(args[0])] };
@@ -311,39 +389,27 @@ function dispatchFunction(name: string, argsStr: string): unknown {
         case 'GET_FIELD': return args.length === 1
             ? { $getField: parseValue(args[0]) }
             : { $getField: { field: parseValue(args[0]), input: parseValue(args[1]) } };
-        case 'SET_DIFFERENCE': return { $setDifference: [parseValue(args[0]), parseValue(args[1])] };
-        case 'SET_EQUALS': return { $setEquals: args.map((arg) => parseValue(arg)) };
-        case 'SET_INTERSECTION': return { $setIntersection: args.map((arg) => parseValue(arg)) };
-        case 'SET_IS_SUBSET': return { $setIsSubset: [parseValue(args[0]), parseValue(args[1])] };
         case 'LET': {
-            const varsMatch = /\{(.+)\}/.exec(args[0]);
-            if (!varsMatch) throw createError(ErrorCodes.INVALID_EXPRESSION, 'LET requires an object literal for variables');
-            const varPairs = varsMatch[1].split(',').map((pair) => {
-                const [key, ...rest] = pair.split(':');
-                return [key.trim(), rest.join(':').trim()] as [string, string];
-            });
+            const source = args[0].trim();
+            if (!source.startsWith('{') || !source.endsWith('}')) throw createError(ErrorCodes.INVALID_EXPRESSION, 'LET requires an object literal for variables');
             const vars: Record<string, unknown> = {};
-            for (const [key, value] of varPairs) {
-                vars[key] = parseValue(value);
+            let bodyScope = scope;
+            for (const pair of splitArgsStr(source.slice(1, -1))) {
+                const colon = topLevelPositions(pair).find((index) => pair[index] === ':');
+                if (colon === undefined) throw createError(ErrorCodes.INVALID_EXPRESSION, 'LET variable requires a value');
+                const key = pair.slice(0, colon).trim();
+                const value = pair.slice(colon + 1).trim();
+                if (!key || !value) throw createError(ErrorCodes.INVALID_EXPRESSION, 'LET variable requires a name and value');
+                const binding = bindVariable(bodyScope, key, argsStr, false);
+                bodyScope = binding.bodyScope;
+                vars[binding.mongoName] = parseValue(value);
             }
-            return { $let: { vars, in: compileInnerExpression(args[1]) } };
+            return { $let: { vars, in: compileScopedExpression(args[1], bodyScope) } };
         }
-        case 'LITERAL': return { $literal: parseValue(args[0]) };
         case 'RAND': return { $rand: {} };
-        case 'SAMPLE_RATE': return { $sampleRate: parseValue(args[0]) };
         default:
             throw createError(ErrorCodes.INVALID_EXPRESSION, `Unsupported function: ${name}`);
     }
-}
-
-function compileFilterCondition(condition: string, varName: string): unknown {
-    const replaced = condition.replace(new RegExp(`\\b${varName}\\.`, 'g'), () => `$$${varName}.`);
-    return compileInnerExpression(replaced);
-}
-
-function compileMapExpression(exprStr: string, varName: string): unknown {
-    const replaced = exprStr.replace(new RegExp(`\\b${varName}\\.`, 'g'), () => `$$${varName}.`);
-    return compileInnerExpression(replaced);
 }
 
 function splitArgsStr(argsStr: string): string[] {
@@ -362,6 +428,19 @@ function topLevelPositions(source: string): number[] {
             continue;
         }
         if (ch === '"' || ch === "'") { quote = ch; continue; }
+        if (stack.length === 0 && /[\d.]/.test(ch)) {
+            const prefix = source.slice(0, index).trimEnd();
+            const previous = prefix.length === 0 ? undefined : prefix.charAt(prefix.length - 1);
+            if (previous === undefined || /[+\-*/%<>=!?&|:,]/.test(previous)) {
+                const token = /^(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?/i.exec(source.slice(index));
+                if (token) {
+                    const next = source[index + token[0].length];
+                    if (next && /[a-z_.]/i.test(next)) throw createError(ErrorCodes.INVALID_EXPRESSION, 'Invalid numeric expression');
+                    index += token[0].length - 1;
+                    continue;
+                }
+            }
+        }
         if (ch === '(' || ch === '[' || ch === '{') { stack.push(ch); continue; }
         if (ch === ')' || ch === ']' || ch === '}') {
             const opening = stack.pop();

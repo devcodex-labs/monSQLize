@@ -35,13 +35,15 @@ export class PoolStatsManager {
         this._flush();
     }
 
-    recordConnections(poolName: string, count: number): void {
+    recordConnections(poolName: string, count: number, available?: number, waiting?: number): void {
         let stats = this._stats.get(poolName);
         if (!stats) {
             stats = this._emptyStats();
             this._stats.set(poolName, stats);
         }
         stats.connections = count;
+        if (available !== undefined) stats.available = available;
+        if (waiting !== undefined) stats.waiting = waiting;
     }
 
     recordRequest(poolName: string, responseTime: number, success: boolean): void {
@@ -96,8 +98,10 @@ export class PoolStatsManager {
     reset(poolName?: string): void {
         if (poolName) {
             this._stats.delete(poolName);
+            this._buffer = this._buffer.filter((item) => item.poolName !== poolName);
         } else {
             this._stats.clear();
+            this._buffer = [];
         }
     }
 

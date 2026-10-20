@@ -39,6 +39,7 @@ export interface SyncTargetConfig {
 
 export interface SyncTargetApplyContext {
     targetName: string;
+    /** Versioned JSON tuple ["v2", keyPrefix, targetName, rawKey]; treat as opaque. */
     idempotencyKey?: string;
 }
 
@@ -55,13 +56,13 @@ export interface SyncIdempotencyConfig {
     enabled?: boolean;
     /** Optional durable store; when omitted, an in-memory store is used. */
     store?: SyncIdempotencyStoreLike;
-    /** Cache/store key prefix. Defaults to monsqlize:sync:idempotency. */
+    /** Logical prefix inside the versioned tuple. Defaults to monsqlize:sync:idempotency. */
     keyPrefix?: string;
     /** Marker TTL in milliseconds. Store implementations may ignore it. */
     ttl?: number;
     /** Mark after target success by default; start mode requires target-owned recovery for post-mark failures. */
     markMode?: SyncIdempotencyMarkMode;
-    /** Custom event key builder. Return null/undefined to disable idempotency for that event. */
+    /** Builds the raw event key; null/undefined/empty disables it. Inputs and raw return values are unchanged. */
     keyBuilder?: (event: SyncChangeEvent, targetName: string) => string | null | undefined;
 }
 
@@ -71,6 +72,7 @@ export interface ResumeTokenRedisLike {
     del?(key: string): Promise<unknown> | unknown;
 }
 
+/** Stores opaque raw event tokens or a versioned initial EJSON operation-time checkpoint. */
 export interface ResumeTokenConfig {
     storage?: 'file' | 'redis';
     path?: string;

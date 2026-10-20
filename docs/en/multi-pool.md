@@ -1,5 +1,7 @@
 # Connection Pools and Multi-Pool Configuration
 
+Closing waits for pending pool creation. Failed client closes remain owned and can be retried by calling close again, including clients created after shutdown began. Driver CMAP events supply connection/availability/waiting statistics; service-level pool clears conservatively remove availability for that address until subsequent events. Enabled primary fallback selects primary pools when every healthy route is unavailable; fallback remains disabled by default.
+
 ## Introduction
 
 Opening pools reserve capacity before the client factory completes. Closing the manager rejects new additions, waits for pending additions, and closes clients that finish opening after shutdown began.

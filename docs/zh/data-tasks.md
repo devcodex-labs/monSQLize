@@ -1,5 +1,7 @@
 # 数据任务 API 参考
 
+apply 和 restore 使用带 simple（二进制）collation 的原子 BSON 前像比较。标量变成数组、缺失变成 null、新增字段或仅大小写变化都会使比较失败；数值 BSON 按 MongoDB 数值相等规则比较，嵌套文档键顺序仍有意义。集合采用非 simple collation 且 `_id` 为字符串时，可能增加扫描，应在大集合上检查执行计划。
+
 `dataTasks` 用一份 `DataTaskJob` 配置完成发布范围内的索引确保、筛选数据同步、局部字段调整、预览审批、受影响范围备份和恢复。
 
 备份 manifest 和数据行以 canonical EJSON 读取。只有 manifest 控制字段（`version`、`entryCount`、`maxBytes`）会从安全范围内的 BSON 数值转换为 JavaScript number；identity、target ID、before/after 和索引键保持 BSON 类型及键顺序。无法安全确认的旧控制值会使备份校验失败，不做猜测式恢复。

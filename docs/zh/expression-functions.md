@@ -1,5 +1,11 @@
 # 表达式函数参考
 
+嵌套 facet/lookup/unionWith pipeline 及 merge.whenMatched pipeline 保留各 stage 上下文。SUBSTR/SUBSTR_CP/SLICE/ARRAY_ELEM_AT 的数值参数支持表达式，不截断为整数。MAP/FILTER 按词法作用域处理标量变量、嵌套及引号字面量；LET 按平衡分隔符拆绑定，仍使用显式 `$$name` 引用。SWITCH 保留显式 null/false/0/空字符串 default；省略 default 时沿用 MongoDB 原生失败行为。支持 `price * 1e-3` 等科学计数，损坏数值表达式报 INVALID_EXPRESSION。
+
+DSL 裸 lambda 名字与 MongoDB 显式 `$$` 变量分别绑定。MAP/FILTER 绑定自己的命名变量；REDUCE 只在主体内引入原生 `$$value`/`$$this`，input 与 initialValue 使用外层作用域。LET 的初始值使用外层作用域，主体使用其声明的显式变量。原生 JSON `$map`、`$filter`、`$reduce`、`$let` 遵循相同词法边界。引号文本与 `$literal` 内容保持原样。
+
+例如，`REDUCE([10],0,(acc,item)=>SUM(MAP([1,2],value,$$value)))` 结果为 `3`。`MAP([10],value,REDUCE([1,2],0,(acc,item)=>$$value + $$this))` 中，显式引用属于内层 reducer，结果为 `[3]`；外层 lambda 的裸名字仍引用其 DSL 绑定。
+
 ## 概述
 
 monSQLize 的统一表达式系统支持 **122个操作符（100% MongoDB支持）**，涵盖字符串、数学、数组、聚合、日期、类型转换、逻辑、条件、对象、集合等所有操作。这些函数提供类SQL的语法，让复杂的MongoDB聚合查询变得简单直观。

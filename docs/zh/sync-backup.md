@@ -1,5 +1,15 @@
 ﻿# Change Stream 同步
 
+检查点存储为空时，启动先持久化包含 canonical EJSON BSON Timestamp 的版本化 operation-time 信封，再打开 Change Stream。自定义 store 必须完整往返保存这一不透明 JSON 值。已有裸 resume token 继续支持，事件成功后仍保存裸 token。严格持久化失败、信封损坏或历史过期时停止推进，保留检查点；显式 best-effort 配置仍可能产生未持久化进度。无论幂等开关如何，target 原始名称均须精确唯一。
+
+降级前暂停同步并保留 store。旧 reader 不能把初始信封作为 resume token 使用；成功持久化裸事件 token 后才恢复格式兼容，还需考虑旧版行为与 MongoDB 历史保留窗口。不要通过清空信封让旧版从现在开始；有意重新同步需要单独的数据核对决定。
+
+每个 target 的幂等键采用不透明 JSON 元组：`["v2", keyPrefix, targetName, rawKey]`。组件中的冒号、引号和 Unicode 不会合并不同身份。`keyBuilder(event, targetName)` 仍接收原始输入并返回 raw key；返回 null、undefined 或空字符串时禁用该事件键。TTL 和 `markMode` 语义保持不变。
+
+升级前停止写入并排空队列，保留检查点、v1/v2 标记 store 和恢复快照，禁止混跑两种键格式的 writer。v1 拼接键存在歧义，不会作为无条件可信的 v2 重复标记；无法建立有限、可证明的映射时，应依靠 target 的业务幂等并允许重放。通用 get/set/del store 无法自动枚举或反解旧键。
+
+回退前再次停写、排空，保留两代标记，验证兼容的裸 resume token 和 target 恢复点；上文初始检查点的降级限制仍适用。不要清空任一 store 或从当前时点重启来代替恢复。active 或 staged target 关闭失败时保留清理所有权，后续 `stop()` 重试；`start()` 必须完成清理才能打开替代连接。其他 target 仍会得到关闭尝试。
+
 ## 概述
 
 Change Stream 同步基于 MongoDB 原生 Change Stream 机制，把通过过滤的变更事件分发给一个或多个 target。它适合备份库、投影表、缓存失效回调和其他异步 CDC 工作流。

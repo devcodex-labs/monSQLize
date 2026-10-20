@@ -1,5 +1,7 @@
 # Function Cache (Legacy Compatibility)
 
+The compatibility withCache wrapper exposes invalidate(...args) and invalidateAll() from the same underlying wrapper, preserving namespace, custom keyBuilder and statistics behavior.
+
 > **Current site status**: hidden from navigation
 > **Compatibility status**: exported for existing consumers
 

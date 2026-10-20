@@ -1,5 +1,7 @@
 # 函数缓存 (Function Cache，Legacy 兼容)
 
+兼容性 withCache 包装器提供同一底层包装器的 invalidate(...args) 和 invalidateAll()，保留 namespace、自定义 keyBuilder 与统计行为。
+
 > **当前站点状态**: 已从导航隐藏
 > **兼容状态**: 继续为既有消费方导出
 

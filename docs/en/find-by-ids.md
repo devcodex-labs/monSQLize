@@ -1,5 +1,9 @@
 # findByIds Reference
 
+Model `findByIds` applies soft-delete visibility in the same database query, using the final `before` hook options. Inclusion, exclusion, computed projections and the `project` alias keep their native meaning, including explicitly projected deletion markers. `onlyDeleted` and `withDeleted` keep their existing precedence and validation. Raw Collection queries remain unfiltered. An `after` hook may replace the result without a second visibility filter.
+
+Filtered Model cache entries are isolated by visibility condition and included in exact `findByIds` write-invalidation descriptors. Caches without pattern deletion bypass these filtered entries; session reads also bypass the cache. ID validation, deduplication and `preserveOrder` behavior are unchanged.
+
 ## Method overview
 
 `findByIds(ids, options)` is an optional helper for looking up multiple documents by `_id`. It normalizes ObjectId-like values, removes duplicate ids, and runs an `_id: { $in: ... }` query.

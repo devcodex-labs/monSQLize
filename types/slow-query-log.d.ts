@@ -66,7 +66,9 @@ export interface SlowQueryLogConfig {
         minExecutionTimeMs: number;
     };
     advanced: {
+        /** Includes initialization failures; throw waits for direct storage even when batching is enabled. */
         errorHandling: 'log' | 'throw' | 'silent';
+        /** False skips both TTL and unique-index creation without removing existing indexes. */
         autoCreateIndexes: boolean;
     };
 }

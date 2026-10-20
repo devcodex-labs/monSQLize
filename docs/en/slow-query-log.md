@@ -1,5 +1,9 @@
 ﻿# Slow query log persistence
 
+The errorHandling policy covers initialization and persistence. In throw mode, save waits for direct storage even when batching is configured; silent/log modes keep batching and end the current save if initialization fails. autoCreateIndexes:false skips both TTL and unique-index creation without dropping existing indexes; provision required indexes separately when disabling automatic creation.
+
+Storage `close()` waits for pending initialization, cancels its ability to publish a late collection, and closes only its owned client. Concurrent closes share cleanup. A failed owned-client close retains ownership for a later close retry; initialization is blocked until cleanup succeeds. An explicit initialization after successful close can start a new lifecycle. A shared business connection remains open.
+
 ## Overview
 
 Slow query log persistence records operations that exceed the configured `slowQueryMs` threshold and lets you query aggregated slow-query statistics later. In the current MongoDB runtime, records are stored in MongoDB by default and may use memory storage for local or custom scenarios.

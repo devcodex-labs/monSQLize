@@ -842,11 +842,14 @@ describe('public API — ConnectionPoolManager branch coverage', () => {
         await (manager as any).checkPoolHealth('missing');
         await (manager as any).checkPoolHealth('primary');
         await (manager as any).checkPoolHealth('primary');
+        assert.equal(manager.getHealthStatus().primary.status, 'degraded');
+        await (manager as any).checkPoolHealth('primary');
         assert.equal(manager.getHealthStatus().primary.status, 'down');
 
         (manager as any).healthCheckFn = async () => {
             throw 'health failed';
         };
+        healthStatus.set('secondary', { status: 'up', lastCheck: new Date(), consecutiveFailures: 0 });
         await (manager as any).checkPoolHealth('secondary');
         assert.equal(manager.getHealthStatus().secondary.status, 'degraded');
         assert.ok(warnings.length >= 1);
@@ -889,9 +892,19 @@ describe('public API — HealthChecker and PoolStats branch coverage', () => {
         await checker.checkPool('admin-ping');
         assert.equal(checker.getStatus('admin-ping')?.status, 'up');
 
-        (checker as any)._inProgress.add('admin-ping');
-        await checker.checkPool('admin-ping');
-        (checker as any)._inProgress.delete('admin-ping');
+        let releasePing!: (value: unknown) => void;
+        let pendingCalls = 0;
+        checker.register(
+            { name: 'pending', healthCheck: { interval: 1000, timeout: 1000 } },
+            { db: () => ({ command: () => { pendingCalls++; return new Promise((resolve) => { releasePing = resolve; }); } }) },
+        );
+        const pending = checker.checkPool('pending');
+        await Promise.resolve();
+        await checker.checkPool('pending');
+        assert.equal(pendingCalls, 1);
+        releasePing({ ok: 1 });
+        await pending;
+        checker.unregister('pending');
 
         await checker.checkPool('missing-status');
         checker.register('missing-client', { retries: 1, timeout: 1 });

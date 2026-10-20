@@ -128,7 +128,7 @@ async function runPostWriteInvalidation<TSchema extends Document>(
     try {
         await context.invalidateAll(options);
     } catch (error) {
-        context.logger?.warn?.('[write] post-write cache invalidation failed', error);
+        try { context.logger?.warn?.('[write] post-write cache invalidation failed', error); } catch { /* Logging must preserve the write result. */ }
     }
 }
 
@@ -272,7 +272,7 @@ export async function updateOneForAccessor<TSchema extends Document = Document>(
     await runPreWriteInvalidation(context, options);
     const result = await updateOneDocument(context.collectionRef, normalizedFilter, finalUpdate, stripWriteCacheControlOptions(options));
     markTransactionWrite(options);
-    if (result.modifiedCount > 0 || result.upsertedId) {
+    if (result.modifiedCount > 0 || result.upsertedCount > 0 || result.upsertedId != null) {
         await runPostWriteInvalidation(context, options);
     }
     return result;
@@ -287,10 +287,18 @@ export async function updateManyForAccessor<TSchema extends Document = Document>
     assertObjectArgument(filter, 'filter', 'filter must be a non-empty object');
     assertUpdateDocument(update);
 
+    const convertedFilter = context.cvFilter(filter);
+    const convertedUpdate = context.cvUpdate(update);
     await runPreWriteInvalidation(context, options);
-    const result = await updateManyDocuments(context.collectionRef, context.cvFilter(filter), context.cvUpdate(update), stripWriteCacheControlOptions(options));
+    let result: Awaited<ReturnType<Collection<TSchema>['updateMany']>>;
+    try {
+        result = await updateManyDocuments(context.collectionRef, convertedFilter, convertedUpdate, stripWriteCacheControlOptions(options));
+    } catch (error) {
+        await runPostWriteInvalidation(context, options);
+        throw error;
+    }
     markTransactionWrite(options);
-    if (result.modifiedCount > 0 || result.upsertedId) {
+    if (result.modifiedCount > 0 || result.upsertedCount > 0 || result.upsertedId != null) {
         await runPostWriteInvalidation(context, options);
     }
     return result;
@@ -324,7 +332,7 @@ export async function findOneAndReplaceForAccessor<TSchema extends Document = Do
     await runPreWriteInvalidation(context, options);
     const result = await findOneAndReplaceDocument(context.collectionRef, context.cvFilter(filter), context.cvDoc(replacement), stripWriteCacheControlOptions(options));
     markTransactionWrite(options);
-    if (result) {
+    if (result != null || (options as { upsert?: boolean } | undefined)?.upsert === true) {
         await runPostWriteInvalidation(context, options);
     }
     return result;
@@ -342,7 +350,7 @@ export async function findOneAndUpdateForAccessor<TSchema extends Document = Doc
     await runPreWriteInvalidation(context, options);
     const result = await findOneAndUpdateDocument(context.collectionRef, context.cvFilter(filter), context.cvUpdate(update), stripWriteCacheControlOptions(options));
     markTransactionWrite(options);
-    if (result) {
+    if (result != null || (options as { upsert?: boolean } | undefined)?.upsert === true) {
         await runPostWriteInvalidation(context, options);
     }
     return result;

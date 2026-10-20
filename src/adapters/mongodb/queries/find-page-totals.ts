@@ -9,6 +9,7 @@ import {
     buildCountDriverOptions,
     hasSessionOption,
     isCollectionCacheBarrierActive,
+    stableCacheKeyString,
 } from './query-helpers';
 import { hashPayload } from './find-page-cache-helpers';
 
@@ -18,18 +19,17 @@ function buildTotalsCacheKey<TSchema extends Document>(
     query: Document,
     limit: number,
     totals: TotalsOptions,
+    countOptions: Record<string, unknown>,
 ): { key: string; token: string } {
     const payload = {
         query,
         limit,
         mode: totals.mode ?? 'sync',
-        hint: totals.hint,
-        collation: totals.collation,
-        maxTimeMS: totals.maxTimeMS,
+        countOptions,
     };
-    const token = hashPayload(payload);
+    const token = hashPayload(stableCacheKeyString(payload));
     const namespace = buildCollectionCacheNamespace(collection, defaults);
-    return { key: `findPageTotals:${namespace}:${token}`, token };
+    return { key: `findPageTotals:${namespace}:v4:${token}`, token };
 }
 
 function getPositiveTtl(value: number | undefined, fallback: number): number {
@@ -70,7 +70,6 @@ async function executeComputeTotals<TSchema extends Document = Document>(
     const cacheEnabled = !hasSessionOption(driverOptions) && !cacheBarrierActive;
     const cache = cacheEnabled ? queryCache ?? _asyncTotalsCache : null;
     const ttlMs = getPositiveTtl(totals.ttlMs, 10 * 60_000);
-    const { key: cacheKey, token } = buildTotalsCacheKey(coll, defaults, query, limit, totals);
 
     const buildCountOptions = (fallbackMaxTimeMS: number): Record<string, unknown> => {
         const countOpts: Record<string, unknown> = {
@@ -89,8 +88,12 @@ async function executeComputeTotals<TSchema extends Document = Document>(
         return countOpts;
     };
 
+    const countOpts = buildCountOptions(2000);
+    const { session: _session, signal: _signal, ...keyCountOptions } = countOpts;
+    void _session; void _signal;
+    const { key: cacheKey, token } = buildTotalsCacheKey(coll, defaults, query, limit, totals, keyCountOptions);
+
     const countWithOptions = async (): Promise<number> => {
-        const countOpts = buildCountOptions(2000);
         const countQuery = query as Parameters<Collection<TSchema>['countDocuments']>[0];
         const runner = () => coll.countDocuments(
             countQuery,

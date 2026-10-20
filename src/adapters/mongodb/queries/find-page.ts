@@ -295,6 +295,7 @@ export async function executeFindPage<TSchema extends Document = Document>(
         && (options.explain === undefined || options.explain === false)
         && !useOffsetJump
         ? await readNearestBookmark(queryCache, cacheNamespace(`${dbName}:${collectionName}`, defaults), {
+            ...ext,
             query: baseQuery,
             sort,
             limit,

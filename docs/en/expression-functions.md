@@ -1,5 +1,11 @@
 # Expression function reference
 
+Nested facet/lookup/unionWith pipelines and merge whenMatched pipelines retain their stage context. Numeric arguments to SUBSTR/SUBSTR_CP/SLICE/ARRAY_ELEM_AT accept expressions without integer truncation. MAP/FILTER variables resolve lexically, including scalar variables, nesting and quoted literals; LET bindings use balanced separators and still require explicit `$$name` references. SWITCH preserves an explicit null/false/0/empty-string default; omitting a default keeps native MongoDB failure behavior. Scientific notation such as `price * 1e-3` is supported; malformed numeric expressions fail with INVALID_EXPRESSION.
+
+DSL lambda names and explicit MongoDB `$$` variables have separate scopes. MAP/FILTER bind their named variable; REDUCE exposes native `$$value`/`$$this` only inside its body, while input and initial value use the outer scope. LET initializers use the outer scope and its body uses the declared explicit variables. Native JSON `$map`, `$filter`, `$reduce` and `$let` follow these lexical boundaries. Quoted text and `$literal` payloads remain unchanged.
+
+For example, `REDUCE([10],0,(acc,item)=>SUM(MAP([1,2],value,$$value)))` evaluates to `3`. In `MAP([10],value,REDUCE([1,2],0,(acc,item)=>$$value + $$this))`, the explicit references belong to the inner reducer and the result is `[3]`; a bare outer lambda name still refers to its DSL binding.
+
 ## Overview
 
 monSQLize's unified expression system supports **122 operators (100% MongoDB support)**, covering all operations such as strings, mathematics, arrays, aggregations, dates, type conversions, logic, conditions, objects, collections, etc. These functions provide SQL-like syntax, making complex MongoDB aggregation queries simple and intuitive.

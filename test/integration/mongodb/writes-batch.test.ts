@@ -36,6 +36,26 @@ describe('insertBatch() / updateBatch() / deleteBatch()', () => {
         await db.collection('items').deleteMany({});
     });
 
+    it('B11 reports confirmed partial inserts for collect skip and retry without double counting', async () => {
+        for (const onError of ['collect', 'skip', 'retry']) {
+            await col.raw().deleteMany({});
+            await col.raw().insertOne({ _id: 'duplicate' });
+            const result = await col.insertBatch([{ _id: 'one' }, { _id: 'two' }, { _id: 'three' }, { _id: 'duplicate' }, { _id: 'four' }], {
+                batchSize: 3, ordered: false, onError, retryAttempts: 1, retryDelay: 0,
+            });
+            assert.equal(result.insertedCount, 4);
+            assert.deepEqual(Object.keys(result.insertedIds).map(Number).sort((a, b) => a - b), [0, 1, 2, 4]);
+            assert.equal(await col.raw().countDocuments({ _id: { $ne: 'duplicate' } }), 4);
+            assert.equal(result.errors.length, 1);
+        }
+        await col.raw().deleteMany({});
+        await col.raw().insertOne({ _id: 'duplicate' });
+        const ordered = await col.insertBatch([{ _id: 'first' }, { _id: 'duplicate' }, { _id: 'not-run' }], { ordered: true, onError: 'collect' });
+        assert.equal(ordered.insertedCount, 1);
+        assert.deepEqual(Object.keys(ordered.insertedIds), ['0']);
+        assert.equal(await col.raw().findOne({ _id: 'not-run' }), null);
+    });
+
     // ── insertBatch() basic results ───────────────────────────────────────────
 
     describe('insertBatch() basic results', () => {

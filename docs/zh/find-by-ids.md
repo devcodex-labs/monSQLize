@@ -1,5 +1,9 @@
 # findByIds Reference
 
+Model `findByIds` 在同一次数据库查询中应用软删除可见性条件，使用最终 `before` hook 选项。包含、排除、计算投影与 `project` 别名保持原生语义，包括显式投影的删除标记。`onlyDeleted`、`withDeleted` 沿用原有优先级和校验。原始 Collection 查询不增加此过滤；`after` 替换的结果不会再次按删除标记过滤。
+
+Model 过滤结果缓存按可见性条件隔离，并纳入精确 `findByIds` 写失效 descriptor。不支持 pattern 删除的缓存跳过这些过滤结果，带 session 的读取也绕过缓存。ID 校验、去重与 `preserveOrder` 行为不变。
+
 ## 方法概述
 
 `findByIds(ids, options)` 是一个可选的多个 `_id` 查询 helper。它会归一化 ObjectId 形态的值、去重重复 id，并执行 `_id: { $in: ... }` 查询。

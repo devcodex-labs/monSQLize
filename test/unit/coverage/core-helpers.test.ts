@@ -728,7 +728,7 @@ describe('coverage core helpers', () => {
                 if (insertCalls.length === 1) {
                     throw Object.assign(new Error('partial insert failure'), {
                         writeErrors: [{ index: 1 }],
-                        insertedIds: { 0: 'id-a', 2: 'id-c' },
+                        insertedCount: 2, insertedIds: { 0: 'id-a', 2: 'id-c' },
                     });
                 }
                 return { insertedCount: docs.length, insertedIds: { 0: 'id-b' } };

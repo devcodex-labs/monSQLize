@@ -33,6 +33,32 @@ describe('cache hit / miss / invalidation behavior', () => {
         await db.collection('items').deleteMany({});
     });
 
+    it('B09 invalidates null-before upserts and matched no-op increments', async () => {
+        await col.find({ tag: 'b09' }, { cache: 10000 });
+        const before = await col.findOneAndUpdate({ tag: 'b09' }, { $set: { n: 1 } }, { upsert: true, autoInvalidate: true });
+        assert.equal(before, null);
+        assert.equal((await col.find({ tag: 'b09' }, { cache: 10000 })).length, 1);
+        await runtime._adapter.db.collection('items').updateOne({ tag: 'b09' }, { $set: { n: 2 } });
+        await col.incrementOne({ tag: 'b09' }, 'n', 0, { autoInvalidate: true });
+        assert.equal((await col.find({ tag: 'b09' }, { cache: 10000 }))[0].n, 2);
+        await col.find({ tag: 'b09-increment' }, { cache: 10000 });
+        const incremented = await col.incrementOne({ tag: 'b09-increment' }, 'n', 1, { upsert: true, returnDocument: 'before', autoInvalidate: true });
+        assert.equal(incremented.value, null);
+        assert.equal((await col.find({ tag: 'b09-increment' }, { cache: 10000 })).length, 1);
+    });
+
+    it('B10 invalidates after a partially successful updateMany error', async () => {
+        const native = runtime._adapter.db.collection('items');
+        await native.createIndex({ b10Unique: 1 }, { unique: true, sparse: true });
+        try {
+            await native.insertMany([{ tag: 'b10', b10Unique: 'a' }, { tag: 'b10', b10Unique: 'b' }]);
+            await col.find({ tag: 'b10' }, { cache: 10000 });
+            await assert.rejects(col.updateMany({ tag: 'b10' }, { $set: { b10Unique: 'same' } }, { autoInvalidate: true }));
+            const found = await col.find({ tag: 'b10' }, { cache: 10000 });
+            assert.equal(found.filter((row: any) => row.b10Unique === 'same').length, 1);
+        } finally { await native.dropIndex('b10Unique_1'); }
+    });
+
     // ── find() read-through cache ────────────────────���────────────────────────
 
     describe('find() read-through cache', () => {

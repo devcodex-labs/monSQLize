@@ -134,7 +134,7 @@ function getInsertedIdsFromError(error: unknown): Record<string, unknown> {
         (error as { result?: { result?: { insertedIds?: unknown } } })?.result?.result?.insertedIds,
     ];
     for (const value of candidates) {
-        if (value && typeof value === 'object') {
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
             return value as Record<string, unknown>;
         }
     }
@@ -251,6 +251,16 @@ export async function insertBatchDocuments<TSchema extends Document = Document>(
         let pendingBatch = batch;
         let pendingIndexes = batch.map((_, index) => index);
         let attempts = 0;
+        const confirmedIndexes = new Set<number>();
+        const mergeInserted = (count: number, ids: Record<string, unknown>) => {
+            result.insertedCount += count;
+            for (const [key, value] of Object.entries(ids)) {
+                const localIndex = pendingIndexes[Number(key)];
+                if (localIndex === undefined || confirmedIndexes.has(localIndex)) continue;
+                confirmedIndexes.add(localIndex);
+                result.insertedIds[batchOffset + localIndex] = value;
+            }
+        };
 
         while (true) {
             try {
@@ -259,11 +269,7 @@ export async function insertBatchDocuments<TSchema extends Document = Document>(
                     ...driverOptions,
                     ordered,
                 });
-                result.insertedCount += batchResult.insertedCount;
-                for (const [key, value] of Object.entries(batchResult.insertedIds)) {
-                    const localIndex = pendingIndexes[Number.parseInt(key, 10)];
-                    result.insertedIds[batchOffset + localIndex] = value;
-                }
+                mergeInserted(batchResult.insertedCount, batchResult.insertedIds);
                 onProgress?.({
                     currentBatch: batchIndex + 1,
                     totalBatches: batches.length,
@@ -274,6 +280,17 @@ export async function insertBatchDocuments<TSchema extends Document = Document>(
                 });
                 break;
             } catch (cause) {
+                const partial = cause as { insertedCount?: number; result?: { insertedCount?: number; result?: { nInserted?: number } } };
+                const reported = partial?.insertedCount ?? partial?.result?.insertedCount ?? partial?.result?.result?.nInserted;
+                const count = typeof reported === 'number' && Number.isInteger(reported) && reported >= 0 && reported <= pendingBatch.length ? reported : 0;
+                const failures = getWriteErrorIndexes(cause).filter((index) => index < pendingBatch.length);
+                const candidates = count > 0 && failures.length > 0
+                    ? Object.entries(getInsertedIdsFromError(cause)).filter(([key]) => {
+                        const index = Number(key);
+                        return Number.isInteger(index) && index >= 0 && index < pendingBatch.length
+                            && (ordered ? index < Math.min(...failures) : !failures.includes(index));
+                    }) : [];
+                mergeInserted(count, candidates.length === count ? Object.fromEntries(candidates) : {});
                 assertManagedTransactionWriteAllowed(driverOptions);
                 const errorRecord = {
                     batchIndex,
@@ -289,15 +306,6 @@ export async function insertBatchDocuments<TSchema extends Document = Document>(
                             ? pendingIndexes.filter((_, index) => index >= Math.min(...failedIndexes))
                             : pendingIndexes.filter((_, index) => failedIndexes.includes(index));
                         const retryIndexSet = new Set(retryLocalIndexes);
-                        const insertedIds = getInsertedIdsFromError(cause);
-                        const confirmedSuccessCount = pendingIndexes.length - retryLocalIndexes.length;
-                        result.insertedCount += confirmedSuccessCount;
-                        for (const [key, value] of Object.entries(insertedIds)) {
-                            const localIndex = pendingIndexes[Number.parseInt(key, 10)];
-                            if (!retryIndexSet.has(localIndex)) {
-                                result.insertedIds[batchOffset + localIndex] = value;
-                            }
-                        }
                         pendingBatch = pendingBatch.filter((_, index) => retryIndexSet.has(pendingIndexes[index]));
                         pendingIndexes = retryLocalIndexes;
                         if (pendingBatch.length === 0) {

@@ -60,6 +60,35 @@ describe('P4-A transaction integration', () => {
         await runtime.close();
     });
 
+    it('B10 defers partial-batch invalidation until commit and discards it on abort', async () => {
+        const runtime = new MonSQLize({ type: 'mongodb', databaseName: 'b10_tx', config: { uri }, cache: new MonSQLize.MemoryCache() });
+        await runtime.connect();
+        try {
+            const col = runtime.collection('partial');
+            const native = runtime._adapter.db.collection('partial');
+            for (const commit of [true, false]) {
+                const tag = commit ? 'commit' : 'abort';
+                await native.insertMany([{ tag, value: 0 }, { tag, value: 0 }]);
+                assert.equal((await col.find({ tag }, { cache: 10000 })).length, 2);
+                // A raw write makes invalidation observable without touching the managed cache.
+                await native.insertOne({ tag, value: 0 });
+                const operation = runtime.withTransaction(async (tx: any) => {
+                    await assert.rejects(col.updateBatch({ tag }, { $set: { value: 1 } }, {
+                        session: tx.session, autoInvalidate: true, batchSize: 1,
+                        onProgress: () => { throw new Error('B10 partial batch'); },
+                    }), /B10 partial batch/);
+                    assert.equal(tx.session.inTransaction(), true);
+                    assert.equal((await col.find({ tag }, { cache: 10000 })).length, 2);
+                    if (!commit) throw new Error('B10 abort');
+                });
+                if (commit) await operation;
+                else await assert.rejects(operation, /B10 abort/);
+                assert.equal(await native.countDocuments({ tag, value: 1 }), commit ? 1 : 0);
+                assert.equal((await col.find({ tag }, { cache: 10000 })).length, commit ? 3 : 2);
+            }
+        } finally { await runtime.close(); }
+    });
+
     it('rejects wrapped writes after a managed abort while allowing a native session', async () => {
         const runtime = new MonSQLize({ type: 'mongodb', databaseName: 'p4a_tx_guard', config: { uri } });
         await runtime.connect();

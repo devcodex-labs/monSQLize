@@ -3,6 +3,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { Timestamp } from 'mongodb';
+
+const mockHello = async () => ({ operationTime: new Timestamp({ t: 1792377444, i: 42 }) });
+const isInitialCheckpoint = (value: unknown) => value !== null && typeof value === 'object' &&
+    (value as Record<string, unknown>).__monsqlizeSyncCheckpoint === 1;
 
 const {
     validateTargetConfig,
@@ -355,6 +360,7 @@ describe('ChangeStreamSyncManager — start/stop with resumeAfter token', () => 
         let watchCount = 0;
         const db = {
             databaseName: 'test_db',
+            command: mockHello,
             watch() {
                 watchCount += 1;
                 return { on: () => {}, close: async () => {} };
@@ -415,6 +421,7 @@ describe('ChangeStreamSyncManager — filter and transform', () => {
 
         const db = {
             databaseName: 'db',
+            command: mockHello,
             watch(_pipeline: unknown, _opts: unknown) {
                 if (!liveEmitter) {
                     return probeStream;
@@ -476,6 +483,7 @@ describe('ChangeStreamSyncManager — filter and transform', () => {
         const mgr = new ChangeStreamSyncManager({
             db: {
                 databaseName: 'db',
+                command: mockHello,
                 watch() {
                     watchCount += 1;
                     if (watchCount === 1) return { close: async () => {} }; // probe
@@ -524,7 +532,7 @@ describe('ChangeStreamSyncManager — filter and transform', () => {
             on: () => stream,
             close: async () => { closeCalled = true; },
         };
-        const db = { databaseName: 'db', watch: () => stream };
+        const db = { databaseName: 'db', command: mockHello, watch: () => stream };
 
         const mgr = new ChangeStreamSyncManager({
             db,
@@ -544,7 +552,7 @@ describe('ChangeStreamSyncManager — filter and transform', () => {
             },
             tokenStore: {
                 load: async () => null,
-                save: async (token: unknown) => { savedTokens.push(token); },
+                save: async (token: unknown) => { if (!isInitialCheckpoint(token)) savedTokens.push(token); },
                 clear: async () => {},
             },
         });

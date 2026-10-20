@@ -1,5 +1,6 @@
 import { after, before, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { ObjectId } from 'mongodb';
 import { createMemoryServerBootstrap } from '../../bootstrap/memory-server';
 import { buildFindPageCacheKey } from '../../../src/adapters/mongodb/queries/query-cache-keys';
 
@@ -39,6 +40,121 @@ describe('findPage() — advanced modes coverage', () => {
         }
         await db.collection('items').insertMany(docs);
         await col.invalidate('all');
+    });
+
+    it('AR01 isolates bookmarks by effective let and collation across management and reads', async () => {
+        const query = { $expr: { $gte: ['$val', '$$floor'] } };
+        const dims = { query, sort: { val: 1 }, limit: 2 };
+        const low = { ...dims, let: { floor: 1 } };
+        const high = { ...dims, options: { let: { floor: 10 } } };
+        await col.prewarmBookmarks(low, [1, 2, 3]);
+        assert.equal((await col.listBookmarks(high)).count, 0);
+        const warmed = await col.findPage({ ...high, page: 4 });
+        assert.deepEqual(warmed.items.map((row: any) => row.val), [16, 17]);
+        await col.prewarmBookmarks(high, [1, 2, 3]);
+        assert.equal((await col.listBookmarks({ ...dims, let: { floor: 10 } })).count, 3);
+        await col.clearBookmarks({ ...dims, let: { floor: 10 } });
+        assert.equal((await col.listBookmarks(high)).count, 0);
+        assert.equal((await col.listBookmarks(low)).count, 3);
+        const overridden = { ...high, let: { floor: 1 } };
+        assert.deepEqual((await col.listBookmarks(overridden)).keys, (await col.listBookmarks(low)).keys);
+        await col.clearBookmarks();
+        assert.deepEqual((await col.findPage({ ...high, page: 4 })).items, warmed.items);
+
+        const folded = { sort: { tag: 1, val: 1 }, limit: 2, collation: { locale: 'en', strength: 2 } };
+        const binary = { ...folded, collation: { locale: 'en', strength: 3 } };
+        await col.prewarmBookmarks(folded, [1, 2, 3]);
+        assert.equal((await col.listBookmarks(binary)).count, 0);
+        assert.equal((await col.listBookmarks({ ...folded, collation: undefined, options: { collation: folded.collation } })).count, 3);
+        await col.prewarmBookmarks(binary, [1, 2, 3]);
+        await col.clearBookmarks(folded);
+        assert.equal((await col.listBookmarks(binary)).count, 3);
+    });
+
+    it('AR08 forwards let to sync and async totals and isolates effective values', async () => {
+        const query = { $expr: { $gte: ['$val', '$$floor'] } };
+        const read = (floor: number, mode = 'sync', extra = {}) => col.findPage({
+            query, sort: { val: 1 }, limit: 2, options: { let: { floor: 100 } },
+            let: { floor }, totals: { mode, ttlMs: 10000 }, ...extra,
+        });
+        assert.equal((await read(10)).totals.total, 21);
+        assert.equal((await read(20)).totals.total, 11);
+        assert.equal((await col.findPage({ query, limit: 2, options: { let: { floor: 10 } }, totals: { mode: 'sync' } })).totals.total, 21);
+        let pending = await read(15, 'async');
+        for (let attempt = 0; pending.totals.total === null && attempt < 50; attempt++) {
+            await delay(10);
+            pending = await read(15, 'async');
+        }
+        assert.equal(pending.totals.total, 16);
+        const session = runtime._adapter.db.client.startSession();
+        try {
+            assert.equal((await read(10, 'sync', { session })).totals.total, 21);
+        } finally { await session.endSession(); }
+    });
+
+    it('AR01 AR08 preserve BSON document field order inside let for totals and bookmarks', async () => {
+        const native = col.raw();
+        await native.deleteMany({});
+        await native.insertMany(Array.from({ length: 8 }, (_, index) => ({ val: index + 1, key: { a: 1, b: 2 } })));
+        const query = { $expr: { $eq: ['$key', '$$needle'] } };
+        const first = { query, sort: { val: 1 }, limit: 2, let: { needle: { $literal: { a: 1, b: 2 } } } };
+        const second = { ...first, let: { needle: { $literal: { b: 2, a: 1 } } } };
+        assert.equal(await native.countDocuments(query, { let: first.let }), 8);
+        assert.equal(await native.countDocuments(query, { let: second.let }), 0);
+        assert.equal((await col.findPage({ ...first, totals: { mode: 'sync' } })).totals.total, 8);
+        assert.equal((await col.findPage({ ...second, totals: { mode: 'sync' } })).totals.total, 0);
+        await col.prewarmBookmarks(first, [1, 2, 3]);
+        assert.equal((await col.listBookmarks(second)).count, 0);
+        assert.equal((await col.findPage({ ...second, page: 4 })).items.length, 0);
+    });
+
+    it('B07 isolates typed totals queries and effective count options', async () => {
+        const native = runtime._adapter.db.collection('items');
+        await native.deleteMany({});
+        await native.insertMany([{ name: 'alice' }, { name: 'anna' }, { name: 'bob' }, { name: 'ALICE' }]);
+        const totals = async (query: unknown, options: Record<string, unknown> = {}) =>
+            (await col.findPage({ query, limit: 2, totals: { mode: 'sync' }, ...options })).totals.total;
+        assert.equal(await totals({ name: /^a/ }), 2);
+        assert.equal(await totals({ name: /^b/ }), 1);
+        assert.equal(await totals({ name: 'alice' }, { collation: { locale: 'en', strength: 2 } }), 2);
+        assert.equal(await totals({ name: 'alice' }, { collation: { locale: 'en', strength: 3 } }), 1);
+    });
+
+    it('B08 normalizes converted queries and capped limits before bookmark management', async () => {
+        const scoped = new MonSQLize({ type: 'mongodb', databaseName: 'b08_dims', config: { uri }, autoConvertObjectId: true, findPageMaxLimit: 2 });
+        try {
+            await scoped.connect();
+            const items = scoped.collection('items');
+            const foreignId = new ObjectId();
+            await items.raw().insertMany(Array.from({ length: 12 }, (_, index) => ({ foreignId, val: index + 1 })));
+            const keyDims = { query: { foreignId: foreignId.toHexString() }, sort: { val: 1 }, limit: 5 };
+            await items.prewarmBookmarks(keyDims, [1, 2, 3]);
+            assert.equal((await items.listBookmarks(keyDims)).count, 3);
+            const page = await items.findPage({ ...keyDims, page: 4, jump: { step: 1, maxHops: 1 } });
+            assert.deepEqual(page.items.map((row: any) => row.val), [7, 8]);
+            await items.clearBookmarks(keyDims);
+            await assert.rejects(items.findPage({ ...keyDims, page: 4, jump: { step: 1, maxHops: 1 } }), (error: any) => error.code === 'JUMP_TOO_FAR');
+        } finally { await scoped.close(); }
+    });
+
+    it('B08 shares ordered bookmark keys across prewarm read list and exact clear', async () => {
+        const dimensions = [
+            { sort: { tag: 1, val: -1 }, query: { tag: /^[ab]/ }, limit: 3 },
+            { sort: { val: -1, tag: 1 }, query: { tag: /^[ab]/ }, limit: 3 },
+        ];
+        for (const keyDims of dimensions) await col.prewarmBookmarks(keyDims, [1, 2, 3]);
+        const first = await col.listBookmarks(dimensions[0]);
+        const second = await col.listBookmarks(dimensions[1]);
+        assert.ok(first.count > 0);
+        assert.ok(second.count > 0);
+        assert.notDeepEqual(first.keys, second.keys);
+        await col.clearBookmarks(dimensions[0]);
+        assert.equal((await col.listBookmarks(dimensions[0])).count, 0);
+        assert.ok((await col.listBookmarks(dimensions[1])).count > 0);
+        const warmed = await col.findPage({ ...dimensions[1], page: 4 });
+        await col.clearBookmarks();
+        const cold = await col.findPage({ ...dimensions[1], page: 4 });
+        assert.deepEqual(warmed.items.map((row: any) => String(row._id)), cold.items.map((row: any) => String(row._id)));
     });
 
     // ── stream mode ───────────────────────────────────────────────────────────

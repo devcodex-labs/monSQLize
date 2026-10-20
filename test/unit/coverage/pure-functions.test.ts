@@ -2773,9 +2773,9 @@ describe('pool manager and health checker — direct branch coverage', () => {
         const warnings: unknown[] = [];
         const manager = new ConnectionPoolManager({
             clientFactory: async () => client as any,
-            healthCheckFn: async () => {
+            healthCheckFn: () => {
                 if (mode === 'throw') throw 'boom';
-                return mode === 'healthy';
+                return Promise.resolve(mode === 'healthy');
             },
             logger: { warn: (...args: unknown[]) => warnings.push(args) },
         } as any);
@@ -2789,10 +2789,11 @@ describe('pool manager and health checker — direct branch coverage', () => {
         await (manager as any).checkPoolHealth('health');
         assert.equal(manager.getPoolHealth().get('health')?.status, 'degraded');
         await (manager as any).checkPoolHealth('health');
-        assert.equal(manager.getPoolHealth().get('health')?.status, 'down');
+        assert.equal(manager.getPoolHealth().get('health')?.status, 'degraded');
 
         mode = 'throw';
         await (manager as any).checkPoolHealth('health');
+        assert.equal(manager.getPoolHealth().get('health')?.status, 'down');
         assert.equal(warnings.length, 1);
         (manager as any).recordSelection('missing', false);
 
@@ -2802,7 +2803,9 @@ describe('pool manager and health checker — direct branch coverage', () => {
     it('HealthChecker covers register overloads, start/stop guards, in-progress guard, timeout and missing client branches', async () => {
         const logs: unknown[] = [];
         const checker = new HealthChecker({ logger: { info: (...args: unknown[]) => logs.push(args), warn: (...args: unknown[]) => logs.push(args) } });
-        const client = { db: () => ({ command: async () => ({ ok: 1 }) }) };
+        let releasePing!: (value: unknown) => void;
+        let pingCalls = 0;
+        const client = { db: () => ({ command: () => { pingCalls++; return new Promise((resolve) => { releasePing = resolve; }); } }) };
 
         checker.register('plain');
         checker.register({ name: 'objectDefault' }, null);
@@ -2811,10 +2814,12 @@ describe('pool manager and health checker — direct branch coverage', () => {
         checker.start();
         checker.register('lateDisabled', { enabled: false });
         checker.start();
-        (checker as any)._inProgress.add('healthy');
+        const pendingPing = checker.checkPool('healthy');
+        await Promise.resolve();
         await checker.checkPool('healthy');
-        (checker as any)._inProgress.delete('healthy');
-        await checker.checkPool('healthy');
+        assert.equal(pingCalls, 1);
+        releasePing({ ok: 1 });
+        await pendingPing;
         await checker.checkPool('unknown');
         checker.unregister('disabled');
         checker.stop();

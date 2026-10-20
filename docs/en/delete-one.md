@@ -1,5 +1,7 @@
 # deleteOne() - delete a single document
 
+For Model relation protection, use `deleteOneWithRelations()`. Checks run after all `before` hooks against the final filter and session; the write retains that filter and the checked `_id`. Empty filters and relation-scan narrowing are rejected. Ordinary protected deletion keeps soft-delete behavior even if a hook changes internal force options. Explicit `forceDeleteWithRelations()` keeps its hook-free physical-delete behavior. The `after` hook receives the write result; the public method then returns `{ result, usage }`.
+
 ## Syntax
 
 ```javascript

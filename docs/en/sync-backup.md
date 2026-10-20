@@ -1,5 +1,15 @@
 ﻿# Change Stream Sync
 
+With an empty checkpoint store, startup first persists a versioned operation-time envelope containing a canonical EJSON BSON Timestamp, then opens the Change Stream. Custom stores must round-trip this opaque JSON value. Existing raw resume tokens remain supported; successful events continue to save raw tokens. Strict persistence failures, malformed envelopes and expired history stop progress without clearing the checkpoint. Explicit best-effort settings still permit non-durable progress. Target names must be exactly unique, with idempotency enabled or disabled.
+
+Before downgrading, pause sync and preserve its store. Older readers cannot use the initial envelope as a resume token. A successfully persisted raw event token restores format compatibility, subject to the older version's behavior and MongoDB history retention. Do not clear the envelope to make downgrade start from now; an intentional resync requires a separate data reconciliation decision.
+
+Per-target idempotency keys are opaque JSON tuples: `["v2", keyPrefix, targetName, rawKey]`. Colons, quotes and Unicode in these components cannot merge distinct identities. `keyBuilder(event, targetName)` still receives the original inputs and returns the raw key; null, undefined or an empty string disables that event key. TTL and `markMode` retain their semantics.
+
+Upgrade with writers stopped and queued work drained. Preserve the checkpoint, v1 and v2 marker stores, and a recovery snapshot. Do not run mixed key-format writers. V1 concatenated keys are ambiguous and are not trusted as unconditional v2 duplicate markers: without a finite, provable mapping, use target-owned business idempotence and allow replay. A generic get/set/del store cannot enumerate or reverse these legacy keys automatically.
+
+For rollback, stop and drain again, preserve both marker generations, and verify a compatible raw resume token plus the target recovery point. The initial-checkpoint downgrade restriction above still applies. Do not clear either store or restart from now as a recovery shortcut. Failed active or staged target closes retain cleanup ownership; later `stop()` retries them and `start()` must finish cleanup before opening replacements. Other targets still receive a close attempt.
+
 ## Overview
 
 Change Stream sync uses MongoDB's native Change Stream mechanism to dispatch accepted data-change events to one or more targets. It is useful for backup databases, denormalized projections, cache invalidation callbacks, and other asynchronous CDC workflows.

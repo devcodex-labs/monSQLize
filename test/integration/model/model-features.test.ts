@@ -29,6 +29,286 @@ describe('P3-C model features', () => {
         await Promise.all(runtimes.map((runtime) => runtime.close()));
     });
 
+    it('AR04 protects the hook-selected target and preserves soft/force delete hook contracts', async (t) => {
+        let targetId: unknown;
+        let finalSession: any;
+        let beforeCalls = 0;
+        let afterCalls = 0;
+        MonSQLize.Model.define('ar04_targets', {
+            schema: {},
+            options: { softDelete: true, autoIndex: false },
+            hooks: () => ({
+                delete: {
+                    before(_context: unknown, _filter: unknown, options: any) {
+                        beforeCalls++;
+                        return [{ _id: targetId }, { ...options, session: finalSession, _forceDelete: true }];
+                    },
+                    after(_context: unknown, result: any) {
+                        afterCalls++;
+                        assert.equal(result.matchedCount, 1);
+                        assert.equal('usage' in result, false);
+                        return { ...result, hookResult: true };
+                    },
+                },
+            }),
+        });
+        MonSQLize.Model.define('ar04_refs', {
+            schema: {},
+            options: { autoIndex: false },
+            relations: { target: { from: 'ar04_targets', localField: 'targetId', foreignField: '_id' } },
+        });
+        const runtime = new MonSQLize({ type: 'mongodb', databaseName: 'ar04_models', config: { uri, options: { monitorCommands: true } } });
+        activeRuntimes.add(runtime);
+        await runtime.connect();
+        const client = runtime._adapter.db.client;
+        const originalSession = client.startSession();
+        finalSession = client.startSession();
+        t.after(async () => { await originalSession.endSession(); await finalSession.endSession(); });
+        const protectedCommands: any[] = [];
+        let checking = false;
+        client.on('commandStarted', (event: any) => {
+            if (checking && ['find', 'aggregate', 'update'].includes(event.commandName)) protectedCommands.push(event.command);
+        });
+        const model = runtime.model('ar04_targets');
+        const rawTargets = runtime.collection('ar04_targets');
+        const refs = runtime.collection('ar04_refs');
+        const a = await model.insertOne({ name: 'a' });
+        const b = await model.insertOne({ name: 'b' });
+        targetId = b.insertedId;
+        await refs.insertOne({ targetId });
+        checking = true;
+        await assert.rejects(
+            () => model.deleteOneWithRelations({ _id: a.insertedId }, { session: originalSession }),
+            { code: 'RELATION_IN_USE' },
+        );
+        checking = false;
+        assert.equal((await rawTargets.findOne({ _id: a.insertedId })).deletedAt, undefined);
+        assert.equal((await rawTargets.findOne({ _id: b.insertedId })).deletedAt, undefined);
+        assert.equal(beforeCalls, 1);
+        assert.equal(afterCalls, 0);
+
+        await refs.deleteMany({});
+        checking = true;
+        const deleted = await model.deleteOneWithRelations({ _id: a.insertedId }, { session: originalSession });
+        checking = false;
+        assert.ok(protectedCommands.length >= 3);
+        assert.ok(protectedCommands.some(command => command.update === 'ar04_targets'));
+        for (const command of protectedCommands) assert.deepEqual(command.lsid, finalSession.id);
+        assert.equal(deleted.result.hookResult, true);
+        assert.equal(deleted.usage.used, false);
+        assert.ok((await rawTargets.findOne({ _id: b.insertedId })).deletedAt instanceof Date);
+        assert.equal((await rawTargets.findOne({ _id: a.insertedId })).deletedAt, undefined);
+        assert.equal(beforeCalls, 2);
+        assert.equal(afterCalls, 1);
+
+        await model.forceDeleteWithRelations({ _id: a.insertedId });
+        assert.equal(await rawTargets.findOne({ _id: a.insertedId }), null);
+        assert.equal(beforeCalls, 2);
+        assert.equal(afterCalls, 1);
+    });
+
+    it('AR03 filters before computed projection and isolates model visibility caches', async () => {
+        MonSQLize.Model.define('ar03_projection', { schema: {}, options: { softDelete: { field: 'removed', type: 'boolean' }, autoIndex: false } });
+        const runtime = new MonSQLize({ type: 'mongodb', databaseName: 'ar03_models', config: { uri, options: { monitorCommands: true } } });
+        activeRuntimes.add(runtime);
+        await runtime.connect();
+        const model = runtime.model('ar03_projection');
+        const raw = runtime.collection('ar03_projection');
+        const a = await raw.insertOne({ name: 'live', removed: false, values: [1, 2, 3] });
+        const b = await raw.insertOne({ name: 'gone', removed: true, values: [4, 5, 6] });
+        const ids = [b.insertedId, a.insertedId, a.insertedId];
+        const projection = Object.freeze({ _id: 1, label: { $literal: 'computed' }, removed: { $literal: false } });
+        const options = Object.freeze({ projection, cache: 10000, preserveOrder: true });
+        let calls = 0;
+        const projections: unknown[] = [];
+        const client = runtime._adapter.db.client;
+        const onCommand = (event: any) => {
+            if (event.commandName !== 'find' || event.command.find !== 'ar03_projection') return;
+            calls++;
+            projections.push(event.command.projection);
+        };
+        client.on('commandStarted', onCommand);
+        try {
+            assert.equal((await raw.findByIds(ids, options)).length, 2);
+            const visible = await model.findByIds(ids, options);
+            assert.equal(visible.length, 1);
+            assert.equal(String(visible[0]._id), String(a.insertedId));
+            const deleted = await model.findByIds(ids, { ...options, onlyDeleted: true });
+            assert.equal(deleted.length, 1);
+            assert.equal(String(deleted[0]._id), String(b.insertedId));
+            assert.equal(deleted[0].removed, false, 'computed marker is preserved');
+            assert.equal((await model.findByIds(ids, { ...options, withDeleted: true })).length, 2);
+            assert.equal(calls, 3, 'raw/all, visible, and deleted use separate single-query entries');
+            await model.findByIds(ids, options);
+            assert.equal(calls, 3);
+            await raw.updateOne({ _id: a.insertedId }, { $set: { touched: true } }, {
+                cache: { invalidate: [{ operation: 'findByIds', ids, options }] },
+            });
+            await model.findByIds(ids, options);
+            assert.equal(calls, 4, 'exact invalidation also clears model variants');
+            const session = runtime._adapter.db.client.startSession();
+            try {
+                await model.findByIds(ids, { ...options, session });
+                await model.findByIds(ids, { ...options, session });
+                assert.equal(calls, 6);
+            } finally { await session.endSession(); }
+        } finally { client.off('commandStarted', onCommand); }
+        for (const actualProjection of projections) assert.deepEqual(actualProjection, projection);
+        const sliced = await model.findByIds(ids, { project: Object.freeze({ values: { $slice: 1 }, removed: 0 }) });
+        assert.equal(sliced.length, 1);
+        assert.deepEqual(sliced[0].values, [1]);
+        assert.equal(sliced[0].removed, undefined);
+        for (const projectionOptions of [{ project: ['name'] }, { projection: ['name'] }]) {
+            const cacheOptions = { ...projectionOptions, cache: 10000 };
+            await model.findByIds(ids, cacheOptions);
+            const nextName = 'fresh-' + Object.keys(projectionOptions)[0];
+            await raw.updateOne({ _id: a.insertedId }, { $set: { name: nextName } }, {
+                cache: { invalidate: [{ operation: 'findByIds', ids, options: cacheOptions }] },
+            });
+            assert.equal((await model.findByIds(ids, cacheOptions))[0].name, nextName);
+        }
+        assert.deepEqual(await model.findByIds([]), []);
+        await assert.rejects(async () => await model.findByIds(['invalid']), { code: 'INVALID_ARGUMENT' });
+        await assert.rejects(async () => await model.findByIds(ids, { onlyDeleted: 'invalid' }), { code: 'INVALID_ARGUMENT' });
+    });
+
+    it('AR03 uses final before options and preserves after replacement with a nested marker', async () => {
+        MonSQLize.Model.define('ar03_hooks', {
+            schema: {}, options: { softDelete: { field: 'meta.removed', type: 'timestamp' }, autoIndex: false },
+            hooks: () => ({ find: {
+                before(_context: unknown, ids: unknown) { return [ids, { onlyDeleted: true, projection: { name: 1 } }]; },
+                after(_context: unknown, rows: any[]) {
+                    assert.deepEqual(rows.map(row => row.name), ['gone']);
+                    return [{ name: 'replacement', meta: { removed: null } }];
+                },
+            } }),
+        });
+        const runtime = new MonSQLize({ type: 'mongodb', databaseName: 'ar03_models', config: { uri } });
+        activeRuntimes.add(runtime);
+        await runtime.connect();
+        const raw = runtime.collection('ar03_hooks');
+        const a = await raw.insertOne({ name: 'live' });
+        const b = await raw.insertOne({ name: 'gone', meta: { removed: new Date() } });
+        const rows = await runtime.model('ar03_hooks').findByIds([a.insertedId, b.insertedId], Object.freeze({ withDeleted: true }));
+        assert.equal(rows.length, 1);
+        assert.equal(rows[0].name, 'replacement');
+        assert.equal(rows[0].meta.removed, null);
+    });
+
+    it('B05 filters id-only soft-delete projections without exposing the marker', async () => {
+        for (const type of ['timestamp', 'boolean']) {
+            const name = 'b05_' + type;
+            MonSQLize.Model.define(name, { schema: {}, options: { softDelete: { field: 'removed', type }, autoIndex: false } });
+            const runtime = new MonSQLize({ type: 'mongodb', databaseName: 'b05_models', config: { uri } });
+            activeRuntimes.add(runtime);
+            await runtime.connect();
+            const model = runtime.model(name);
+            const first = await model.insertOne({ name: 'visible' });
+            const second = await model.insertOne({ name: 'deleted' });
+            await model.deleteOne({ _id: second.insertedId });
+            for (const projection of [{ _id: 1 }, { _id: true }, ['_id']]) {
+                const visible = await model.findByIds([first.insertedId, second.insertedId], { projection });
+                assert.equal(visible.length, 1);
+                assert.deepEqual(Object.keys(visible[0]), ['_id']);
+                const deleted = await model.findByIds([first.insertedId, second.insertedId], { projection, onlyDeleted: true });
+                assert.equal(deleted.length, 1);
+                assert.equal(String(deleted[0]._id), String(second.insertedId));
+                assert.equal(Object.prototype.hasOwnProperty.call(deleted[0], 'removed'), false);
+                assert.equal((await model.findByIds([first.insertedId, second.insertedId], { projection, withDeleted: true })).length, 2);
+            }
+            const excluded = await model.findByIds([first.insertedId], { projection: { _id: 1, name: 0 } });
+            assert.equal(excluded[0].name, undefined);
+            assert.equal(excluded[0].removed, undefined);
+            const markerExcluded = await model.findByIds([first.insertedId, second.insertedId], { projection: { _id: 1, removed: 0 } });
+            assert.equal(markerExcluded.length, 1);
+            assert.equal(markerExcluded[0].name, 'visible');
+            assert.equal(markerExcluded[0].removed, undefined);
+        }
+    });
+
+    it('B06 passes the public model and preserves mutation hook replacement and failure semantics', async () => {
+        let model: any;
+        let rejectBefore = false;
+        let rejectAfter = false;
+        let defaultCalls = 0;
+        const contexts: Array<Record<string, unknown>> = [];
+        MonSQLize.Model.define('b06_hooks', {
+            schema: {},
+            defaults: { sequence: () => ++defaultCalls },
+            hooks: (instance: any) => {
+                assert.strictEqual(instance, model);
+                assert.equal(instance.getNamespace().collection, 'b06_hooks');
+                assert.equal(typeof instance.findByIds, 'function');
+                return {
+                    update: {
+                        before: (context: any, filter: unknown, _update: unknown, options: unknown) => {
+                            context.shared = 'update';
+                            return [filter, { $set: { updatedByHook: true } }, options];
+                        },
+                        after: (context: any, result: any) => {
+                            assert.equal(context.shared, 'update');
+                            return { ...result, updateReplaced: true };
+                        },
+                    },
+                    insert: {
+                        before: (context: any, document: any, options: unknown) => {
+                            if (rejectBefore) throw new Error('before blocked');
+                            context.shared = 'insert';
+                            contexts.push(context);
+                            return [{ ...document, changed: true }, options];
+                        },
+                        after: (context: any, result: any) => {
+                            assert.strictEqual(context, contexts[contexts.length - 1]);
+                            assert.equal(context.shared, 'insert');
+                            if (rejectAfter) throw new Error('after ignored');
+                            return { ...result, replaced: true };
+                        },
+                    },
+                };
+            },
+        });
+        const runtime = new MonSQLize({ type: 'mongodb', databaseName: 'b06_models', config: { uri } });
+        activeRuntimes.add(runtime);
+        await runtime.connect();
+        model = runtime.model('b06_hooks');
+        const inserted = await model.insertOne({ name: 'first' });
+        assert.equal(inserted.replaced, true);
+        assert.equal(defaultCalls, 1);
+        assert.equal((await model.findOne({ _id: inserted.insertedId })).changed, true);
+        const updated = await model.updateOne({ _id: inserted.insertedId }, { $set: { ignored: true } });
+        assert.equal(updated.updateReplaced, true);
+        const changed = await model.findOne({ _id: inserted.insertedId });
+        assert.equal(changed.updatedByHook, true);
+        assert.equal(changed.ignored, undefined);
+        assert.equal(defaultCalls, 1);
+        rejectBefore = true;
+        await assert.rejects(model.insertOne({ name: 'blocked' }), /before blocked/);
+        assert.equal(await model.count({ name: 'blocked' }), 0);
+        rejectBefore = false;
+        rejectAfter = true;
+        const retained = await model.insertOne({ name: 'retained' });
+        assert.equal(await model.count({ _id: retained.insertedId }), 1);
+    });
+
+    it('B06 preserves the shared standard hook context across canonical and alias names', async () => {
+        let beforeContext: any;
+        let afterContext: any;
+        MonSQLize.Model.define('b06_standard', {
+            schema: {},
+            hooks: {
+                beforeCreate: (context: any) => { beforeContext = context; context.audit = 'before'; },
+                beforeInsert: (context: any) => { assert.strictEqual(context, beforeContext); assert.equal(context.audit, 'before'); },
+                afterCreate: (context: any) => { afterContext = context; context.audit = 'after'; },
+                afterInsert: (context: any) => { assert.strictEqual(context, afterContext); assert.equal(context.audit, 'after'); },
+            },
+        });
+        const runtime = new MonSQLize({ type: 'mongodb', databaseName: 'b06_models', config: { uri } });
+        activeRuntimes.add(runtime);
+        await runtime.connect();
+        const inserted = await runtime.model('b06_standard').insertOne({ value: 1 });
+        assert.equal(await runtime.model('b06_standard').count({ _id: inserted.insertedId }), 1);
+    });
+
     it('binds a registered descriptor through direct and scoped model accessors', async () => {
         const User = MonSQLize.defineModel('typed_descriptor_users', {
             schema: {
@@ -44,6 +324,7 @@ describe('P3-C model features', () => {
         assert.throws(() => runtime.model(User), /MODEL_NOT_DEFINED|not defined/);
         MonSQLize.Model.define(User);
         const users = runtime.model(User);
+        assert.ok(users instanceof MonSQLize.ModelInstance);
         const tenantUsers = runtime.use('typed_descriptor_tenant').model(User);
         assert.equal(users.collectionName, 'typed_descriptor_users');
         assert.equal(tenantUsers.dbName, 'typed_descriptor_tenant');

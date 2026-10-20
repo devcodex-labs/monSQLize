@@ -9,6 +9,27 @@ type CachePayload = {
 };
 
 describe('P3-B function-cache', () => {
+    it('B22 delegates exact and complete invalidation to the same customized wrapper', async () => {
+        for (const enableStats of [true, false]) {
+            let calls = 0;
+            const cache = new MonSQLize.MemoryCache();
+            cache.set('b22:external', 'keep');
+            const cached = MonSQLize.withCache(async (id: number) => ({ id, call: ++calls }), {
+                namespace: 'b22', keyBuilder: (id: number) => 'custom:' + id, cache, enableStats,
+            });
+            const one = await cached(1), two = await cached(2);
+            assert.deepEqual(await cached(1), one);
+            await cached.invalidate(1);
+            assert.notDeepEqual(await cached(1), one);
+            assert.deepEqual(await cached(2), two);
+            await cached.invalidateAll();
+            assert.notDeepEqual(await cached(2), two);
+            assert.equal(cache.get('b22:external'), 'keep');
+            assert.deepEqual(cached.getCacheStats(), cached.stats());
+            if (!enableStats) assert.equal(cached.stats().calls, 0);
+        }
+    });
+
     it('withCache caches results and returns hit stats', async () => {
         let calls = 0;
         const cache = new MonSQLize.MemoryCache();

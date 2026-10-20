@@ -3,6 +3,8 @@
 
 `deleteOne()` 方法删除集合中第一个匹配筛选条件的文档。
 
+Model 关系保护使用 `deleteOneWithRelations()`。检查在全部 `before` hook 后，基于最终 filter 与 session 执行；写入保留该 filter 并绑定已检查的 `_id`。空 filter 和缩小声明关系扫描范围会被拒绝。普通受保护删除保持软删除行为，hook 修改内部 force 选项不能切换为物理删除。显式 `forceDeleteWithRelations()` 保持不执行 Model hook 的物理删除路径。`after` 接收原始写入结果，随后公开方法包装为 `{ result, usage }`。
+
 ## 语法
 
 ```javascript

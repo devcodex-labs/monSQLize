@@ -8,6 +8,12 @@
 
 import type { ModelInstance } from '../../capabilities/model';
 
+/** Runs relation preflight after every before hook, using the final write arguments. */
+export type ModelProtectedDeleteGuard = (
+    filter: unknown,
+    options: unknown,
+) => Promise<{ filter: unknown; options: unknown }>;
+
 /**
  * Value type for the runtime's `_modelInstances` Map.
  * The `revision` field enables hot-reload detection: when `Model.getRevision()` changes,

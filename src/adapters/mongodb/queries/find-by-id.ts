@@ -11,6 +11,7 @@
  */
 
 import { readThroughCache } from '../../../core/cache-coordination';
+import { getModelQueryFilter, MODEL_QUERY_FILTER } from '../../../core/model-query-context';
 import { Collection, Document, FindOptions, ObjectId } from 'mongodb';
 
 import { createError, ErrorCodes } from '../../../core/errors';
@@ -149,10 +150,17 @@ export async function findByIdsDocuments<TSchema extends Document = Document>(
         ...rawOptions,
     });
     const driverOptions = buildFindDriverOptions(baseOptions);
+    delete (driverOptions as Record<symbol, unknown>)[MODEL_QUERY_FILTER];
+    const visibility = getModelQueryFilter(rawOptions);
+    const idFilter = { _id: { $in: uniqueIds } };
+    const filter = visibility && Object.keys(visibility).length > 0
+        ? { $and: [idFilter, visibility] }
+        : idFilter;
 
     const cacheTTL = getCacheTtl(rawOptions);
     const cacheKey = cacheTTL > 0
         && queryCache
+        && (!visibility || Object.keys(visibility).length === 0 || typeof queryCache.delPattern === 'function')
         && !hasSessionOption(baseOptions)
         && !(await isCollectionCacheBarrierActive(queryCache, collection, defaults))
         ? buildFindByIdsCacheKey(collection, defaults, uniqueIds, baseOptions)
@@ -160,13 +168,13 @@ export async function findByIdsDocuments<TSchema extends Document = Document>(
 
     let results: TSchema[];
     if (cacheKey && queryCache) {
-        results = await readThroughCache(queryCache, cacheKey, cacheTTL, () => collection.find({
-            _id: { $in: uniqueIds },
-        } as Parameters<Collection<TSchema>['find']>[0], driverOptions as Parameters<Collection<TSchema>['find']>[1]).toArray() as Promise<TSchema[]>);
+        results = await readThroughCache(queryCache, cacheKey, cacheTTL, () => collection.find(
+            filter as Parameters<Collection<TSchema>['find']>[0], driverOptions as Parameters<Collection<TSchema>['find']>[1],
+        ).toArray() as Promise<TSchema[]>);
     } else {
-        results = await collection.find({
-            _id: { $in: uniqueIds },
-        } as Parameters<Collection<TSchema>['find']>[0], driverOptions as Parameters<Collection<TSchema>['find']>[1]).toArray() as TSchema[];
+        results = await collection.find(
+            filter as Parameters<Collection<TSchema>['find']>[0], driverOptions as Parameters<Collection<TSchema>['find']>[1],
+        ).toArray() as TSchema[];
     }
 
     if (rawOptions.preserveOrder === true) {

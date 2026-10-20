@@ -1,5 +1,7 @@
 # Detailed explanation of the multi-connection pool health check mechanism
 
+The manager owns health-check scheduling. A timed-out ping remains in flight until the underlying operation settles, preventing overlapping pings to the same client. Configured failure thresholds determine down status; public status reports degraded before the threshold and recovers on a completed successful check. Stop, removal and replacement fence late results. A custom ping that never settles prevents further checks for that client; shutdown revokes its update authority without waiting indefinitely.
+
 ## Overview of health check mechanism
 
 ## Working principle

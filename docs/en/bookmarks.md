@@ -1,5 +1,7 @@
 ﻿# Bookmark Maintenance API
 
+Bookmark keys preserve sort-field order and BSON/RegExp types, including document field order inside `let`. Prewarm, read, exact list and exact clear share effective ObjectId conversion, limit caps, cursor strategy and result options, including `let` and `collation`. Defined top-level options override nested `options`; equivalent effective options share an identity. The `v4` keys start cold; old entries expire by their TTL or can be removed with collection-wide bookmark clearing.
+
 ## Overview
 
 monSQLize provides three bookmark maintenance APIs for managing `findPage()` bookmark caches. These APIs are intended for operational diagnostics and pagination performance tuning.

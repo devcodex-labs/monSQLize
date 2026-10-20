@@ -446,6 +446,24 @@ describe('writePathPolicy runtime enforcement', () => {
         assert.match(String(warnings[0][0]), /WritePathPolicy/);
     });
 
+    it('B24 rejects a collMod payload target override before dispatch', async () => {
+        const { runtime, calls } = createConnectedRuntime({ writePathPolicy: {
+            default: 'allow-both', namespaces: { 'policy_db.archive': 'model-only' },
+        } });
+        for (const target of ['archive', 'users', undefined]) {
+            await assert.rejects(runtime.collection('users').collMod({ collMod: target, validationLevel: 'moderate' }),
+                (error: any) => error.code === 'INVALID_ARGUMENT');
+        }
+        assert.equal(calls.length, 0);
+        await expectBlocked(runtime.collection('archive').collMod({ validationLevel: 'moderate' }));
+        await runtime.collection('users').collMod({ validationLevel: 'moderate' });
+        assert.equal(calls.length, 1);
+        MonSQLize.Model.define('b24_model', { collection: 'users', schema: {}, autoIndex: false });
+        const model = runtime.model('b24_model');
+        await assert.rejects(model.collMod({ collMod: 'archive' }), (error: any) => error.code === 'INVALID_ARGUMENT');
+        assert.equal(calls.length, 1);
+    });
+
     it('blocks management operations when the target namespace is model-only', async () => {
         const { runtime, calls } = createConnectedRuntime({
             writePathPolicy: {

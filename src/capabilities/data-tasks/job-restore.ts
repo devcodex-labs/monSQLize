@@ -279,7 +279,9 @@ function safetyEntries(plan: DataTaskRestorePlan): DataTaskBackupEntry[] {
 async function restoreDocument(target: DataTaskCollectionLike, action: RestoreDocumentAction): Promise<AppliedDataTaskOperation> {
     if (action.action === 'delete') {
         if (!target.deleteOne) throw new DataTaskJobError('RESTORE_FAILED', 'target does not support deleteOne.', 'restore');
-        const result = await target.deleteOne(exactDataTaskDocumentFilter(action.current!));
+        const result = await target.deleteOne(exactDataTaskDocumentFilter(action.current!), {
+            collation: { locale: 'simple' },
+        });
         if (resultCount(result, 'deletedCount') !== 1) throw new DataTaskJobError('RESTORE_FAILED', 'restore delete did not affect one document.', 'restore');
         return { ...action.applied, operation: 'delete', afterHash: hashDataTaskValue(null) };
     }
@@ -291,7 +293,9 @@ async function restoreDocument(target: DataTaskCollectionLike, action: RestoreDo
         }
         return { ...action.applied, operation: 'update', targetId: before._id, afterHash: hashDataTaskValue(before) };
     }
-    const result = await target.replaceOne(exactDataTaskDocumentFilter(action.current!), before);
+    const result = await target.replaceOne(exactDataTaskDocumentFilter(action.current!), before, {
+        collation: { locale: 'simple' },
+    });
     if (resultCount(result, 'matchedCount') !== 1) {
         throw new DataTaskJobError('RESTORE_FAILED', 'restore replace did not affect one document.', 'restore');
     }

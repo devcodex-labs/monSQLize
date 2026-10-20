@@ -756,6 +756,7 @@ export class MongoCollectionAccessor<TSchema extends Document = Document> {
             getCache: this.management.getCache,
             logger: this.management.logger,
             defaults: this.management.defaults,
+            cvFilter: (query: Document) => this._cvFilter(query),
             findPage: (options: FindPageOptions<TSchema>) => this.findPage(options),
         };
     }

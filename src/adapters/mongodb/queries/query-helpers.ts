@@ -430,7 +430,7 @@ export async function isCollectionCacheBarrierActive<TSchema extends Document = 
 
 type CacheKeyMode = 'document' | 'options';
 
-const ORDERED_OPTION_FIELDS = new Set(['query', 'filter', 'pipeline', 'sort', 'hint', 'projection', 'min', 'max']);
+const ORDERED_OPTION_FIELDS = new Set(['query', 'filter', 'pipeline', 'sort', 'hint', 'projection', 'min', 'max', 'let']);
 
 function normalizeCacheKeyValue(value: unknown, mode: CacheKeyMode): unknown {
     if (value === null) return ['null'];
@@ -502,6 +502,7 @@ export function buildCountDriverOptions<TSchema extends Document = Document>(
         'readConcern',
         'readPreference',
         'signal',
+        'let',
     ]);
     for (const key of Object.keys(driverOptions)) {
         if (!allowed.has(key)) {

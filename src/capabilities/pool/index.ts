@@ -122,6 +122,9 @@ export class ConnectionPoolManager {
     private readonly _pendingAddTasks = new Set<Promise<void>>();
     private _generation = 0;
     private _closePromise: Promise<void> | null = null;
+    private readonly _healthEpochs = new Map<string, number>();
+    private readonly _pendingCloseClients = new Set<MongoClient>();
+    private readonly _cmapCleanup = new Map<MongoClient, () => void>();
 
     constructor(options: InternalPoolManagerOptions = {}) {
         this.logger = options.logger ?? null;
@@ -137,7 +140,10 @@ export class ConnectionPoolManager {
                 maxRetries: rawFallback?.maxRetries ?? 3,
             };
         this.fallback = fallback;
-        this.clientFactory = options.clientFactory ?? defaultClientFactory;
+        this.clientFactory = options.clientFactory ?? ((config) => defaultClientFactory(config, (client) => {
+            this._pendingCloseClients.add(client);
+            this.bindConnectionEvents(config.name, client, this._generation);
+        }));
         this.healthCheckFn = options.healthCheckFn ?? defaultHealthCheckFn;
 
         // v1 compat: initialize adapter properties
@@ -145,7 +151,17 @@ export class ConnectionPoolManager {
         this._fallback = this.fallback;
         this._pools = this.pools;
         this._selector = new PoolSelector({ strategy: this.strategy, logger: this.logger ?? undefined });
-        this._healthChecker = new HealthChecker({ poolManager: this, logger: this.logger ?? undefined });
+        this._healthChecker = new HealthChecker({ poolManager: this, logger: this.logger ?? undefined, ping: async (name) => {
+            const pool = this.pools.get(name);
+            if (!pool) throw createError(ErrorCodes.POOL_NOT_FOUND, `Pool '${name}' not found`);
+            let healthy: boolean;
+            try { healthy = await this.healthCheckFn(name, pool.client, pool.config); }
+            catch (error) {
+                try { this.logger?.warn?.(`[PoolManager] health check failed for ${name}`, error); } catch { /* Preserve the health error. */ }
+                throw error;
+            }
+            if (!healthy) throw new Error('Pool health check returned false');
+        } });
         this._stats = new PoolStatsManager({ logger: this.logger ?? undefined });
     }
 
@@ -193,15 +209,23 @@ export class ConnectionPoolManager {
 
     private async _finishAddPool(config: PoolConfig, generation: number): Promise<void> {
         const client = await this.clientFactory(config);
-        if (this._closed || generation !== this._generation || this.pools.has(config.name)) {
-            await client.close().catch(() => { });
+        this._pendingCloseClients.add(client);
+        const closed = this._closed || generation !== this._generation;
+        if (closed || this.pools.has(config.name)) {
+            if (!closed) {
+                try {
+                    await this.closeClient(client);
+                } catch { /* Retain ownership for a later close retry. */ }
+            }
             throw createError(
-                this._closed || generation !== this._generation ? ErrorCodes.INVALID_OPERATION : ErrorCodes.INVALID_CONFIG,
-                this._closed || generation !== this._generation
+                closed ? ErrorCodes.INVALID_OPERATION : ErrorCodes.INVALID_CONFIG,
+                closed
                     ? 'Connection pool manager closed while adding a pool'
                     : `Pool '${config.name}' already exists`,
             );
         }
+        this._pendingCloseClients.delete(client);
+        this.bindConnectionEvents(config.name, client, generation);
         this.pools.set(config.name, { client, config, createdAt: Date.now() });
         this.healthStatus.set(config.name, {
             status: 'up', consecutiveFailures: 0, lastCheckTime: null, lastError: null, uptime: 0,
@@ -221,7 +245,8 @@ export class ConnectionPoolManager {
             throw createError(ErrorCodes.POOL_NOT_FOUND, `Pool '${name}' not found`);
         }
         this.stopHealthCheck(name);
-        await pool.client.close();
+        await this.closeClient(pool.client);
+        this._stats.reset(name);
         this.pools.delete(name);
         this.healthStatus.delete(name);
         this.stats.delete(name);
@@ -339,6 +364,8 @@ export class ConnectionPoolManager {
     stopHealthCheck(name?: string): void {
         const targets = name ? [name] : [...this.intervals.keys()];
         for (const poolName of targets) {
+            this._healthEpochs.set(poolName, (this._healthEpochs.get(poolName) ?? 0) + 1);
+            this._healthChecker.cancel(poolName);
             const timer = this.intervals.get(poolName);
             if (!timer) {
                 continue;
@@ -407,6 +434,13 @@ export class ConnectionPoolManager {
         finally { if (this._closePromise === closing) this._closePromise = null; }
     }
 
+    private async closeClient(client: MongoClient): Promise<void> {
+        await client.close();
+        this._pendingCloseClients.delete(client);
+        this._cmapCleanup.get(client)?.();
+        this._cmapCleanup.delete(client);
+    }
+
     private async _closeAllPools(): Promise<void> {
         this.stopHealthCheck();
         this._healthChecker.stop();
@@ -415,11 +449,18 @@ export class ConnectionPoolManager {
         const errors: unknown[] = [];
         for (const [name, pool] of this.pools) {
             try {
-                await pool.client.close();
+                await this.closeClient(pool.client);
+                this._stats.reset(name);
+                this._healthChecker.unregister(name);
                 this.pools.delete(name);
                 this.healthStatus.delete(name);
                 this.stats.delete(name);
                 this._configs.delete(name);
+            } catch (error) { errors.push(error); }
+        }
+        for (const client of this._pendingCloseClients) {
+            try {
+                await this.closeClient(client);
             } catch (error) { errors.push(error); }
         }
         if (errors.length === 1) throw errors[0];
@@ -465,6 +506,7 @@ export class ConnectionPoolManager {
             if (operation === 'write') return [];
             return this._getPoolsByRole('secondary');
         }
+        if (fallbackStrategy === 'primary') return this._getPoolsByRole('primary');
         if (fallbackStrategy === 'secondary') {
             return this._getPoolsByRole('secondary');
         }
@@ -474,30 +516,62 @@ export class ConnectionPoolManager {
     private async checkPoolHealth(poolName: string): Promise<void> {
         const managed = this.pools.get(poolName);
         const current = this.healthStatus.get(poolName);
-        if (!managed || !current) {
-            return;
-        }
+        if (!managed || !current || this._closed) return;
+        const generation = this._generation;
+        const healthEpoch = this._healthEpochs.get(poolName);
+        await this._healthChecker.checkPool(poolName);
+        if (this._healthEpochs.get(poolName) !== healthEpoch) return;
+        if (this._closed || generation !== this._generation || this.pools.get(poolName) !== managed || this.healthStatus.get(poolName) !== current) return;
+        const checked = this._healthChecker.getStatus(poolName);
+        if (!checked) return;
+        current.lastCheckTime = checked.lastCheck;
+        current.uptime = Date.now() - managed.createdAt;
+        current.consecutiveFailures = checked.consecutiveFailures;
+        current.lastError = checked.lastError ?? null;
+        current.status = checked.status === 'down' ? 'down' : checked.consecutiveFailures > 0 ? 'degraded' : 'up';
+    }
 
-        try {
-            const healthy = await this.healthCheckFn(poolName, managed.client, managed.config);
-            current.lastCheckTime = new Date();
-            current.uptime = Date.now() - managed.createdAt;
-            if (healthy) {
-                current.status = 'up';
-                current.consecutiveFailures = 0;
-                current.lastError = null;
-                return;
-            }
-            current.consecutiveFailures += 1;
-            current.status = current.consecutiveFailures > 1 ? 'down' : 'degraded';
-        } catch (error) {
-            current.lastCheckTime = new Date();
-            current.uptime = Date.now() - managed.createdAt;
-            current.consecutiveFailures += 1;
-            current.lastError = error instanceof Error ? error : new Error(String(error));
-            current.status = current.consecutiveFailures > 1 ? 'down' : 'degraded';
-            this.logger?.warn?.(`[PoolManager] health check failed for ${poolName}`, current.lastError);
-        }
+    private bindConnectionEvents(poolName: string, client: MongoClient, generation: number): void {
+        if (this._cmapCleanup.has(client)) return;
+        const emitter = client as unknown as {
+            on?: (name: string, listener: (event: Record<string, unknown>) => void) => void;
+            off?: (name: string, listener: (event: Record<string, unknown>) => void) => void;
+        };
+        if (typeof emitter.on !== 'function') return;
+        const open = new Set<string>(), ready = new Set<string>(), checkedOut = new Set<string>();
+        const waiting = new Map<string, number>();
+        const listeners: Array<[string, (event: Record<string, unknown>) => void]> = [];
+        const key = (event: Record<string, unknown>) => JSON.stringify([event.address ?? '', event.connectionId]);
+        const addressPrefix = (address: unknown, id: string) => JSON.parse(id)[0] === (address ?? '');
+        const publish = () => this._stats.recordConnections(poolName, open.size,
+            [...ready].filter((id) => !checkedOut.has(id)).length, [...waiting.values()].reduce((sum, value) => sum + value, 0));
+        const bind = (name: string, update: (event: Record<string, unknown>) => void) => {
+            const listener = (event: Record<string, unknown>) => {
+                if (this._closed || generation !== this._generation || !this._cmapCleanup.has(client)) return;
+                update(event); publish();
+            };
+            listeners.push([name, listener]); emitter.on!(name, listener);
+        };
+        this._cmapCleanup.set(client, () => { for (const [name, listener] of listeners) emitter.off?.(name, listener); });
+        bind('connectionCreated', (event) => { open.add(key(event)); });
+        bind('connectionReady', (event) => { open.add(key(event)); ready.add(key(event)); });
+        bind('connectionCheckedOut', (event) => {
+            checkedOut.add(key(event));
+            const address = String(event.address ?? '');
+            waiting.set(address, Math.max(0, (waiting.get(address) ?? 0) - 1));
+        });
+        bind('connectionCheckedIn', (event) => { checkedOut.delete(key(event)); });
+        bind('connectionClosed', (event) => { const id = key(event); open.delete(id); ready.delete(id); checkedOut.delete(id); });
+        bind('connectionCheckOutStarted', (event) => { const address = String(event.address ?? ''); waiting.set(address, (waiting.get(address) ?? 0) + 1); });
+        bind('connectionCheckOutFailed', (event) => { const address = String(event.address ?? ''); waiting.set(address, Math.max(0, (waiting.get(address) ?? 0) - 1)); });
+        bind('connectionPoolCleared', (event) => {
+            // CMAP lacks service identity on created/ready events; clear availability conservatively for this address.
+            for (const id of ready) if (addressPrefix(event.address, id)) ready.delete(id);
+        });
+        bind('connectionPoolClosed', (event) => {
+            for (const id of open) if (addressPrefix(event.address, id)) { open.delete(id); ready.delete(id); checkedOut.delete(id); }
+            waiting.delete(String(event.address ?? ''));
+        });
     }
 
     private recordSelection(poolName: string, success: boolean): void {

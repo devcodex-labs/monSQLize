@@ -8,6 +8,7 @@
 import type { HookContext } from '../../../types/model';
 import type { DeleteBatchResult, IncrementOneResult, InsertBatchResult, InsertManyResult, UpdateBatchResult, UpdateResult } from '../../../types/collection';
 import { ErrorCodes, createError } from '../../core/errors';
+import type { ModelProtectedDeleteGuard } from '../../types/internal/model';
 import type { ExtendedModelCollectionLike, ModelCollectionLike } from './populate-promise';
 import {
     applyModelInsertTimestamps,
@@ -63,45 +64,26 @@ export type ModelMutationContext<TDocument = Record<string, unknown>> = {
     schemaError?: Error | null;
     hooksFactory: ModelV1HooksFactory;
     runHook(hookName: string, context: HookContext): Promise<void>;
+    protectedDeleteGuard?: ModelProtectedDeleteGuard;
 };
 
-async function invokeV1Hook<TDocument>(
-    context: ModelMutationContext<TDocument>,
-    operation: HookOperation,
-    phase: HookPhase,
-    hookContext: Record<string, unknown>,
-    ...args: unknown[]
-): Promise<unknown> {
-    return runModelV1Hook(context.hooksFactory, context, operation, phase, hookContext, ...args);
-}
 
-async function invokeStandardHook<TDocument>(
-    context: ModelMutationContext<TDocument>,
-    hookName: string,
-    payload: HookContext,
-): Promise<void> {
-    if (context.hooksFactory) {
-        return;
-    }
-    await context.runHook(hookName, payload);
-}
 
 async function invokeStandardOperationHook<TDocument>(
     context: ModelMutationContext<TDocument>,
     operation: HookOperation,
     phase: HookPhase,
-    payload: HookContext,
+    payload: Omit<HookContext, 'collection'> & Pick<HookContext, 'operation'>,
 ): Promise<void> {
-    if (context.hooksFactory) {
-        return;
-    }
+
     const canonical = operation === 'insert'
         ? phase === 'before' ? 'beforeCreate' : 'afterCreate'
         : `${phase}${operation[0].toUpperCase()}${operation.slice(1)}`;
     const alias = `${phase}${operation[0].toUpperCase()}${operation.slice(1)}`;
-    await invokeStandardHook(context, canonical, payload);
+    const hookPayload = { ...payload, collection: context.collectionName };
+    await context.runHook(canonical, hookPayload);
     if (alias !== canonical) {
-        await invokeStandardHook(context, alias, payload);
+        await context.runHook(alias, hookPayload);
     }
 }
 
@@ -250,11 +232,9 @@ async function runStrictUpdateBatch<TDocument>(
     return result;
 }
 
-function buildSoftDeletePatch(config: ModelSoftDeleteConfig, now: Date): Record<string, unknown> {
-    if (!config?.enabled) {
-        return {};
-    }
-    return { [config.field]: config.type === 'boolean' ? true : now };
+function buildSoftDeleteUpdate<TDocument>(context: ModelMutationContext<TDocument>): unknown {
+    const config = context.softDeleteConfig!;
+    return applyModelVersionIncrement({ $set: { [config.field]: config.type === 'boolean' ? true : context.nowDate() } }, context.versionConfig);
 }
 
 function buildSoftDeleteFilter(filter: unknown, config: ModelSoftDeleteConfig): Record<string, unknown> {
@@ -290,22 +270,14 @@ function applyModelIncrementVersion(
     return { field, increment };
 }
 
-export async function orchestrateModelInsertOne<TDocument = Record<string, unknown>>(
+async function executeModelInsertOne<TDocument = Record<string, unknown>>(
     context: ModelMutationContext<TDocument>,
     document?: unknown,
     options?: unknown,
 ): Promise<{ acknowledged: boolean; insertedId: unknown }> {
-    const hookContext: Record<string, unknown> = {};
     let payload = context.applyDefaults(document as Record<string, unknown> | undefined);
 
-    if (context.hooksFactory) {
-        const hookResult = await invokeV1Hook(context, 'insert', 'before', hookContext, payload);
-        if (hookResult !== undefined && typeof hookResult === 'object') {
-            payload = hookResult as Record<string, unknown>;
-        }
-    } else {
-        await invokeStandardOperationHook(context, 'insert', 'before', { operation: 'insertOne', collection: context.collectionName, data: payload });
-    }
+    await invokeStandardOperationHook(context, 'insert', 'before', { operation: 'insertOne', data: payload });
 
     payload = validateModelSchemaPayload({
         validateEnabled: context.validateEnabled,
@@ -319,34 +291,22 @@ export async function orchestrateModelInsertOne<TDocument = Record<string, unkno
 
     const result = await context.collection.insertOne(payload, options);
 
-    if (context.hooksFactory) {
-        try {
-            await invokeV1Hook(context, 'insert', 'after', hookContext, result);
-        } catch { /* after hooks don't affect operation */ }
-    } else {
-        await invokeStandardOperationHook(context, 'insert', 'after', {
-            operation: 'insertOne',
-            collection: context.collectionName,
-            data: payload,
-            result,
-        });
-    }
+    await invokeStandardOperationHook(context, 'insert', 'after', {
+        operation: 'insertOne',
+        data: payload,
+        result,
+    });
 
     return result;
 }
 
-export async function orchestrateModelInsertMany<TDocument = Record<string, unknown>>(
+async function executeModelInsertMany<TDocument = Record<string, unknown>>(
     context: ModelMutationContext<TDocument>,
     documents?: unknown[],
     options?: unknown,
 ): Promise<InsertManyResult> {
-    const hookContext: Record<string, unknown> = {};
     const docs = (documents ?? []).map((document) => context.applyDefaults(document as Record<string, unknown>));
-    if (context.hooksFactory) {
-        await invokeV1Hook(context, 'insert', 'before', hookContext, docs);
-    } else {
-        await invokeStandardOperationHook(context, 'insert', 'before', { operation: 'insertMany', collection: context.collectionName, data: docs });
-    }
+    await invokeStandardOperationHook(context, 'insert', 'before', { operation: 'insertMany', data: docs });
     const resolvedOptions = (options ?? {}) as Record<string, unknown>;
     for (let index = 0; index < docs.length; index++) {
         let doc = docs[index] as Record<string, unknown>;
@@ -361,33 +321,23 @@ export async function orchestrateModelInsertMany<TDocument = Record<string, unkn
         docs[index] = doc;
     }
     const result = await context.collection.insertMany(docs, options);
-    if (context.hooksFactory) {
-        try { await invokeV1Hook(context, 'insert', 'after', hookContext, result); } catch { /* after hooks don't affect operation */ }
-    } else {
-        await invokeStandardOperationHook(context, 'insert', 'after', { operation: 'insertMany', collection: context.collectionName, data: docs, result });
-    }
+    await invokeStandardOperationHook(context, 'insert', 'after', { operation: 'insertMany', data: docs, result });
     return result;
 }
 
-export async function orchestrateModelUpdateOne<TDocument = Record<string, unknown>>(
+async function executeModelUpdateOne<TDocument = Record<string, unknown>>(
     context: ModelMutationContext<TDocument>,
     filter?: unknown,
     update?: unknown,
     options?: unknown,
 ): Promise<UpdateResult> {
-    const hookContext: Record<string, unknown> = {};
     let nextUpdate = update;
 
-    if (context.hooksFactory) {
-        await invokeV1Hook(context, 'update', 'before', hookContext, filter, nextUpdate);
-    } else {
-        await invokeStandardOperationHook(context, 'update', 'before', {
-            operation: 'updateOne',
-            collection: context.collectionName,
-            filter,
-            update: nextUpdate,
-        });
-    }
+    await invokeStandardOperationHook(context, 'update', 'before', {
+        operation: 'updateOne',
+        filter,
+        update: nextUpdate,
+    });
 
     nextUpdate = applyModelVersionIncrement(
         applyModelUpdateTimestamps(nextUpdate, context.timestampsConfig, () => context.nowDate()),
@@ -397,36 +347,24 @@ export async function orchestrateModelUpdateOne<TDocument = Record<string, unkno
     const result = await context.collection.updateOne(lock.filter, nextUpdate, lock.driverOptions);
     assertModelOptimisticLockMatched(result, context.versionConfig);
 
-    if (context.hooksFactory) {
-        try {
-            await invokeV1Hook(context, 'update', 'after', hookContext, result);
-        } catch { /* after hooks don't affect operation */ }
-    } else {
-        await invokeStandardOperationHook(context, 'update', 'after', {
-            operation: 'updateOne',
-            collection: context.collectionName,
-            filter,
-            update: nextUpdate,
-            result,
-        });
-    }
+    await invokeStandardOperationHook(context, 'update', 'after', {
+        operation: 'updateOne',
+        filter,
+        update: nextUpdate,
+        result,
+    });
 
     return result;
 }
 
-export async function orchestrateModelUpdateMany<TDocument = Record<string, unknown>>(
+async function executeModelUpdateMany<TDocument = Record<string, unknown>>(
     context: ModelMutationContext<TDocument>,
     filter?: unknown,
     update?: unknown,
     options?: unknown,
 ): Promise<UpdateResult> {
-    const hookContext: Record<string, unknown> = {};
     let nextUpdate = update;
-    if (context.hooksFactory) {
-        await invokeV1Hook(context, 'update', 'before', hookContext, filter, nextUpdate);
-    } else {
-        await invokeStandardOperationHook(context, 'update', 'before', { operation: 'updateMany', collection: context.collectionName, filter, update: nextUpdate });
-    }
+    await invokeStandardOperationHook(context, 'update', 'before', { operation: 'updateMany', filter, update: nextUpdate });
     const versionMode = resolveModelUpdateManyVersionMode(options, context.versionConfig);
     const timestampedUpdate = applyModelUpdateTimestamps(update, context.timestampsConfig, () => context.nowDate());
     nextUpdate = versionMode.mode === 'off'
@@ -435,26 +373,17 @@ export async function orchestrateModelUpdateMany<TDocument = Record<string, unkn
     const result = versionMode.mode === 'strict'
         ? await runStrictUpdateMany(context, filter, nextUpdate, versionMode.driverOptions)
         : await context.collection.updateMany(filter, nextUpdate, versionMode.driverOptions);
-    if (context.hooksFactory) {
-        try { await invokeV1Hook(context, 'update', 'after', hookContext, result); } catch { /* after hooks don't affect operation */ }
-    } else {
-        await invokeStandardOperationHook(context, 'update', 'after', { operation: 'updateMany', collection: context.collectionName, filter, update: nextUpdate, result });
-    }
+    await invokeStandardOperationHook(context, 'update', 'after', { operation: 'updateMany', filter, update: nextUpdate, result });
     return result;
 }
 
-export async function orchestrateModelReplaceOne<TDocument = Record<string, unknown>>(
+async function executeModelReplaceOne<TDocument = Record<string, unknown>>(
     context: ModelMutationContext<TDocument>,
     filter?: unknown,
     replacement?: unknown,
     options?: unknown,
 ): Promise<UpdateResult> {
-    const hookContext: Record<string, unknown> = {};
-    if (context.hooksFactory) {
-        await invokeV1Hook(context, 'update', 'before', hookContext, filter, replacement);
-    } else {
-        await invokeStandardOperationHook(context, 'update', 'before', { operation: 'replaceOne', collection: context.collectionName, filter, update: replacement });
-    }
+    await invokeStandardOperationHook(context, 'update', 'before', { operation: 'replaceOne', filter, update: replacement });
     let nextReplacement = validateModelSchemaPayload({
         validateEnabled: context.validateEnabled,
         schemaCache: context.schemaCache,
@@ -474,26 +403,17 @@ export async function orchestrateModelReplaceOne<TDocument = Record<string, unkn
     ) as Record<string, unknown>;
     const result = await context.collection.replaceOne(lock.filter, nextReplacement, lock.driverOptions);
     assertModelOptimisticLockMatched(result, context.versionConfig);
-    if (context.hooksFactory) {
-        try { await invokeV1Hook(context, 'update', 'after', hookContext, result); } catch { /* after hooks don't affect operation */ }
-    } else {
-        await invokeStandardOperationHook(context, 'update', 'after', { operation: 'replaceOne', collection: context.collectionName, filter, update: nextReplacement, result });
-    }
+    await invokeStandardOperationHook(context, 'update', 'after', { operation: 'replaceOne', filter, update: nextReplacement, result });
     return result;
 }
 
-export async function orchestrateModelFindOneAndUpdate<TDocument = Record<string, unknown>>(
+async function executeModelFindOneAndUpdate<TDocument = Record<string, unknown>>(
     context: ModelMutationContext<TDocument>,
     filter?: unknown,
     update?: unknown,
     options?: unknown,
 ): Promise<TDocument | null> {
-    const hookContext: Record<string, unknown> = {};
-    if (context.hooksFactory) {
-        await invokeV1Hook(context, 'update', 'before', hookContext, filter, update);
-    } else {
-        await invokeStandardOperationHook(context, 'update', 'before', { operation: 'findOneAndUpdate', collection: context.collectionName, filter, update });
-    }
+    await invokeStandardOperationHook(context, 'update', 'before', { operation: 'findOneAndUpdate', filter, update });
     const nextUpdate = applyModelVersionIncrement(
         applyModelUpdateTimestamps(update, context.timestampsConfig, () => context.nowDate()),
         context.versionConfig,
@@ -501,26 +421,17 @@ export async function orchestrateModelFindOneAndUpdate<TDocument = Record<string
     const lock = await resolveModelOptimisticLockAsync(context.collection, filter, options, context.versionConfig, 'findOneAndUpdate');
     const result = await context.collection.findOneAndUpdate(lock.filter, nextUpdate, lock.driverOptions);
     assertModelOptimisticLockDocument(result, context.versionConfig);
-    if (context.hooksFactory) {
-        try { await invokeV1Hook(context, 'update', 'after', hookContext, result); } catch { /* after hooks don't affect operation */ }
-    } else {
-        await invokeStandardOperationHook(context, 'update', 'after', { operation: 'findOneAndUpdate', collection: context.collectionName, filter, update: nextUpdate, result });
-    }
+    await invokeStandardOperationHook(context, 'update', 'after', { operation: 'findOneAndUpdate', filter, update: nextUpdate, result });
     return result;
 }
 
-export async function orchestrateModelFindOneAndReplace<TDocument = Record<string, unknown>>(
+async function executeModelFindOneAndReplace<TDocument = Record<string, unknown>>(
     context: ModelMutationContext<TDocument>,
     filter?: unknown,
     replacement?: unknown,
     options?: unknown,
 ): Promise<TDocument | null> {
-    const hookContext: Record<string, unknown> = {};
-    if (context.hooksFactory) {
-        await invokeV1Hook(context, 'update', 'before', hookContext, filter, replacement);
-    } else {
-        await invokeStandardOperationHook(context, 'update', 'before', { operation: 'findOneAndReplace', collection: context.collectionName, filter, update: replacement });
-    }
+    await invokeStandardOperationHook(context, 'update', 'before', { operation: 'findOneAndReplace', filter, update: replacement });
     let nextReplacement = validateModelSchemaPayload({
         validateEnabled: context.validateEnabled,
         schemaCache: context.schemaCache,
@@ -540,77 +451,50 @@ export async function orchestrateModelFindOneAndReplace<TDocument = Record<strin
     ) as Record<string, unknown>;
     const result = await context.extendedCollection().findOneAndReplace(lock.filter, nextReplacement, lock.driverOptions);
     assertModelOptimisticLockDocument(result, context.versionConfig);
-    if (context.hooksFactory) {
-        try { await invokeV1Hook(context, 'update', 'after', hookContext, result); } catch { /* after hooks don't affect operation */ }
-    } else {
-        await invokeStandardOperationHook(context, 'update', 'after', { operation: 'findOneAndReplace', collection: context.collectionName, filter, update: nextReplacement, result });
-    }
+    await invokeStandardOperationHook(context, 'update', 'after', { operation: 'findOneAndReplace', filter, update: nextReplacement, result });
     return result;
 }
 
-export async function orchestrateModelFindOneAndDelete<TDocument = Record<string, unknown>>(
+async function executeModelFindOneAndDelete<TDocument = Record<string, unknown>>(
     context: ModelMutationContext<TDocument>,
     filter?: unknown,
     options?: unknown,
 ): Promise<TDocument | null> {
-    const hookContext: Record<string, unknown> = {};
-    if (context.hooksFactory) {
-        await invokeV1Hook(context, 'delete', 'before', hookContext, filter);
-    } else {
-        await invokeStandardOperationHook(context, 'delete', 'before', { operation: 'findOneAndDelete', collection: context.collectionName, filter });
-    }
+    await invokeStandardOperationHook(context, 'delete', 'before', { operation: 'findOneAndDelete', filter });
     const softDeleteConfig = context.softDeleteConfig;
     const resolvedOptions = (options ?? {}) as Record<string, unknown>;
     const result = softDeleteConfig?.enabled && !resolvedOptions._forceDelete
         ? await context.collection.findOneAndUpdate(
             buildSoftDeleteFilter(filter, softDeleteConfig),
-            { $set: buildSoftDeletePatch(softDeleteConfig, context.nowDate()) },
+            buildSoftDeleteUpdate(context),
             { ...resolvedOptions, returnDocument: resolvedOptions.returnDocument ?? 'before' },
         )
         : await context.collection.findOneAndDelete(filter, options);
-    if (context.hooksFactory) {
-        try { await invokeV1Hook(context, 'delete', 'after', hookContext, result); } catch { /* after hooks don't affect operation */ }
-    } else {
-        await invokeStandardOperationHook(context, 'delete', 'after', { operation: 'findOneAndDelete', collection: context.collectionName, filter, result });
-    }
+    await invokeStandardOperationHook(context, 'delete', 'after', { operation: 'findOneAndDelete', filter, result });
     return result;
 }
 
-export async function orchestrateModelUpsertOne<TDocument = Record<string, unknown>>(
+async function executeModelUpsertOne<TDocument = Record<string, unknown>>(
     context: ModelMutationContext<TDocument>,
     filter?: unknown,
     update?: unknown,
     options?: unknown,
 ): Promise<UpdateResult> {
-    const hookContext: Record<string, unknown> = {};
-    if (context.hooksFactory) {
-        await invokeV1Hook(context, 'update', 'before', hookContext, filter, update);
-    } else {
-        await invokeStandardOperationHook(context, 'update', 'before', { operation: 'upsertOne', collection: context.collectionName, filter, update });
-    }
+    await invokeStandardOperationHook(context, 'update', 'before', { operation: 'upsertOne', filter, update });
     const nextUpdate = applyModelUpsertTimestamps(update, context.timestampsConfig, () => context.nowDate());
     const result = await context.collection.upsertOne(filter, nextUpdate, options);
-    if (context.hooksFactory) {
-        try { await invokeV1Hook(context, 'update', 'after', hookContext, result); } catch { /* after hooks don't affect operation */ }
-    } else {
-        await invokeStandardOperationHook(context, 'update', 'after', { operation: 'upsertOne', collection: context.collectionName, filter, update: nextUpdate, result });
-    }
+    await invokeStandardOperationHook(context, 'update', 'after', { operation: 'upsertOne', filter, update: nextUpdate, result });
     return result;
 }
 
-export async function orchestrateModelIncrementOne<TDocument = Record<string, unknown>>(
+async function executeModelIncrementOne<TDocument = Record<string, unknown>>(
     context: ModelMutationContext<TDocument>,
     filter?: unknown,
     field?: string | Record<string, number>,
     increment?: number,
     options?: unknown,
 ): Promise<IncrementOneResult<TDocument>> {
-    const hookContext: Record<string, unknown> = {};
-    if (context.hooksFactory) {
-        await invokeV1Hook(context, 'update', 'before', hookContext, filter, field, increment);
-    } else {
-        await invokeStandardOperationHook(context, 'update', 'before', { operation: 'incrementOne', collection: context.collectionName, filter, update: field });
-    }
+    await invokeStandardOperationHook(context, 'update', 'before', { operation: 'incrementOne', filter, update: field });
     const timestamps = context.timestampsConfig;
     let result: IncrementOneResult<TDocument>;
     const incrementArgs = applyModelIncrementVersion(field, increment, context.versionConfig);
@@ -624,26 +508,17 @@ export async function orchestrateModelIncrementOne<TDocument = Record<string, un
     } else {
         result = await context.extendedCollection().incrementOne(filter, incrementArgs.field, incrementArgs.increment, options);
     }
-    if (context.hooksFactory) {
-        try { await invokeV1Hook(context, 'update', 'after', hookContext, result); } catch { /* after hooks don't affect operation */ }
-    } else {
-        await invokeStandardOperationHook(context, 'update', 'after', { operation: 'incrementOne', collection: context.collectionName, filter, update: field, result });
-    }
+    await invokeStandardOperationHook(context, 'update', 'after', { operation: 'incrementOne', filter, update: field, result });
     return result;
 }
 
-export async function orchestrateModelInsertBatch<TDocument = Record<string, unknown>>(
+async function executeModelInsertBatch<TDocument = Record<string, unknown>>(
     context: ModelMutationContext<TDocument>,
     docs: unknown[],
     options?: unknown,
 ): Promise<InsertBatchResult> {
-    const hookContext: Record<string, unknown> = {};
     const docsToInsert = docs.map((doc) => context.applyDefaults(doc as Record<string, unknown>));
-    if (context.hooksFactory) {
-        await invokeV1Hook(context, 'insert', 'before', hookContext, docsToInsert);
-    } else {
-        await invokeStandardOperationHook(context, 'insert', 'before', { operation: 'insertBatch', collection: context.collectionName, data: docsToInsert });
-    }
+    await invokeStandardOperationHook(context, 'insert', 'before', { operation: 'insertBatch', data: docsToInsert });
     const resolvedOptions = (options ?? {}) as Record<string, unknown>;
     for (let index = 0; index < docsToInsert.length; index++) {
         let record = docsToInsert[index] as Record<string, unknown>;
@@ -658,26 +533,17 @@ export async function orchestrateModelInsertBatch<TDocument = Record<string, unk
         docsToInsert[index] = record;
     }
     const result = await context.extendedCollection().insertBatch(docsToInsert, options);
-    if (context.hooksFactory) {
-        try { await invokeV1Hook(context, 'insert', 'after', hookContext, result); } catch { /* after hooks don't affect operation */ }
-    } else {
-        await invokeStandardOperationHook(context, 'insert', 'after', { operation: 'insertBatch', collection: context.collectionName, data: docsToInsert, result });
-    }
+    await invokeStandardOperationHook(context, 'insert', 'after', { operation: 'insertBatch', data: docsToInsert, result });
     return result;
 }
 
-export async function orchestrateModelUpdateBatch<TDocument = Record<string, unknown>>(
+async function executeModelUpdateBatch<TDocument = Record<string, unknown>>(
     context: ModelMutationContext<TDocument>,
     filter?: unknown,
     update?: unknown,
     options?: unknown,
 ): Promise<UpdateBatchResult> {
-    const hookContext: Record<string, unknown> = {};
-    if (context.hooksFactory) {
-        await invokeV1Hook(context, 'update', 'before', hookContext, filter, update);
-    } else {
-        await invokeStandardOperationHook(context, 'update', 'before', { operation: 'updateBatch', collection: context.collectionName, filter, update });
-    }
+    await invokeStandardOperationHook(context, 'update', 'before', { operation: 'updateBatch', filter, update });
     const versionMode = resolveModelUpdateManyVersionMode(options, context.versionConfig);
     const timestampedUpdate = applyModelUpdateTimestamps(update, context.timestampsConfig, () => context.nowDate());
     const nextUpdate = versionMode.mode === 'off'
@@ -686,115 +552,134 @@ export async function orchestrateModelUpdateBatch<TDocument = Record<string, unk
     const result = versionMode.mode === 'strict'
         ? await runStrictUpdateBatch(context, filter, nextUpdate, versionMode.driverOptions)
         : await context.extendedCollection().updateBatch(filter, nextUpdate, versionMode.driverOptions);
-    if (context.hooksFactory) {
-        try { await invokeV1Hook(context, 'update', 'after', hookContext, result); } catch { /* after hooks don't affect operation */ }
-    } else {
-        await invokeStandardOperationHook(context, 'update', 'after', { operation: 'updateBatch', collection: context.collectionName, filter, update: nextUpdate, result });
-    }
+    await invokeStandardOperationHook(context, 'update', 'after', { operation: 'updateBatch', filter, update: nextUpdate, result });
     return result;
 }
 
-export async function orchestrateModelDeleteBatch<TDocument = Record<string, unknown>>(
+async function executeModelDeleteBatch<TDocument = Record<string, unknown>>(
     context: ModelMutationContext<TDocument>,
     filter?: unknown,
     options?: unknown,
 ): Promise<DeleteBatchResult | UpdateBatchResult> {
     const softDeleteConfig = context.softDeleteConfig;
     const resolvedOptions = (options ?? {}) as Record<string, unknown>;
-    const hookContext: Record<string, unknown> = {};
-    if (context.hooksFactory) {
-        await invokeV1Hook(context, 'delete', 'before', hookContext, filter);
-    } else {
-        await invokeStandardOperationHook(context, 'delete', 'before', { operation: 'deleteBatch', collection: context.collectionName, filter });
-    }
+    await invokeStandardOperationHook(context, 'delete', 'before', { operation: 'deleteBatch', filter });
     const result = softDeleteConfig?.enabled && !resolvedOptions._forceDelete
         ? await context.extendedCollection().updateBatch(
             buildSoftDeleteFilter(filter, softDeleteConfig),
-            { $set: buildSoftDeletePatch(softDeleteConfig, context.nowDate()) },
+            buildSoftDeleteUpdate(context),
             options,
         )
         : await context.extendedCollection().deleteBatch(filter, options);
-    if (context.hooksFactory) {
-        try { await invokeV1Hook(context, 'delete', 'after', hookContext, result); } catch { /* after hooks don't affect operation */ }
-    } else {
-        await invokeStandardOperationHook(context, 'delete', 'after', { operation: 'deleteBatch', collection: context.collectionName, filter, result });
-    }
+    await invokeStandardOperationHook(context, 'delete', 'after', { operation: 'deleteBatch', filter, result });
     return result;
 }
 
-export async function orchestrateModelDeleteOne<TDocument = Record<string, unknown>>(
+async function executeModelDeleteOne<TDocument = Record<string, unknown>>(
     context: ModelMutationContext<TDocument>,
     filter?: unknown,
     options?: unknown,
 ): Promise<unknown> {
     const softDeleteConfig = context.softDeleteConfig;
-    const resolvedOptions = (options ?? {}) as Record<string, unknown>;
-    const hookContext: Record<string, unknown> = {};
 
-    if (context.hooksFactory) {
-        await invokeV1Hook(context, 'delete', 'before', hookContext, filter);
-    } else {
-        await invokeStandardOperationHook(context, 'delete', 'before', {
-            operation: 'deleteOne',
-            collection: context.collectionName,
-            filter,
-        });
+    await invokeStandardOperationHook(context, 'delete', 'before', {
+        operation: 'deleteOne',
+        filter,
+    });
+
+    if (context.protectedDeleteGuard) {
+        // Keep the guard in private context so replacing options cannot drop it.
+        const checked = await context.protectedDeleteGuard(filter, options);
+        filter = checked.filter;
+        options = checked.options;
     }
-
+    const resolvedOptions = (options ?? {}) as Record<string, unknown>;
     let result: unknown;
-    if (softDeleteConfig?.enabled && !resolvedOptions._forceDelete) {
+    if (softDeleteConfig?.enabled && (context.protectedDeleteGuard || !resolvedOptions._forceDelete)) {
         result = await context.collection.updateOne(
             buildSoftDeleteFilter(filter, softDeleteConfig),
-            { $set: { [softDeleteConfig.field]: softDeleteConfig.type === 'boolean' ? true : context.nowDate() } },
+            buildSoftDeleteUpdate(context),
             options,
         );
     } else {
         result = await context.collection.deleteOne(filter, options);
     }
 
-    if (context.hooksFactory) {
-        try {
-            await invokeV1Hook(context, 'delete', 'after', hookContext, result);
-        } catch { /* after hooks don't affect operation */ }
-    } else {
-        await invokeStandardOperationHook(context, 'delete', 'after', {
-            operation: 'deleteOne',
-            collection: context.collectionName,
-            filter,
-            result,
-        });
-    }
+    await invokeStandardOperationHook(context, 'delete', 'after', {
+        operation: 'deleteOne',
+        filter,
+        result,
+    });
 
     return result;
 }
 
-export async function orchestrateModelDeleteMany<TDocument = Record<string, unknown>>(
+async function executeModelDeleteMany<TDocument = Record<string, unknown>>(
     context: ModelMutationContext<TDocument>,
     filter?: unknown,
     options?: unknown,
 ): Promise<unknown> {
     const softDeleteConfig = context.softDeleteConfig;
     const resolvedOptions = (options ?? {}) as Record<string, unknown>;
-    const hookContext: Record<string, unknown> = {};
-    if (context.hooksFactory) {
-        await invokeV1Hook(context, 'delete', 'before', hookContext, filter);
-    } else {
-        await invokeStandardOperationHook(context, 'delete', 'before', { operation: 'deleteMany', collection: context.collectionName, filter });
-    }
+    await invokeStandardOperationHook(context, 'delete', 'before', { operation: 'deleteMany', filter });
     let result: unknown;
     if (softDeleteConfig?.enabled && !resolvedOptions._forceDelete) {
         result = await context.collection.updateMany(
             { $and: [filter ?? {}, buildModelVisibleSoftDeleteCondition(softDeleteConfig)] },
-            { $set: { [softDeleteConfig.field]: softDeleteConfig.type === 'boolean' ? true : context.nowDate() } },
+            buildSoftDeleteUpdate(context),
             options,
         );
     } else {
         result = await context.collection.deleteMany(filter, options);
     }
-    if (context.hooksFactory) {
-        try { await invokeV1Hook(context, 'delete', 'after', hookContext, result); } catch { /* after hooks don't affect operation */ }
-    } else {
-        await invokeStandardOperationHook(context, 'delete', 'after', { operation: 'deleteMany', collection: context.collectionName, filter, result });
-    }
+    await invokeStandardOperationHook(context, 'delete', 'after', { operation: 'deleteMany', filter, result });
     return result;
 }
+
+type MutationExecutor = (context: ModelMutationContext, ...args: never[]) => Promise<unknown>;
+
+function withMutationHooks<T extends MutationExecutor>(
+    operation: HookOperation, executor: T, defaultsKind: 'one' | 'many' | false = false,
+): T {
+    const wrapped = async (context: ModelMutationContext, ...args: never[]) => {
+        if (!context.hooksFactory) return executor(context, ...args);
+        let resolvedArgs: unknown[] = [...args];
+        if (defaultsKind) {
+            const input = resolvedArgs[0];
+            resolvedArgs[0] = defaultsKind === 'one'
+                ? context.applyDefaults(input as Record<string, unknown> | undefined)
+                : Array.isArray(input) ? input.map((doc) => context.applyDefaults(doc)) : input;
+        }
+        const hookContext: Record<string, unknown> = {};
+        const before = await runModelV1Hook(context.hooksFactory, context, operation, 'before', hookContext, ...resolvedArgs);
+        if (before !== null && typeof before === 'object') resolvedArgs = Array.isArray(before) ? before : [before, ...resolvedArgs.slice(1)];
+        const writeContext = {
+            ...context, hooksFactory: null, runHook: async () => undefined,
+            applyDefaults: defaultsKind ? (document?: Record<string, unknown>) => ({ ...document }) : context.applyDefaults,
+        };
+        let result = await executor(writeContext, ...resolvedArgs as never[]);
+        try {
+            const after = await runModelV1Hook(context.hooksFactory, context, operation, 'after', hookContext, result);
+            if (after !== undefined) result = after;
+        } catch { /* V1 after hooks do not undo completed writes. */ }
+        return result;
+    };
+    // The wrapper retains each executor's generic arguments and return type.
+    return wrapped as T;
+}
+
+export const orchestrateModelInsertOne = withMutationHooks('insert', executeModelInsertOne, 'one');
+export const orchestrateModelInsertMany = withMutationHooks('insert', executeModelInsertMany, 'many');
+export const orchestrateModelUpdateOne = withMutationHooks('update', executeModelUpdateOne);
+export const orchestrateModelUpdateMany = withMutationHooks('update', executeModelUpdateMany);
+export const orchestrateModelReplaceOne = withMutationHooks('update', executeModelReplaceOne);
+export const orchestrateModelFindOneAndUpdate = withMutationHooks('update', executeModelFindOneAndUpdate);
+export const orchestrateModelFindOneAndReplace = withMutationHooks('update', executeModelFindOneAndReplace);
+export const orchestrateModelFindOneAndDelete = withMutationHooks('delete', executeModelFindOneAndDelete);
+export const orchestrateModelUpsertOne = withMutationHooks('update', executeModelUpsertOne);
+export const orchestrateModelIncrementOne = withMutationHooks('update', executeModelIncrementOne);
+export const orchestrateModelInsertBatch = withMutationHooks('insert', executeModelInsertBatch, 'many');
+export const orchestrateModelUpdateBatch = withMutationHooks('update', executeModelUpdateBatch);
+export const orchestrateModelDeleteBatch = withMutationHooks('delete', executeModelDeleteBatch);
+export const orchestrateModelDeleteOne = withMutationHooks('delete', executeModelDeleteOne);
+export const orchestrateModelDeleteMany = withMutationHooks('delete', executeModelDeleteMany);

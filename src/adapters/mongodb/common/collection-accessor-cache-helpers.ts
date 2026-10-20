@@ -316,7 +316,8 @@ function entryToIntents<TSchema extends Document>(
         }
     } else if (operation === 'findByIds') {
         if (Array.isArray(entry.ids)) {
-            return linkedQueryKeyIntents(buildFindByIdsCacheKey(collection, defaults, entry.ids, descriptorOptions), defaults);
+            const keys = linkedQueryKeyIntents(buildFindByIdsCacheKey(collection, defaults, entry.ids, descriptorOptions), defaults);
+            return keys.flatMap(intent => [intent, { type: 'pattern' as const, value: `${intent.value}:model:*` }]);
         }
     }
 
@@ -455,6 +456,9 @@ export async function invalidateReadCachesAfterWrite<TSchema extends Document>(
         }
         return intents.length;
     }
+    // An ended managed transaction has already committed or discarded its intents.
+    const session = isRecord(options) ? options.session as SessionWithTransaction | undefined : undefined;
+    if (session?.__monSQLizeTransaction) return 0;
     const deleted = await applyCacheInvalidationIntents(queryCache, intents);
     await clearReadCacheBarrierAfterWrite(queryCache, dbName, collectionName, defaults, options);
     return deleted;

@@ -24,6 +24,8 @@ const MANAGED_DB_PATH_PREFIXES = memoryServerPolicy.managedDbPathKinds.map((kind
 // Singleton memory server (v1 compatible: reuses an already-started instance)
 let _memoryServerInstance: { getUri(): string; stop(cleanupOptions?: { doCleanup?: boolean; force?: boolean }): Promise<boolean | void> } | null = null;
 let _memoryServerStartPromise: Promise<string> | null = null;
+let _memoryServerStopPromise: Promise<void> | null = null;
+let _memoryServerPendingConnections = 0;
 let _memoryServerCleanupOptions: { doCleanup: true; force: boolean } = { doCleanup: true, force: true };
 let _memoryServerDbPath: string | null = null;
 const _memoryServerClients = new Set<MongoClient>();
@@ -117,17 +119,6 @@ function createManagedDbPath(dbRoot: string, dbName: string): string {
     return mkdtempSync(path.join(dbRoot, `replset-${sanitizePathSegment(dbName)}-${process.pid}-`));
 }
 
-function isManagedCleanupError(error: unknown, dbPath: string): boolean {
-    if (!error || typeof error !== 'object') {
-        return false;
-    }
-    const candidate = error as { code?: string; path?: string };
-    if (!candidate.code || !['ENOTEMPTY', 'EBUSY', 'EPERM', 'ENOENT'].includes(candidate.code)) {
-        return false;
-    }
-    return !candidate.path || path.resolve(candidate.path).startsWith(path.resolve(dbPath));
-}
-
 function delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -198,6 +189,7 @@ async function startMemoryServer(
     logger: Logger | undefined,
     memoryServerOptions: MongoConnectConfig['memoryServerOptions'] = {},
 ): Promise<string> {
+    while (_memoryServerStopPromise) await _memoryServerStopPromise;
     if (_memoryServerInstance) {
         return _memoryServerInstance.getUri();
     }
@@ -278,34 +270,31 @@ async function startMemoryServerCore(
     }
 }
 
-async function stopMemoryServer(logger?: Logger): Promise<void> {
-    if (_memoryServerStartPromise) {
-        await _memoryServerStartPromise.catch(() => undefined);
-    }
-    if (!_memoryServerInstance) {
-        return;
-    }
-
-    const instance = _memoryServerInstance;
-    const dbPath = _memoryServerDbPath;
-    _memoryServerInstance = null;
-    _memoryServerDbPath = null;
-    let stopError: unknown = null;
-    try {
-        await instance.stop(_memoryServerCleanupOptions);
-        logger?.info?.('MongoDB Memory ReplSet stopped');
-    } catch (cause) {
-        stopError = cause;
-        logger?.warn?.('Failed to stop MongoDB Memory ReplSet cleanly.', cause);
-    } finally {
+async function stopMemoryServer(logger?: Logger, strict = false): Promise<void> {
+    if (_memoryServerPendingConnections > 0) return;
+    const stopping = _memoryServerStopPromise ?? (async () => {
+        if (_memoryServerStartPromise) await _memoryServerStartPromise.catch(() => undefined);
+        const instance = _memoryServerInstance;
+        if (!instance) return;
+        const stopped = await instance.stop(_memoryServerCleanupOptions);
+        if (stopped === false) throw createError(ErrorCodes.CONNECTION_CLOSED, 'MongoDB Memory ReplSet did not stop.');
         if (_memoryServerCleanupOptions.force) {
-            const cleaned = await cleanupManagedDbPath(dbPath);
-            if (!cleaned && (!stopError || isManagedCleanupError(stopError, dbPath ?? ''))) {
-                logger?.warn?.('Failed to remove MongoDB Memory ReplSet dbPath.', { dbPath });
+            const cleaned = await cleanupManagedDbPath(_memoryServerDbPath);
+            if (!cleaned) {
+                try { logger?.warn?.('Failed to remove MongoDB Memory ReplSet dbPath.', { dbPath: _memoryServerDbPath }); } catch { /* Preserve cleanup outcome. */ }
             }
         }
+        _memoryServerInstance = null;
+        _memoryServerDbPath = null;
         _memoryServerCleanupOptions = { doCleanup: true, force: true };
-    }
+        try { logger?.info?.('MongoDB Memory ReplSet stopped'); } catch { /* Logging is not resource ownership. */ }
+    })();
+    _memoryServerStopPromise = stopping;
+    try { await stopping; }
+    catch (error) {
+        if (strict) throw error;
+        try { logger?.warn?.('Failed to stop MongoDB Memory ReplSet cleanly.', error); } catch { /* Legacy cleanup logs are best effort. */ }
+    } finally { if (_memoryServerStopPromise === stopping) _memoryServerStopPromise = null; }
 }
 
 /**
@@ -316,6 +305,7 @@ export async function connectMongo(params: {
     databaseName: string;
     config?: MongoConnectConfig;
     logger?: Logger;
+    onCreated?: (client: MongoClient) => void;
 }): Promise<MongoConnectionState> {
     const databaseName = params.databaseName?.trim();
     if (!databaseName) {
@@ -324,6 +314,7 @@ export async function connectMongo(params: {
 
     let effectiveUri = params.config?.uri?.trim();
     let usesManagedMemoryServer = false;
+    let reservedMemoryConnection = false;
 
     // v1 compat: useMemoryServer code path
     if (!effectiveUri && params.config?.useMemoryServer === true) {
@@ -333,7 +324,16 @@ export async function connectMongo(params: {
             params.logger?.info?.('Using system MongoDB instead of memory server', { uri: systemUri });
             effectiveUri = systemUri;
         } else {
-            effectiveUri = await startMemoryServer(params.logger, params.config.memoryServerOptions);
+            while (_memoryServerStopPromise) await _memoryServerStopPromise;
+            _memoryServerPendingConnections++;
+            reservedMemoryConnection = true;
+            try { effectiveUri = await startMemoryServer(params.logger, params.config.memoryServerOptions); }
+            catch (error) {
+                _memoryServerPendingConnections--;
+                reservedMemoryConnection = false;
+                if (_memoryServerClients.size === 0) await stopMemoryServer(params.logger);
+                throw error;
+            }
             usesManagedMemoryServer = true;
         }
     }
@@ -346,9 +346,18 @@ export async function connectMongo(params: {
     if (params.config?.readPreference !== undefined) {
         clientOptions.readPreference = params.config.readPreference;
     }
-    const client = new MongoClient(effectiveUri, clientOptions);
+    let client: MongoClient;
+    try { client = new MongoClient(effectiveUri, clientOptions); }
+    catch (error) {
+        if (reservedMemoryConnection) _memoryServerPendingConnections--;
+        if (usesManagedMemoryServer && _memoryServerClients.size === 0) await stopMemoryServer(params.logger);
+        throw error;
+    }
+    if (usesManagedMemoryServer) _memoryServerClients.add(client);
+    if (reservedMemoryConnection) _memoryServerPendingConnections--;
 
     try {
+        params.onCreated?.(client);
         await client.connect();
         const db = client.db(databaseName);
         if (usesManagedMemoryServer) {
@@ -357,14 +366,7 @@ export async function connectMongo(params: {
         params.logger?.info?.('MongoDB connected', { databaseName });
         return { client, db };
     } catch (cause) {
-        try {
-            await client.close();
-        } catch {
-            // ignore close failure after connect error
-        }
-        if (usesManagedMemoryServer && _memoryServerClients.size === 0) {
-            await stopMemoryServer(params.logger);
-        }
+        if (!params.onCreated) await closeMongo(client, params.logger);
         throw createConnectionError(
             `Failed to connect to MongoDB database: ${databaseName}`,
             cause instanceof Error ? cause : undefined,
@@ -376,11 +378,21 @@ export async function connectMongo(params: {
  * Closes the MongoDB connection.
  * @since v1.3.0
  */
-export async function closeMongo(client: MongoClient | null | undefined, logger?: Logger): Promise<void> {
+export async function closeMongo(client: MongoClient | null | undefined, logger?: Logger, strict = false): Promise<void> {
     if (!client) {
+        if (strict && _memoryServerClients.size === 0) await stopMemoryServer(logger, true);
         return;
     }
 
+    if (strict) {
+        await client.close();
+        if (_memoryServerClients.delete(client) && _memoryServerClients.size === 0) {
+            try { await stopMemoryServer(logger, true); }
+            catch (error) { _memoryServerClients.add(client); throw error; }
+        }
+        try { logger?.info?.('MongoDB connection closed'); } catch { /* Preserve the successful release. */ }
+        return;
+    }
     const shouldReleaseMemoryServer = _memoryServerClients.delete(client);
     let closeError: MonSQLizeError | null = null;
     try {

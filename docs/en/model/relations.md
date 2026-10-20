@@ -2,6 +2,8 @@
 
 The Model layer provides relations and populate functions, allowing you to easily handle the relationships between collections.
 
+`deleteOneWithRelations()` checks the target selected by the final `before` hooks with their final session, then binds the write to that target and filter. Hooks may change arguments, but cannot bypass declared relation checks or turn ordinary soft deletion into a force delete. `after` receives the write result before the `{ result, usage }` wrapper is added. `forceDeleteWithRelations()` retains its explicit physical-delete path without Model hooks. These checks do not provide atomic referential integrity across concurrent writers; use the required transaction and application coordination for that guarantee.
+
 Model schema examples on this page use the runtime-scoped `s` namespace passed by monSQLize. Application code does not need to import the root `schema-dsl` entry for these examples.
 
 ---

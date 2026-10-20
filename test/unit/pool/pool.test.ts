@@ -40,6 +40,79 @@ describe('P4-B pool manager', () => {
         // no-op, isolated instances per test
     });
 
+    it('B14 retains a failed late-client close and retries it without publishing the pool', async () => {
+        let finish!: (client: FakeClient) => void;
+        let closes = 0;
+        const manager = new MonSQLize.ConnectionPoolManager({ clientFactory: () => new Promise((resolve) => { finish = resolve; }) });
+        const adding = manager.addPool({ name: 'late-retry', uri: 'mongodb://late' });
+        const rejection = assert.rejects(adding, /closed/);
+        const closing = manager.close();
+        finish({ ...createFakeClient('late-retry'), close: async () => {
+            if (++closes === 1) throw new Error('late close failure');
+            return true;
+        } });
+        await rejection;
+        await assert.rejects(closing, /late close failure/);
+        assert.equal(closes, 1);
+        assert.equal(manager.getPool('late-retry'), null);
+        await manager.close();
+        assert.equal(closes, 2);
+        await manager.close();
+        assert.equal(closes, 2);
+    });
+
+    it('B26 keeps one pending ping after timeout and recovers only after it settles', async () => {
+        let release!: () => void;
+        let calls = 0;
+        const manager = new MonSQLize.ConnectionPoolManager({
+            clientFactory: async () => createFakeClient('health'),
+            healthCheckFn: async () => { calls++; if (calls === 1) await new Promise<void>((resolve) => { release = resolve; }); return true; },
+        });
+        try {
+            await manager.addPool({ name: 'health', uri: 'mongodb://health', healthCheck: { interval: 5, timeout: 5, retries: 1 } });
+            manager.startHealthCheck();
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            assert.equal(calls, 1);
+            assert.equal(manager.getHealthStatus().health.status, 'down');
+            assert.throws(() => manager.selectPool('read'), /No available/);
+            release();
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            assert.ok(calls >= 2);
+            assert.equal(manager.getHealthStatus().health.status, 'up');
+            assert.equal(manager.selectPool('read').name, 'health');
+        } finally { release?.(); await manager.close(); }
+    });
+
+    it('B26 ignores an old ping completion after unregister and replacement', async () => {
+        let rejectOld!: (reason: Error) => void;
+        const checker = new MonSQLize.HealthChecker();
+        checker.register({ name: 'same', healthCheck: { timeout: 1000, retries: 1 } }, { db: () => ({ command: () => new Promise((_, reject) => { rejectOld = reject; }) }) });
+        const old = checker.checkPool('same');
+        await Promise.resolve();
+        checker.unregister('same');
+        checker.register({ name: 'same', healthCheck: { retries: 1 } }, { db: () => ({ command: async () => ({ ok: 1 }) }) });
+        await checker.checkPool('same');
+        rejectOld(new Error('obsolete'));
+        await old;
+        assert.equal(checker.getStatus('same').status, 'up');
+        checker.stop();
+    });
+
+    it('B28 honors primary fallback when all pools are down', async () => {
+        const manager = new MonSQLize.ConnectionPoolManager({
+            poolFallback: { enabled: true, fallbackStrategy: 'primary' },
+            clientFactory: async (config: { name: string }) => createFakeClient(config.name),
+        });
+        try {
+            await manager.addPool({ name: 'primary', role: 'primary', uri: 'mongodb://primary' });
+            await manager.addPool({ name: 'secondary', role: 'secondary', uri: 'mongodb://secondary' });
+            manager._healthChecker.getStatus('primary').status = 'down';
+            manager._healthChecker.getStatus('secondary').status = 'down';
+            assert.equal(manager.selectPool('write').name, 'primary');
+            assert.equal(manager.selectPool('read').name, 'primary');
+        } finally { await manager.close(); }
+    });
+
     it('reserves capacity while a client is opening', async () => {
         let finish!: (client: FakeClient) => void;
         const manager = new MonSQLize.ConnectionPoolManager({

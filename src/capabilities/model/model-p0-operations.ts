@@ -6,6 +6,7 @@
  * independently testable.
  */
 import { ErrorCodes, createError } from '../../core/errors';
+import type { ModelProtectedDeleteGuard } from '../../types/internal/model';
 import type {
     ModelVectorSearchOptions,
     RelationProtectedDeleteOptions,
@@ -34,7 +35,7 @@ export type ModelP0OperationsHost<TDocument> = {
     dbName: string;
     poolName?: string;
     hydrateDocument: (doc: TDocument | null | undefined) => (TDocument & Record<string, unknown>) | null;
-    deleteOne: (filter?: unknown, options?: unknown) => Promise<unknown>;
+    deleteOne: (filter?: unknown, options?: unknown, guard?: ModelProtectedDeleteGuard) => Promise<unknown>;
     forceDelete: (filter?: unknown, options?: unknown) => Promise<unknown>;
 };
 
@@ -147,13 +148,11 @@ export async function executeRelationUsageCheck<TDocument>(
     }
 }
 
-/** Performs a fail-closed protected single-document delete. */
-export async function executeProtectedRelationDelete<TDocument>(
-    host: ModelP0OperationsHost<TDocument>,
+function normalizeProtectedDeleteOptions(
     filter: unknown,
-    options: RelationProtectedDeleteOptions | undefined,
-    force: boolean,
-): Promise<RelationProtectedDeleteResult> {
+    options: unknown,
+    defaults?: ReturnType<typeof normalizeRelationUsageOptions>,
+) {
     if (!isNonEmptyFilter(filter)) {
         throw createError(
             ErrorCodes.INVALID_ARGUMENT,
@@ -170,9 +169,30 @@ export async function executeProtectedRelationDelete<TDocument>(
             [{ field: 'includeRelations/excludeRelations', reason: 'protected deletion always scans all declared relations' }],
         );
     }
-    const usageOptions = normalizeRelationUsageOptions(options);
+    const normalized = normalizeRelationUsageOptions(options as RelationUsageOptions | undefined);
+    if (defaults) {
+        if (rawOptions.maxTargets === undefined) normalized.maxTargets = defaults.maxTargets;
+        if (rawOptions.maxSamples === undefined) normalized.maxSamples = defaults.maxSamples;
+        if (rawOptions.includeSoftDeletedReferences === undefined) {
+            normalized.includeSoftDeletedReferences = defaults.includeSoftDeletedReferences;
+        }
+    }
+    return normalized;
+}
+
+async function resolveProtectedDelete<TDocument>(
+    host: ModelP0OperationsHost<TDocument>,
+    filter: unknown,
+    options: unknown,
+    force: boolean,
+    defaults?: ReturnType<typeof normalizeRelationUsageOptions>,
+) {
+    const usageOptions = normalizeProtectedDeleteOptions(filter, options, defaults);
     const context = relationUsageContext(host);
     const deleteOptions = stripRelationUsageOptions(options);
+    if (!force && deleteOptions && typeof deleteOptions === 'object') {
+        delete (deleteOptions as Record<string, unknown>)._forceDelete;
+    }
     let target: Record<string, unknown> | null;
     try {
         const targetFilter = force || !host.softDeleteConfig?.enabled
@@ -220,9 +240,29 @@ export async function executeProtectedRelationDelete<TDocument>(
         );
     }
 
-    const deleteFilter = target ? { _id: target._id } : { _id: { $in: [] } };
-    const result = force
-        ? await host.forceDelete(deleteFilter, deleteOptions)
-        : await host.deleteOne(deleteFilter, deleteOptions);
+    const deleteFilter = target ? { $and: [filter, { _id: target._id }] } : { _id: { $in: [] } };
+    return { filter: deleteFilter, options: deleteOptions, usage };
+}
+
+/** Checks the final hook-selected target before performing a protected delete. */
+export async function executeProtectedRelationDelete<TDocument>(
+    host: ModelP0OperationsHost<TDocument>,
+    filter: unknown,
+    options: RelationProtectedDeleteOptions | undefined,
+    force: boolean,
+): Promise<RelationProtectedDeleteResult> {
+    const usageDefaults = normalizeProtectedDeleteOptions(filter, options);
+    if (force) {
+        // Explicit force deletion retains its existing hook-free path.
+        const checked = await resolveProtectedDelete(host, filter, options, true);
+        return { result: await host.forceDelete(checked.filter, checked.options), usage: checked.usage };
+    }
+    let usage!: RelationUsageReport;
+    const result = await host.deleteOne(filter, stripRelationUsageOptions(options), async (nextFilter, nextOptions) => {
+        const checked = await resolveProtectedDelete(host, nextFilter, nextOptions, false, usageDefaults);
+        usage = checked.usage;
+        return checked;
+    });
+    // V1 after hooks see the write result; relation metadata is wrapped only here.
     return { result, usage };
 }

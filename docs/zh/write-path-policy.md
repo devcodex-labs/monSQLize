@@ -1,5 +1,7 @@
 # 写路径策略
 
+collMod 的 modifications 不得自带 collMod 目标字段，即使值为 undefined 或与当前集合相同。此类 payload 在驱动命令前报 INVALID_ARGUMENT；合法修改继续遵循原目标策略。该规则不约束外部原生 MongoDB 客户端。
+
 `writePathPolicy` 用于控制运行时写操作入口：允许 `collection()` 和 `model()` 两种入口同时写入，或要求指定命名空间必须经过 Model 层写入。
 
 策略查找只使用配置对象自身显式声明的规则，不会把原型继承属性当作规则；显式配置的 `toString`、`constructor` 等命名空间键仍有效。

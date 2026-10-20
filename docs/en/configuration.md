@@ -1,5 +1,7 @@
 # Configuration Reference
 
+No new constructor options are required for these corrections. Review the Change Stream checkpoint downgrade notes, versioned soft-delete behavior, health-check timeout semantics and slow-query error/index policies before upgrading.
+
 This page is the public reference for `new MonSQLize(options)`. It focuses on the constructor configuration surface. Method-level options such as `find(..., { cache, maxTimeMS })` are documented on the corresponding method pages.
 
 Use this page when you want to answer:

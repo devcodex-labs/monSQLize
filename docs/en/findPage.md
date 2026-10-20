@@ -1,5 +1,7 @@
 ﻿# findPage method detailed documentation
 
+Totals cache keys distinguish BSON/RegExp queries and the effective count options, including inherited `let`, collation and hint. Parameterized `$expr` filters receive `let` in both reads and counts, preserving BSON document field order. Defined top-level options override nested `options`; totals-specific hint/collation/maxTimeMS overrides retain their priority. Session reads bypass totals caching. Bookmark keys preserve compound-sort order and share effective query options with maintenance APIs. Totals and bookmark `v4` keys start cold; old entries leave through TTL or existing collection invalidation.
+
 ## Overview
 
 `findPage` is an advanced paging query method provided by monSQLize. It supports multiple paging modes, including cursor paging, page jump, streaming query, and total statistics.

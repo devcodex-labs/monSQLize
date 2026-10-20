@@ -31,11 +31,14 @@ export class HealthChecker {
     private readonly _checkConfigs = new Map<string, Record<string, unknown>>();
     private readonly _clients = new Map<string, unknown>();
     private readonly _intervals = new Map<string, ReturnType<typeof setInterval>>();
-    private readonly _inProgress = new Set<string>();
+    private readonly _inProgress = new Map<string, { client: unknown; promise: Promise<unknown> }>();
+    private readonly _epochs = new Map<string, number>();
+    private readonly _pingOverride?: (poolName: string) => Promise<unknown>;
     _started = false;
 
-    constructor(options: { poolManager?: HealthCheckerPoolManager; logger?: HealthCheckerLogger; } = {}) {
+    constructor(options: { poolManager?: HealthCheckerPoolManager; logger?: HealthCheckerLogger; ping?: (poolName: string) => Promise<unknown>; } = {}) {
         this._poolManager = options.poolManager ?? null;
+        this._pingOverride = options.ping;
         this._logger = options.logger ?? SILENT_HEALTH_CHECKER_LOGGER;
     }
 
@@ -53,6 +56,7 @@ export class HealthChecker {
             client = configOrClient ?? null;
         }
 
+        this.cancel(poolName);
         this._checkConfigs.set(poolName, healthCheckConfig);
         if (client !== null) this._clients.set(poolName, client);
         const initialStatus: 'up' | 'down' | 'checking' | 'unknown' = typeof poolNameOrConfig === 'string' ? 'up' : 'unknown';
@@ -61,6 +65,7 @@ export class HealthChecker {
     }
 
     unregister(poolName: string): void {
+        this.cancel(poolName);
         this._stopCheckForPool(poolName);
         this._healthStatus.delete(poolName);
         this._checkConfigs.delete(poolName);
@@ -77,8 +82,8 @@ export class HealthChecker {
     }
 
     stop(): void {
-        if (!this._started) return;
         this._started = false;
+        for (const poolName of this._checkConfigs.keys()) this.cancel(poolName);
         for (const poolName of this._intervals.keys()) this._stopCheckForPool(poolName);
         this._logger.info?.('[HealthChecker] Health check stopped');
     }
@@ -92,10 +97,10 @@ export class HealthChecker {
         if (config.enabled === false) return;
         this._stopCheckForPool(poolName);
         const interval = (config.interval as number) ?? 5000;
-        const timer = setInterval(async () => { await this._checkPool(poolName, config); }, interval);
+        const timer = setInterval(() => { if (this._started) void this._checkPool(poolName, config); }, interval);
         (timer as ReturnType<typeof setInterval> & { unref?: () => void }).unref?.();
         this._intervals.set(poolName, timer);
-        setImmediate(async () => { await this._checkPool(poolName, config); });
+        setImmediate(() => { if (this._started && this._checkConfigs.get(poolName) === config) void this._checkPool(poolName, config); });
     }
 
     private _stopCheckForPool(poolName: string): void {
@@ -106,62 +111,53 @@ export class HealthChecker {
         }
     }
 
+    cancel(poolName: string): void {
+        this._epochs.set(poolName, (this._epochs.get(poolName) ?? 0) + 1);
+    }
+
     private async _checkPool(poolName: string, config: Record<string, unknown>): Promise<void> {
-        if (this._inProgress.has(poolName)) return;
-        this._inProgress.add(poolName);
+        const status = this._healthStatus.get(poolName);
+        if (!status) return;
+        const client = this._clients.get(poolName) ?? this._poolManager?._getPool(poolName);
+        if (this._inProgress.get(poolName)?.client === client && this._inProgress.has(poolName)) return;
+        const epoch = this._epochs.get(poolName);
+        const promise = Promise.resolve().then(() => {
+            if (this._epochs.get(poolName) !== epoch || this._healthStatus.get(poolName) !== status) return;
+            return this._pingOverride ? this._pingOverride(poolName) : this._pingPool(poolName);
+        });
+        const operation = { client, promise };
+        this._inProgress.set(poolName, operation);
+        const clearPending = () => { if (this._inProgress.get(poolName) === operation) this._inProgress.delete(poolName); };
+        void promise.then(clearPending, clearPending);
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        let lastError: Error | null = null;
         try {
-            const status = this._healthStatus.get(poolName);
-            if (!status) return;
-
-            status.status = 'checking';
-            status.lastCheck = new Date();
-            const retries = (config.retries as number) ?? 3;
-            let success = false;
-            let lastError: Error | null = null;
-
-            try {
-                await this._pingPool(poolName, (config.timeout as number) ?? 3000);
-                success = true;
-            } catch (error) {
-                lastError = error instanceof Error ? error : new Error(String(error));
-            }
-
-            if (success) {
-                status.status = 'up';
-                status.consecutiveFailures = 0;
-                delete status.lastError;
-            } else {
-                status.consecutiveFailures += 1;
-                if (lastError) status.lastError = lastError;
-                if (status.consecutiveFailures >= retries) {
-                    status.status = 'down';
-                }
-            }
-        } finally {
-            this._inProgress.delete(poolName);
+            await Promise.race([promise, new Promise<never>((_, reject) => {
+                timer = setTimeout(() => reject(new Error('Ping timeout')), (config.timeout as number) ?? 3000);
+                timer.unref?.();
+            })]);
+        } catch (error) { lastError = error instanceof Error ? error : new Error(String(error)); }
+        finally { if (timer) clearTimeout(timer); }
+        if (this._epochs.get(poolName) !== epoch || this._healthStatus.get(poolName) !== status) return;
+        status.lastCheck = new Date();
+        if (!lastError) {
+            status.status = 'up';
+            status.consecutiveFailures = 0;
+            delete status.lastError;
+        } else {
+            status.consecutiveFailures++;
+            status.lastError = lastError;
+            status.status = status.consecutiveFailures >= Math.max(1, (config.retries as number) ?? 3) || status.status === 'down' ? 'down' : 'up';
         }
     }
 
-    private async _pingPool(poolName: string, timeout: number): Promise<void> {
-        const stored = this._clients.get(poolName);
-        const client = (stored ?? this._poolManager?._getPool(poolName)) as {
+    private async _pingPool(poolName: string): Promise<void> {
+        const client = (this._clients.get(poolName) ?? this._poolManager?._getPool(poolName)) as {
             db: (name: string) => { command?: (cmd: Record<string, unknown>) => Promise<unknown>; admin?: () => { ping: () => Promise<unknown> }; };
         } | null | undefined;
         if (!client) throw createError(ErrorCodes.POOL_NOT_FOUND, `No client for pool: ${poolName}`);
         const db = client.db('admin');
-        const pingFn = db.command ? () => db.command!({ ping: 1 }) : () => db.admin!().ping();
-        let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-        const timeoutPromise = new Promise<never>((_, reject) => {
-            timeoutHandle = setTimeout(() => reject(new Error('Ping timeout')), timeout);
-            timeoutHandle.unref?.();
-        });
-        try {
-            await Promise.race([pingFn(), timeoutPromise]);
-        } finally {
-            if (timeoutHandle) {
-                clearTimeout(timeoutHandle);
-            }
-        }
+        await (db.command ? db.command({ ping: 1 }) : db.admin!().ping());
     }
 
     getStatus(poolName: string): HealthStatus | null {

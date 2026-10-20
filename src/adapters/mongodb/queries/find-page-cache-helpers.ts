@@ -1,59 +1,31 @@
 import { createHash } from 'node:crypto';
-import type { Document } from 'mongodb';
+import type { Document, Sort } from 'mongodb';
 
+import { buildResultCacheKeyOptions, normalizeFindProjectionOptions, normalizeSortShape, resolveProjectionOption, stableCacheKeyString } from './query-helpers';
 import { createError, ErrorCodes } from '../../../core/errors';
-import type { QueryCacheLike, SortShape } from '../../../types/internal/query';
+import type { QueryCacheLike } from '../../../types/internal/query';
 
 export const DEFAULT_FIND_PAGE_LIMIT = 20;
 
-function stableStringify(value: unknown): string {
-    return stableStringifyValue(value, new WeakSet<object>());
-}
-
-function stableStringifyValue(value: unknown, seen: WeakSet<object>): string {
-    if (value === undefined) {
-        return 'u';
-    }
-    if (value === null) {
-        return 'l';
-    }
-    if (Array.isArray(value)) {
-        return `a[${value.map((item) => stableStringifyValue(item, seen)).join(',')}]`;
-    }
-    if (value instanceof Date) {
-        return `d${JSON.stringify(value.toISOString())}`;
-    }
-    if (typeof value === 'object') {
-        if (seen.has(value)) {
-            throw createError(ErrorCodes.INVALID_ARGUMENT, 'Cannot build a stable cache key for a circular value.');
-        }
-        seen.add(value);
-        const customJson = (value as { toJSON?: () => unknown }).toJSON;
-        try {
-            if (typeof customJson === 'function' && value.constructor?.name !== 'Object') {
-                return stableStringifyValue(customJson.call(value), seen);
-            }
-            const entries = Object.entries(value as Record<string, unknown>)
-                .sort(([left], [right]) => left.localeCompare(right))
-                .map(([key, item]) => `${JSON.stringify(key)}:${stableStringifyValue(item, seen)}`);
-            return `o{${entries.join(',')}}`;
-        } finally {
-            seen.delete(value);
-        }
-    }
-    return `${typeof value}:${JSON.stringify(value)}`;
-}
-
 export function hashPayload(payload: unknown): string {
-    return createHash('sha256').update(stableStringify(payload)).digest('hex');
+    return createHash('sha256').update(stableCacheKeyString(payload)).digest('hex');
 }
 
 type BookmarkKeyDimsPayload = {
+    options?: unknown;
+    hint?: unknown;
+    collation?: unknown;
+    readConcern?: unknown;
+    readPreference?: unknown;
+    allowDiskUse?: unknown;
+    let?: unknown;
+    projection?: unknown;
+    project?: unknown;
     cursorTypes?: Record<string, unknown>;
     cursorValueNormalizerVersion?: string;
-    sort: SortShape;
-    limit: number;
-    query: Document;
+    sort?: Sort;
+    limit?: number;
+    query?: Document;
     pipeline?: Document[];
 };
 
@@ -69,18 +41,25 @@ export type BookmarkResumePoint = {
     endCursor: string;
 };
 
-function buildBookmarkBaseKey(namespace: string, keyDims: BookmarkKeyDimsPayload): string {
-    return `${namespace}:bm:${hashPayload({
-        sort: keyDims.sort,
-        limit: keyDims.limit,
-        query: keyDims.query,
+export function buildBookmarkBaseKey(namespace: string, keyDims: BookmarkKeyDimsPayload): string {
+    const effectiveOptions = { ...(keyDims.options as Record<string, unknown> ?? {}) };
+    for (const key of ['hint', 'collation', 'readConcern', 'readPreference', 'allowDiskUse', 'let'] as const) {
+        if (keyDims[key] !== undefined) effectiveOptions[key] = keyDims[key];
+    }
+    const projection = resolveProjectionOption(keyDims);
+    if (projection !== undefined) effectiveOptions.projection = projection;
+    return `${namespace}:bm:v4:${hashPayload(stableCacheKeyString({
+        sort: normalizeSortShape(keyDims.sort),
+        limit: keyDims.limit ?? DEFAULT_FIND_PAGE_LIMIT,
+        query: keyDims.query ?? {},
         pipeline: keyDims.pipeline,
+        options: buildResultCacheKeyOptions(normalizeFindProjectionOptions(effectiveOptions)),
         cursorTypes: keyDims.cursorTypes,
         cursorValueNormalizerVersion: keyDims.cursorValueNormalizerVersion,
-    })}`;
+    }))}`;
 }
 
-function buildBookmarkPattern(namespace: string, keyDims: BookmarkKeyDimsPayload): string {
+export function buildBookmarkPattern(namespace: string, keyDims: BookmarkKeyDimsPayload): string {
     return `${buildBookmarkBaseKey(namespace, keyDims)}:*`;
 }
 

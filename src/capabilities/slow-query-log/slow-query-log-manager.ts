@@ -41,8 +41,8 @@ export class SlowQueryLogManager {
         this.storage = options.storage
             ?? (this.config.storage.type === 'memory'
                 ? new SlowQueryLogMemoryStorage()
-                : new MongoDBSlowQueryLogStorage(this.config.storage, businessClient, logger));
-        this.queue = this.config.batch.enabled ? new BatchQueue(this.storage, this.config.batch, logger) : null;
+                : new MongoDBSlowQueryLogStorage(this.config.storage, businessClient, logger, undefined, { autoCreateIndexes: this.config.advanced.autoCreateIndexes }));
+        this.queue = this.config.batch.enabled && this.config.advanced.errorHandling !== 'throw' ? new BatchQueue(this.storage, this.config.batch, logger, this.config.advanced.errorHandling) : null;
     }
 
     async initialize(): Promise<void> {
@@ -64,8 +64,8 @@ export class SlowQueryLogManager {
         if (!this.config.enabled || this.shouldFilter(log)) {
             return;
         }
-        await this.initialize();
         try {
+            await this.initialize();
             if (this.queue) {
                 await this.queue.add(log);
             } else {

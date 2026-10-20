@@ -1,5 +1,7 @@
 # Write Path Policy
 
+collMod modifications must not contain their own collMod target field, even if its value is undefined or matches the accessor collection. Such payloads fail with INVALID_ARGUMENT before the driver command; valid modifications still follow the existing target policy. This does not constrain external native MongoDB clients.
+
 `writePathPolicy` lets a runtime decide whether writes may use both `collection()` and `model()`, or whether a namespace must be written through the Model layer.
 
 Policy lookup uses only rules explicitly owned by the configuration object. Inherited prototype properties never become rules; explicit namespace keys such as `toString` and `constructor` remain valid.

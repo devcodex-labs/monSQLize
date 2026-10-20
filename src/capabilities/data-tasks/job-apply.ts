@@ -96,7 +96,9 @@ async function applyChange(
     lease?.assertHeld();
     const payload = writePayload(change, config);
     if (change.operation === 'update') {
-        const result = await target.updateOne(expectedBeforeFilter(change), writeUpdate(change, config));
+        const result = await target.updateOne(expectedBeforeFilter(change), writeUpdate(change, config), {
+            collation: { locale: 'simple' },
+        });
         if (resultCount(result, 'matchedCount') !== 1) throw new DataTaskJobError('APPLY_PARTIAL', 'target document drifted before update.', 'apply', config.name);
     } else if (config.data!.strategy === 'insert') {
         await target.insertOne(payload);

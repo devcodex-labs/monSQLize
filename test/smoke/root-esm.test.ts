@@ -19,6 +19,8 @@ test('ESM root entry returns default export and named export matrix', async () =
     assert.equal(typeof mod.defineModel, 'function');
     assert.equal(typeof mod.default.defineModel, 'function');
     assert.equal(typeof mod.Model, 'function');
+    assert.equal(typeof mod.ModelInstance, 'function');
+    assert.strictEqual(mod.default.ModelInstance, mod.ModelInstance);
     assert.equal(typeof mod.DataTaskJobError, 'function');
     assert.equal(mod.default.DataTaskJobError, mod.DataTaskJobError);
     assert.equal(typeof mod.dataTasks?.preview, 'function');

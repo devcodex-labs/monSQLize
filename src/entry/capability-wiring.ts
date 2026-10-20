@@ -136,6 +136,7 @@ export function buildRuntimeDefaults(options: MonSQLizeOptions): RuntimeDefaults
  */
 export async function createAndStartPoolManager(
     options: MonSQLizeOptions,
+    onCreated?: (manager: ConnectionPoolManager) => void,
 ): Promise<ConnectionPoolManager | null> {
     if (!options.pools?.length) {
         return null;
@@ -147,6 +148,7 @@ export async function createAndStartPoolManager(
         maxPoolsCount: options.maxPoolsCount,
         logger: options.logger ?? null,
     });
+    onCreated?.(pm);
     for (const pool of options.pools) {
         await pm.addPool(pool);
     }

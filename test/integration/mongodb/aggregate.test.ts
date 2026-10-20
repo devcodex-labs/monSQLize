@@ -68,6 +68,71 @@ describe('aggregate() / distinct() / count() / explain()', () => {
         await db.collection('products').insertMany(docs);
     });
 
+    it('AR02 matches native variable scopes in both nesting directions and native JSON expressions', async () => {
+        const cases: Array<[string, unknown]> = [
+            ['REDUCE([10],0,(acc,item)=>SUM(MAP([1,2],value,$$value)))', 3],
+            ['REDUCE([10],0,(acc,item)=>SUM(FILTER([1,2],value,$$value > 1)))', 2],
+            ['MAP([10],value,REDUCE([1,2],0,(acc,item)=>$$value + $$this))', [3]],
+            ['MAP([10],value,REDUCE([1,2],0,(acc,item)=>value + $$value + item))', [23]],
+            ['MAP([10],value,LET({value:2}, value + $$value))', [12]],
+            ['REDUCE([10],0,(acc,item)=>SUM({"$map":{"input":[1,2],"as":"value","in":"$$value"}}))', 3],
+            ['REDUCE([10],0,(acc,item)=>SUM(MAP([1,2],value,{"$reduce":{"input":[1,2],"initialValue":"$$value","in":{"$add":["$$value","$$this"]}}})))', 9],
+            ['REDUCE([10],0,(acc,item)=>SUM(MAP([1,2],value,{"$let":{"vars":{"value":100,"copy":"$$value"},"in":{"$add":["$$value","$$copy"]}}})))', 203],
+            ['MAP([10],this,REDUCE([1,2],0,(acc,item)=>this + acc + $$this))', [23]],
+            ['MAP([10],value,REDUCE([1],0,(acc,item)=>SUM(MAP([2],value,$$value + acc))))', [2]],
+        ];
+        for (const [source, expected] of cases) {
+            const actual = await col.aggregate([{ $limit: 1 }, { $project: { _id: 0, result: MonSQLize.expr(source) } }]);
+            const native = await col.raw().aggregate([{ $limit: 1 }, { $project: { _id: 0, result: { $literal: expected } } }]).toArray();
+            assert.deepEqual(actual, native, source);
+        }
+        const nativeScope = await col.raw().aggregate([{ $limit: 1 }, { $project: { _id: 0, result: {
+            $reduce: { input: [10], initialValue: 0, in: { $sum: { $map: { input: [1, 2], as: 'inner', in: '$$inner' } } } },
+        } } }]).toArray();
+        assert.deepEqual(nativeScope, [{ result: 3 }]);
+    });
+
+    it('B16 B17 B18 B19 B29 B30 execute DSL expressions like native aggregation', async () => {
+        const project = {
+            _id: 0, text: MonSQLize.expr('SUBSTR_CP(sku, stock - 1, 4)'),
+            mapped: MonSQLize.expr('MAP([1,2], n, n * 2)'),
+            filtered: MonSQLize.expr('FILTER([1,2], n, n > 1)'),
+            bound: MonSQLize.expr('LET({a:POW(2,3)}, $$a)'),
+            fallback: MonSQLize.expr('SWITCH(false, 1, null)'),
+            scaled: MonSQLize.expr('price * 1e-3'),
+        };
+        const dsl = [{ $match: { sku: 'SKU-0001' } }, { $project: project }];
+        const actual = await col.aggregate(dsl);
+        const expected = await col.raw().aggregate([{ $match: { sku: 'SKU-0001' } }, { $project: {
+            _id: 0, text: { $substrCP: ['$sku', { $subtract: ['$stock', 1] }, 4] },
+            mapped: { $map: { input: [1, 2], as: 'n', in: { $multiply: ['$$n', 2] } } },
+            filtered: { $filter: { input: [1, 2], as: 'n', cond: { $gt: ['$$n', 1] } } },
+            bound: { $let: { vars: { a: { $pow: [2, 3] } }, in: '$$a' } },
+            fallback: { $switch: { branches: [{ case: false, then: 1 }], default: null } },
+            scaled: { $multiply: ['$price', 0.001] },
+        } }]).toArray();
+        assert.deepEqual(actual, expected);
+        assert.deepEqual(actual[0], { text: '0001', mapped: [2, 4], filtered: [2], bound: 8, fallback: null, scaled: 0.01 });
+        const nested = await col.aggregate([{ $match: { sku: 'SKU-0001' } }, {
+            $facet: { items: [{ $project: { _id: 0, scaled: MonSQLize.expr('price * 1e-3') } }] },
+        }]);
+        assert.deepEqual(nested, [{ items: [{ scaled: 0.01 }] }]);
+        const joined = await col.aggregate([{ $match: { sku: 'SKU-0001' } }, { $lookup: {
+            from: 'products', pipeline: [{ $match: { sku: 'SKU-0001' } }, { $project: { _id: 0, scaled: MonSQLize.expr('price * 1e-3') } }], as: 'joined',
+        } }, { $project: { _id: 0, joined: 1 } }]);
+        assert.deepEqual(joined, [{ joined: [{ scaled: 0.01 }] }]);
+        const scopes = await col.aggregate([{ $limit: 1 }, { $project: {
+            _id: 0,
+            mapReduce: MonSQLize.expr('MAP([10], value, REDUCE([1,2], 0, (acc,item) => value + item))'),
+            reduceMap: MonSQLize.expr('REDUCE([10], 0, (acc,item) => SUM(MAP([1,2], value, acc + value)))'),
+            captureName: MonSQLize.expr('LET({monsqlizeCapture0:5}, MAP([10], value, REDUCE([1,2],0,(acc,item)=>value+item+$$monsqlizeCapture0)))'),
+            variableName: MonSQLize.expr('REDUCE([10],0,(acc,item)=>SUM(MAP([1,2],value,LET({monsqlizeVariable0:5},value))))'),
+            nestedReduce: MonSQLize.expr('REDUCE([10], 0, (outer,item) => REDUCE([1,2], 0, (inner,n) => outer + item + n))'),
+        } }]);
+        assert.deepEqual(scopes, [{ mapReduce: [12], reduceMap: 3, nestedReduce: 12, captureName: [17], variableName: 3 }]);
+        await assert.rejects(async () => col.aggregate([{ $limit: 1 }, { $project: { value: MonSQLize.expr('SWITCH(false, 1)') } }]));
+    });
+
     // ── aggregate() ───────────────────────────────────────────────────────────
 
     describe('aggregate() basic results', () => {

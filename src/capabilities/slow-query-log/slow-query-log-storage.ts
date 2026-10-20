@@ -79,19 +79,25 @@ export class MongoDBSlowQueryLogStorage implements SlowQueryLogStorage {
     private readonly businessClient: MongoClient | null;
     private readonly config: NormalizedSlowQueryLogStorageConfig;
     private readonly clientFactory: (uri: string, options?: MongoClientOptions) => Promise<MongoClient>;
+    private readonly autoCreateIndexes: boolean;
     private client: MongoClient | null = null;
     private collectionRef: Collection | null = null;
     private _initializingPromise: Promise<void> | null = null;
+    private closingPromise: Promise<void> | null = null;
+    private generation = 0;
+    private closePending = false;
 
     constructor(
         config: SlowQueryLogStorageConfig = {},
         businessClient: MongoClient | null = null,
         logger: LoggerLike | null = null,
         clientFactory: (uri: string, options?: MongoClientOptions) => Promise<MongoClient> = defaultClientFactory,
+        options: { autoCreateIndexes?: boolean } = {},
     ) {
         this.logger = logger;
         this.businessClient = businessClient;
         this.clientFactory = clientFactory;
+        this.autoCreateIndexes = options.autoCreateIndexes !== false;
         this.config = {
             ...config,
             database: config.database ?? DEFAULT_SLOW_QUERY_LOG_CONFIG.storage.database ?? 'admin',
@@ -101,22 +107,33 @@ export class MongoDBSlowQueryLogStorage implements SlowQueryLogStorage {
     }
 
     async initialize(): Promise<void> {
+        if (this.closingPromise) {
+            await this.closingPromise;
+            throw createError(ErrorCodes.CONNECTION_CLOSED, 'Slow query log storage was closed during initialization.');
+        }
+        this.assertGeneration(this.generation);
         if (this.collectionRef) {
             return;
         }
         if (this._initializingPromise) {
             return this._initializingPromise;
         }
+        const generation = this.generation;
         this._initializingPromise = (async () => {
             const client = await this.resolveClient();
-            this.collectionRef = client.db(this.config.database).collection(this.config.collection);
+            this.assertGeneration(generation);
+            const collection = client.db(this.config.database).collection(this.config.collection);
+            if (this.autoCreateIndexes) {
             if (this.config.ttl && this.config.ttl > 0) {
-                await this.collectionRef.createIndex({ lastSeen: 1 }, { expireAfterSeconds: this.config.ttl, name: 'slow_query_lastSeen_ttl' });
+                await collection.createIndex({ lastSeen: 1 }, { expireAfterSeconds: this.config.ttl, name: 'slow_query_lastSeen_ttl' });
             }
-            await this.collectionRef.createIndex(
+            await collection.createIndex(
                 { queryHash: 1, database: 1, collection: 1, operation: 1 },
                 { unique: true, name: 'slow_query_log_unique' },
             );
+            }
+            this.assertGeneration(generation);
+            this.collectionRef = collection;
         })().finally(() => {
             this._initializingPromise = null;
         });
@@ -124,9 +141,9 @@ export class MongoDBSlowQueryLogStorage implements SlowQueryLogStorage {
     }
 
     async save(log: SlowQueryLogEntry): Promise<void> {
-        await this.initialize();
+        const collection = await this.getCollection();
         const record = normalizeSlowQueryLogEntry(log);
-        await this.collectionRef!.updateOne(
+        await collection.updateOne(
             {
                 queryHash: record.queryHash,
                 database: record.database,
@@ -167,7 +184,7 @@ export class MongoDBSlowQueryLogStorage implements SlowQueryLogStorage {
             await this.save(logs[0]);
             return;
         }
-        await this.initialize();
+        const collection = await this.getCollection();
         const operations = logs.map((log) => {
             const record = normalizeSlowQueryLogEntry(log);
             return {
@@ -206,12 +223,12 @@ export class MongoDBSlowQueryLogStorage implements SlowQueryLogStorage {
                 },
             };
         });
-        await this.collectionRef!.bulkWrite(operations, { ordered: false });
+        await collection.bulkWrite(operations, { ordered: false });
     }
 
     async query(filter: SlowQueryLogFilter = {}, options: SlowQueryLogQueryOptions = {}): Promise<SlowQueryLogRecord[]> {
-        await this.initialize();
-        const cursor = this.collectionRef!
+        const collection = await this.getCollection();
+        const cursor = collection
             .find(toMongoFilter(filter))
             .sort(options.sort ?? { lastSeen: -1 });
         if (options.skip) {
@@ -239,11 +256,36 @@ export class MongoDBSlowQueryLogStorage implements SlowQueryLogStorage {
     }
 
     async close(): Promise<void> {
-        if (this.client && this.client !== this.businessClient) {
-            await this.client.close();
-        }
-        this.client = null;
+        if (this.closingPromise) return this.closingPromise;
+        this.generation++;
+        this.closePending = true;
         this.collectionRef = null;
+        const closing = (async () => {
+            await this._initializingPromise?.catch(() => undefined);
+            if (this.client && this.client !== this.businessClient) await this.client.close();
+            this.client = null;
+            this.collectionRef = null;
+            this.closePending = false;
+        })();
+        this.closingPromise = closing;
+        try {
+            await closing;
+        } finally {
+            if (this.closingPromise === closing) this.closingPromise = null;
+        }
+    }
+
+    private assertGeneration(generation: number): void {
+        if (generation !== this.generation || this.closePending) {
+            throw createError(ErrorCodes.CONNECTION_CLOSED, 'Slow query log storage initialization was superseded by close; retry after cleanup.');
+        }
+    }
+
+    private async getCollection(): Promise<Collection> {
+        const generation = this.generation;
+        await this.initialize();
+        this.assertGeneration(generation);
+        return this.collectionRef!;
     }
 
     private async resolveClient(): Promise<MongoClient> {

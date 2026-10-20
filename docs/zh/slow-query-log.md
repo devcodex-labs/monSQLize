@@ -1,5 +1,9 @@
 ﻿# 慢查询日志持久化
 
+errorHandling 同时覆盖初始化和持久化。throw 模式下，即使配置了 batch，save 也等待直接存储完成；silent/log 保留批处理，初始化失败时结束当次 save。autoCreateIndexes:false 同时跳过 TTL 和唯一索引创建，不删除已有索引；关闭自动创建时应单独部署所需索引。
+
+Storage `close()` 等待在途初始化，取消其发布迟到 collection 的资格，并且只关闭自己拥有的 client。并发 close 共用清理过程；owned client 关闭失败时保留所有权，供后续 close 重试，清理成功前阻断初始化。成功关闭后的显式新初始化可以开启新一轮生命周期。共享业务连接保持打开。
+
 ## 功能概述
 
 ### 什么是慢查询日志持久化存储？

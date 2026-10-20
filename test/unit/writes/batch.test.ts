@@ -1,6 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { insertBatchDocuments } from '../../../src/adapters/mongodb/writes/write-batch';
+import { insertBatchForAccessor, updateBatchForAccessor, deleteBatchForAccessor } from '../../../src/adapters/mongodb/common/collection-accessor-batch-helpers';
+import { invalidateReadCachesAfterWrite } from '../../../src/adapters/mongodb/common/collection-accessor-cache-helpers';
+
 const MonSQLize = require('../../../dist/cjs/index.cjs');
 
 type Calls = {
@@ -30,6 +34,59 @@ function idCursor(ids: Array<{ _id: unknown }>) {
 }
 
 describe('P2-C writes-batch extension', () => {
+    it('B11 does not treat preallocated IDs in an unknown driver failure as successful inserts', async () => {
+        const collection: any = { insertMany: async () => {
+            throw Object.assign(new Error('network disconnected'), { insertedCount: 0, insertedIds: { 0: 'candidate-a', 1: 'candidate-b' } });
+        } };
+        const result = await insertBatchDocuments(collection, [{ _id: 'candidate-a' }, { _id: 'candidate-b' }], { onError: 'collect' });
+        assert.equal(result.insertedCount, 0);
+        assert.deepEqual(result.insertedIds, {});
+    });
+
+    it('B10 coordinates cache invalidation after thrown and collected partial batch failures', async () => {
+        for (const onError of ['stop', 'collect']) {
+            for (const operation of ['insert', 'update', 'delete']) {
+                let invalidations = 0;
+                const failure = new Error('partial write failure');
+                const context: any = {
+                    cvFilter: (value: unknown) => value, cvDoc: (value: unknown) => value, cvUpdate: (value: unknown) => value,
+                    invalidateAll: async () => { invalidations++; return 1; },
+                    collectionRef: {
+                        find: () => idCursor([{ _id: 1 }]),
+                        countDocuments: async () => 1,
+                        insertMany: async () => { throw failure; },
+                        updateMany: async () => { throw failure; },
+                        deleteMany: async () => { throw failure; },
+                    },
+                };
+                const options = { onError, batchSize: 1, autoInvalidate: true } as any;
+                const call = operation === 'insert'
+                    ? insertBatchForAccessor(context, [{ _id: 1 }], options)
+                    : operation === 'update'
+                        ? updateBatchForAccessor(context, {}, { $set: { a: 1 } }, options)
+                        : deleteBatchForAccessor(context, {}, options);
+                if (onError === 'stop') await assert.rejects(call, /partial write failure/);
+                else assert.equal((await call).errors.length, 1);
+                assert.equal(invalidations, 1);
+            }
+        }
+    });
+
+    it('B10 never broadcasts or records new intents for an ended managed transaction', async () => {
+        let broadcasts = 0;
+        let intents = 0;
+        const session = { inTransaction: () => false, __monSQLizeTransaction: { recordInvalidation: () => { intents++; } } };
+        const cache: any = { delPattern: async () => { broadcasts++; return 1; } };
+        const collection: any = {};
+        await invalidateReadCachesAfterWrite(cache, collection, 'db', 'items', {}, { session, autoInvalidate: true });
+        assert.equal(broadcasts, 0);
+        assert.equal(intents, 0);
+        session.inTransaction = () => true;
+        await invalidateReadCachesAfterWrite(cache, collection, 'db', 'items', {}, { session, autoInvalidate: true });
+        assert.ok(intents > 0);
+        assert.equal(broadcasts, 0);
+    });
+
     it('exposes insertBatch/updateBatch/deleteBatch/incrementOne through public accessors', async () => {
         const calls: Calls = {
             insertMany: [],

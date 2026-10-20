@@ -1,5 +1,7 @@
 # Connection Management
 
+Concurrent connect callers share startup and failure cleanup. close invalidates that startup generation, waits for it to settle and releases late-created resources; connect waits for an ongoing close. Failed resource cleanup remains observable and retryable on a later close. Library-managed memory MongoDB instances follow the same ownership release chain.
+
 ## Overview
 
 monSQLize provides connection management for MongoDB applications, including safe connection reuse, parameter validation, resource cleanup, and cross-database access. This document explains the connection API and the related configuration surface.

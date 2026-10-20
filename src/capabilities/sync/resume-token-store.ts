@@ -1,6 +1,7 @@
 /** File and Redis persistence for change-stream resume tokens. */
 import { copyFile, mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
+import { BSON, Timestamp } from 'mongodb';
 import { ErrorCodes, createError } from '../../core/errors';
 import type { LoggerLike } from '../../core/logger';
 import type { ResumeTokenConfig, ResumeTokenRedisLike } from '../../../types/sync';
@@ -9,6 +10,39 @@ export interface ResumeTokenStoreLike {
     load(): Promise<unknown | null>;
     save(token: unknown): Promise<void>;
     clear(): Promise<void>;
+}
+
+/** Encode only the initial timestamp; legacy resume tokens keep their JSON representation. */
+export function createInitialSyncCheckpoint(operationTime: Timestamp) {
+    return {
+        __monsqlizeSyncCheckpoint: 1,
+        kind: 'operationTime',
+        value: BSON.EJSON.serialize(operationTime, { relaxed: false }),
+    };
+}
+
+/** Decode a versioned initial checkpoint without reinterpreting legacy resume tokens. */
+export function decodeStoredSyncCheckpoint(value: unknown): { resumeAfter: unknown } | { startAtOperationTime: Timestamp } {
+    const isRecord = (candidate: unknown): candidate is Record<string, unknown> =>
+        candidate !== null && typeof candidate === 'object' && !Array.isArray(candidate);
+    if (!isRecord(value) || !Object.prototype.hasOwnProperty.call(value, '__monsqlizeSyncCheckpoint')) {
+        return { resumeAfter: value };
+    }
+    const encoded = value.value;
+    const timestamp = isRecord(encoded) ? encoded.$timestamp : undefined;
+    const isUint32 = (candidate: unknown): candidate is number => typeof candidate === 'number'
+        && Number.isInteger(candidate) && candidate >= 0 && candidate <= 0xffffffff;
+    if (value.__monsqlizeSyncCheckpoint !== 1 || value.kind !== 'operationTime'
+        || !isRecord(encoded) || Object.keys(encoded).length !== 1
+        || !isRecord(timestamp) || Object.keys(timestamp).length !== 2
+        || !isUint32(timestamp.t) || !isUint32(timestamp.i)) {
+        throw createError(ErrorCodes.INVALID_CONFIG, '[Sync] invalid persisted operation-time checkpoint');
+    }
+    const operationTime = BSON.EJSON.deserialize(encoded, { relaxed: false });
+    if (!(operationTime instanceof Timestamp)) {
+        throw createError(ErrorCodes.INVALID_CONFIG, '[Sync] invalid persisted operation-time checkpoint');
+    }
+    return { startAtOperationTime: operationTime };
 }
 
 export function normalizeError(error: unknown): Error {

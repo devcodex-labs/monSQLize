@@ -51,7 +51,7 @@ export function hasExpressionInPipeline(pipeline: unknown): boolean {
 }
 
 export function compilePipelineExpressions<TPipeline>(pipeline: TPipeline): TPipeline {
-    return transformExpressions(pipeline, 'project') as TPipeline;
+    return transformPipeline(pipeline) as TPipeline;
 }
 
 type StageContext = 'match' | 'project' | 'group';
@@ -76,6 +76,10 @@ function transformExpressions(value: unknown, context: StageContext): unknown {
     return result;
 }
 
+function transformPipeline(pipeline: unknown): unknown {
+    return Array.isArray(pipeline) ? pipeline.map((stage) => transformStageEntry(stage)) : transformExpressions(pipeline, 'project');
+}
+
 function transformStageEntry(stage: unknown): unknown {
     if (!isPlainExpressionRecord(stage)) {
         return transformExpressions(stage, 'project');
@@ -84,7 +88,16 @@ function transformStageEntry(stage: unknown): unknown {
     const result: Record<string, unknown> = {};
     for (const [key, current] of entries) {
         const context = getStageContext(key);
-        result[key] = transformStageValue(current, context);
+        if (key === '$facet' && isPlainExpressionRecord(current)) {
+            result[key] = Object.fromEntries(Object.entries(current).map(([name, pipeline]) => [name, transformPipeline(pipeline)]));
+        } else if ((key === '$lookup' || key === '$unionWith' || key === '$merge') && isPlainExpressionRecord(current)) {
+            const nested = key === '$merge' ? 'whenMatched' : 'pipeline';
+            const value = transformStageValue(current, 'project') as Record<string, unknown>;
+            if (Array.isArray(current[nested])) value[nested] = transformPipeline(current[nested]);
+            result[key] = value;
+        } else {
+            result[key] = transformStageValue(current, context);
+        }
     }
     return result;
 }
@@ -107,7 +120,7 @@ function transformStageValue(value: unknown, context: StageContext): unknown {
     const entries = Object.entries(value as Record<string, unknown>);
     const result: Record<string, unknown> = {};
     for (const [key, current] of entries) {
-        result[key] = transformStageValue(current, context);
+        result[key] = key === '$literal' ? current : transformStageValue(current, context);
     }
     return result;
 }

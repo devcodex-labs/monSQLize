@@ -16,7 +16,9 @@ export interface PoolConfig {
     healthCheck?: {
         enabled?: boolean;
         interval?: number;
+        /** Logical deadline; a timed-out underlying ping still occupies its in-flight slot. */
         timeout?: number;
+        /** Completed failures required before the pool is marked down. */
         retries?: number;
     };
 }

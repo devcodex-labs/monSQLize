@@ -7,7 +7,7 @@
 import { PopulatePromise } from './populate-promise';
 import type { PopulatePath, ModelCollectionLike } from './populate-promise';
 import type { UpdateResult } from '../../../types/collection';
-import { applyModelSoftDeleteFilter } from './model-write-helpers';
+import { applyModelSoftDeleteFilter, applyModelVersionIncrement, type ModelVersionConfig } from './model-write-helpers';
 
 type SoftDeleteConfig = { enabled: boolean; field: string; type: string; ttl: number | null } | null;
 type RestoreResult = Pick<UpdateResult, 'modifiedCount'> & Partial<UpdateResult>;
@@ -15,6 +15,7 @@ type RestoreResult = Pick<UpdateResult, 'modifiedCount'> & Partial<UpdateResult>
 type SoftDeleteContext<TDocument> = {
     collection: ModelCollectionLike<TDocument>;
     softDeleteConfig: SoftDeleteConfig;
+    versionConfig?: ModelVersionConfig;
     hydrateDocuments: (docs: Array<TDocument | null | undefined>) => Array<TDocument & Record<string, unknown>>;
     hydrateDocument: (doc: TDocument | null | undefined) => (TDocument & Record<string, unknown>) | null;
     populateDocuments: (docs: Array<TDocument & Record<string, unknown>>, paths: PopulatePath[]) => Promise<Array<TDocument & Record<string, unknown>>>;
@@ -26,40 +27,6 @@ function deletedFilter(filter: unknown, softDeleteConfig: SoftDeleteConfig): unk
         return filter ?? {};
     }
     return applyModelSoftDeleteFilter(filter, { onlyDeleted: true }, softDeleteConfig);
-}
-
-export function filterVisibleBySoftDelete<TDocument>(
-    docs: Array<TDocument | null | undefined>, options: unknown, config: SoftDeleteConfig,
-): TDocument[] {
-    if (!config?.enabled) return docs.filter((doc): doc is TDocument => Boolean(doc));
-    const rawOptions = (options ?? {}) as Record<string, unknown>;
-    applyModelSoftDeleteFilter({}, rawOptions, config);
-    if (rawOptions.withDeleted) return docs.filter((doc): doc is TDocument => Boolean(doc));
-    return docs.filter((doc): doc is TDocument => {
-        if (!doc) return false;
-        const value = (doc as Record<string, unknown>)[config.field];
-        const deleted = config.type === 'boolean' ? value === true : value !== undefined && value !== null;
-        return rawOptions.onlyDeleted ? deleted : !deleted;
-    });
-}
-
-export function withSoftDeleteProjection(options: unknown, config: SoftDeleteConfig): { options: unknown; stripField: boolean } {
-    if (!config?.enabled) return { options, stripField: false };
-    const rawOptions = (options ?? {}) as Record<string, unknown>;
-    const field = config.field;
-    const projection = rawOptions.projection ?? rawOptions.project;
-    if (Array.isArray(projection)) {
-        if (projection.includes(field)) return { options, stripField: false };
-        return { options: { ...rawOptions, projection: [...projection, field] }, stripField: true };
-    }
-    if (!projection || typeof projection !== 'object') return { options, stripField: false };
-    const projectionRecord = projection as Record<string, unknown>;
-    if (projectionRecord[field] === 1 || projectionRecord[field] === true) return { options, stripField: false };
-    const inclusion = Object.entries(projectionRecord).some(([key, value]) => key !== '_id' && (value === 1 || value === true));
-    const nextProjection = { ...projectionRecord };
-    if (inclusion) nextProjection[field] = 1;
-    else delete nextProjection[field];
-    return { options: { ...rawOptions, projection: nextProjection }, stripField: true };
 }
 
 export function applySoftDeleteFindPageOptions(options: unknown, config: SoftDeleteConfig): unknown {
@@ -156,7 +123,7 @@ export function restoreSoftDeletedDocuments<TDocument>(
     }
     return context.collection.updateOne(
         deletedFilter(filter, softDeleteConfig),
-        { $unset: { [softDeleteConfig.field]: 1 } },
+        applyModelVersionIncrement({ $unset: { [softDeleteConfig.field]: 1 } }, context.versionConfig ?? null),
         options,
     );
 }
@@ -172,7 +139,7 @@ export function restoreManySoftDeletedDocuments<TDocument>(
     }
     return context.collection.updateMany(
         deletedFilter(filter, softDeleteConfig),
-        { $unset: { [softDeleteConfig.field]: 1 } },
+        applyModelVersionIncrement({ $unset: { [softDeleteConfig.field]: 1 } }, context.versionConfig ?? null),
         options,
     );
 }

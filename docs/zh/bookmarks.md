@@ -1,5 +1,7 @@
 ﻿# Bookmark 维护 API 文档
 
+书签键保留排序字段顺序、BSON/RegExp 类型以及 `let` 内文档的字段顺序。预热、读取、精确列出与精确清理共用生效的 ObjectId 转换、limit 上限、游标策略及结果选项，包括 `let` 和 `collation`。已定义的顶层选项覆盖嵌套 `options`，生效值相同则身份相同。`v4` 键冷启动；旧条目按原 TTL 退出，或使用集合级书签清理移除。
+
 ## 概述
 
 monSQLize 提供了三个 Bookmark 维护 API，用于管理 findPage 的 bookmark 缓存。这些 API 适用于运维调试和性能优化场景。

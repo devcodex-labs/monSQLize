@@ -2,6 +2,8 @@
 
 Model 层提供 relations 和 populate 功能，让你轻松处理集合之间的关联关系。
 
+`deleteOneWithRelations()` 基于最终 `before` hook 选定的目标与最终 session 检查关系，再将写入绑定到该目标及 filter。hook 可合法改参，但不能绕过声明关系检查，也不能把普通软删除切换为 force。`after` 接收原始写入结果，之后才包装 `{ result, usage }`。`forceDeleteWithRelations()` 保留不执行 Model hook 的显式物理删除路径。这些检查不提供并发 writer 之间的原子引用完整性；需要该保证时，应使用所需事务和应用协调。
+
 本页 Model schema 示例使用 monSQLize 传入的 runtime 作用域 `s` 命名空间。应用代码不需要为了这些示例导入 root `schema-dsl` 入口。
 
 ---

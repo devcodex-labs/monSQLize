@@ -1,5 +1,7 @@
 # Model API 文档
 
+启用 version 时，软删除和恢复（包括批量及别名路径）都会推进版本；此前 hydrate 的文档应重新读取后再保存。受保护关系删除检查最终 `before` hook 的 filter/session，写入保留该业务条件并绑定已检查的 `_id`。普通受保护删除保留软删除，显式 force 路径不执行 Model hook。Model `findByIds` 在同一次查询中先过滤可见性、再执行原投影，覆盖计算及 id-only 投影；使用最终 hook 选项并保留 after 改结果。写 hook 工厂取得公开 ModelInstance；插入 defaults 在 before hook 前计算一次，保留改参/改结果语义，before 抛错阻断写入，v1 after 抛错不会撤销已完成写入。CJS 与 ESM 入口均导出 ModelInstance。
+
 Model 层在 MongoDB runtime 之上提供 schema 校验、自定义方法、生命周期钩子、relations 和 Model 作用域写入能力。它不会隐藏 collection 访问，而是把重复的文档工作流收口到稳定的 Model 表面。
 
 3.3.1 补丁迁移说明：文档实例的 `remove()` 现在遵循 Model 删除 hook 和软删除规则。boolean 软删除仅把 `true` 视为已删除；`false`、`null`、字段缺失均可见。严格版本更新会枚举全部匹配候选，不受公开 `find` 默认上限影响；业务条件变化或文档被并发删除计为 skipped，而不是版本冲突。populate 的 `skip`/`limit` 按每个父文档执行；不限量关联结果仍可能占用较多内存。

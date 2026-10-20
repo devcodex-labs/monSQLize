@@ -1,5 +1,7 @@
 # Cache Invalidation
 
+When write invalidation is enabled, null-before upserts, matched increments and partial updateMany/batch failures also schedule invalidation. Managed transactions retain intents until commit and discard them on abort; ended transactions do not broadcast new intents. Partial insertBatch results count only driver-confirmed inserts; candidate/preallocated IDs alone are not success evidence. Existing opt-out controls remain effective.
+
 Cache scopes include a data-source fingerprint, authentication identity, pool, database, collection and optional instance identity. Keys contain configuration digests, never raw connection URIs or passwords. Registered pools sharing the same CacheLike object, instance namespace and source host configuration invalidate together; separate sources have isolated result caches. Aliases with different host configurations pointing at the same source need consistent endpoints or explicit invalidation of the related pools. Custom clients without connection configuration use object identities for isolation and conservatively invalidate registered routes.
 
 After upgrading, query caches and bookmarks start cold. Old-format entries are not read and Redis is never flushed globally. Existing TTL/cleanup policies reclaim old entries; upgrade all application instances sharing the cache.

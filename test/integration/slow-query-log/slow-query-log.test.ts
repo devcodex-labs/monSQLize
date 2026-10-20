@@ -1,5 +1,6 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { MongoClient } from 'mongodb';
 import { createMemoryServerBootstrap } from '../../bootstrap/memory-server';
 
 const MonSQLize = require('../../../dist/cjs/index.cjs');
@@ -15,6 +16,38 @@ describe('P4-C slow-query-log integration', () => {
 
     after(async () => {
         await bootstrap.teardown();
+    });
+
+    it('AR05 closes a real late client and keeps a shared business connection usable', async () => {
+        const client = new MongoClient(uri);
+        let release!: () => void;
+        let entered!: () => void;
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        const started = new Promise<void>(resolve => { entered = resolve; });
+        let closes = 0;
+        const originalClose = client.close.bind(client);
+        client.close = async () => { closes++; await originalClose(); };
+        const storage = new MonSQLize.MongoDBSlowQueryLogStorage({ uri, useBusinessConnection: false }, null, null, async () => {
+            await client.connect(); entered(); await gate; return client;
+        }, { autoCreateIndexes: false });
+        const initializing = storage.initialize();
+        const rejected = assert.rejects(initializing, { code: 'CONNECTION_CLOSED' });
+        try {
+            await Promise.race([started, initializing]);
+            const closing = storage.close();
+            release();
+            await rejected;
+            await closing;
+            assert.equal(closes, 1);
+        } finally { release(); await initializing.catch(() => undefined); await storage.close(); await originalClose(); }
+        const shared = new MongoClient(uri);
+        await shared.connect();
+        try {
+            const sharedStorage = new MonSQLize.MongoDBSlowQueryLogStorage({}, shared, null, undefined, { autoCreateIndexes: false });
+            await sharedStorage.initialize();
+            await sharedStorage.close();
+            assert.equal((await shared.db().command({ ping: 1 })).ok, 1);
+        } finally { await shared.close(); }
     });
 
     it('records and queries slow query logs on a real Mongo connection', async () => {

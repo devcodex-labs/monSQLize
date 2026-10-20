@@ -1,4 +1,5 @@
 import type { Collection, Document } from 'mongodb';
+import { getModelQueryFilter } from '../../../core/model-query-context';
 
 import type {
     CacheInvalidationEntry,
@@ -154,7 +155,11 @@ export function buildFindByIdsCacheKey<TSchema extends Document = Document>(
 ): string {
     const uniqueIds = Array.from(new Set(ids.map((id) => parseRequiredObjectId(id).toString())));
     const namespace = buildCollectionCacheNamespace(collection, defaults);
-    return `findByIds:${namespace}:${stableCacheKeyString({ ids: uniqueIds, options: buildResultCacheKeyOptions(options ?? {}) })}`;
+    const key = `findByIds:${namespace}:${stableCacheKeyString({ ids: uniqueIds, options: buildResultCacheKeyOptions(normalizeFindProjectionOptions(options ?? {})) })}`;
+    const visibility = getModelQueryFilter(options);
+    return visibility && Object.keys(visibility).length > 0
+        ? `${key}:model:${hashPayload(stableCacheKeyString(visibility))}`
+        : key;
 }
 
 export function buildFindPageCacheKey<TSchema extends Document = Document>(

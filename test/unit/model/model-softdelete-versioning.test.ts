@@ -30,6 +30,13 @@ describe('Model softDelete / versioning behavior', () => {
             schema: (dsl: any) => dsl({}),
             options: { timestamps: true },
         });
+        MonSQLize.Model.define('sd_version', {
+            schema: {}, options: { softDelete: true, version: true, autoIndex: false },
+        });
+        MonSQLize.Model.define('sd_version_bool', {
+            schema: {}, options: { softDelete: { field: 'removed', type: 'boolean' }, version: true, autoIndex: false },
+        });
+        MonSQLize.Model.define('b04_protected', { schema: {}, options: { autoIndex: false } });
 
         runtime = new MonSQLize({
             type: 'mongodb',
@@ -51,7 +58,66 @@ describe('Model softDelete / versioning behavior', () => {
             db.collection('sd_bool').deleteMany({}),
             db.collection('ver_items').deleteMany({}),
             db.collection('pipeline_ts_items').deleteMany({}),
+            db.collection('sd_version').deleteMany({}),
+            db.collection('sd_version_bool').deleteMany({}),
+            db.collection('b04_protected').deleteMany({}),
         ]);
+    });
+
+    it('B03 rejects stale saves after soft deletion and restore for both marker types', async () => {
+        for (const [name, marker] of [['sd_version', 'deletedAt'], ['sd_version_bool', 'removed']]) {
+            const model = runtime.model(name);
+            const { insertedId } = await model.insertOne({ name: 'before' });
+            const stale = await model.findOne({ _id: insertedId });
+            await model.deleteOne({ _id: insertedId });
+            let raw = await model.collection.raw().findOne({ _id: insertedId });
+            assert.equal(raw.version, 1);
+            assert.ok(raw[marker]);
+            stale.name = 'stale';
+            await assert.rejects(() => stale.save());
+            assert.equal(await model.findOne({ _id: insertedId }), null);
+            await model.restore({ _id: insertedId });
+            raw = await model.collection.raw().findOne({ _id: insertedId });
+            assert.equal(raw.version, 2);
+            assert.equal(raw[marker], undefined);
+            await assert.rejects(() => stale.save());
+            const current = await model.findOne({ _id: insertedId });
+            current.name = 'current';
+            await current.save();
+            assert.equal((await model.findOne({ _id: insertedId })).name, 'current');
+
+            await model.insertMany([{ group: 'many' }, { group: 'many' }]);
+            await model.deleteMany({ group: 'many' });
+            const deleted = await model.collection.raw().find({ group: 'many' }).toArray();
+            assert.deepEqual(deleted.map((doc: any) => doc.version), [1, 1]);
+            await model.restoreMany({ group: 'many' });
+            const restored = await model.collection.raw().find({ group: 'many' }).toArray();
+            assert.deepEqual(restored.map((doc: any) => doc.version), [2, 2]);
+        }
+    });
+
+    it('B04 retains business filters when a protected target changes after its read', async () => {
+        const model = runtime.model('b04_protected');
+        const { insertedId } = await model.insertOne({ status: 'draft', tenant: 'a' });
+        const original = model.collection.findOne.bind(model.collection);
+        let injected = false;
+        model.collection.findOne = async (...args: any[]) => {
+            const document = await original(...args);
+            if (!injected && document) {
+                injected = true;
+                await model.collection.raw().updateOne({ _id: insertedId }, { $set: { status: 'approved' } });
+            }
+            return document;
+        };
+        try {
+            const blocked = await model.deleteOneWithRelations({ status: 'draft', tenant: 'a' });
+            assert.equal(blocked.result.deletedCount, 0);
+            assert.equal((await model.collection.raw().findOne({ _id: insertedId })).status, 'approved');
+            const stable = await model.deleteOneWithRelations({ status: 'approved', tenant: 'a' });
+            assert.equal(stable.result.deletedCount, 1);
+        } finally {
+            model.collection.findOne = original;
+        }
     });
 
     // ── config resolution ─────────────────────────────────────────────────────
