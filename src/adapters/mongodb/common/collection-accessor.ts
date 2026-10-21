@@ -16,7 +16,6 @@ import { ChangeStream, Collection, Db, Document } from 'mongodb';
 import { ErrorCodes, createError } from '../../../core/errors';
 import type { Logger } from '../../../core/logger';
 import { normalizeProjection } from '../../../utils/normalize';
-import { snapshotPipelineValue } from '../queries/pipeline-snapshot';
 import {
     type BookmarkCacheLike,
     type BookmarkClearResult,
@@ -351,19 +350,9 @@ export class MongoCollectionAccessor<TSchema extends Document = Document> {
         pipeline: Document[] = [],
         options?: Parameters<Collection<TSchema>['aggregate']>[1],
     ) {
-        const pipelineSnapshot = snapshotPipelineValue(pipeline);
-        const normalizedPipeline = this.management.defaults?.autoConvertObjectId
-            ? pipelineSnapshot.map((stage) => convertObjectIdStrings(
-                stage as unknown,
-                '',
-                0,
-                new WeakSet(),
-                this.management.defaults?.autoConvertObjectId,
-            ) as Document)
-            : pipelineSnapshot;
         return createAggregateChain(
             this.collectionRef,
-            normalizedPipeline,
+            pipeline,
             options,
             this.management.defaults,
             this.management.queryCache,

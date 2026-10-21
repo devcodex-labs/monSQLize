@@ -3,12 +3,38 @@ import assert from 'node:assert/strict';
 import { BSON, ObjectId, Timestamp, Binary } from 'mongodb';
 import { snapshotPipelineValue } from '../../../src/adapters/mongodb/queries/pipeline-snapshot';
 import { createAggregateChain } from '../../../src/adapters/mongodb/queries';
+import { prepareAggregatePipeline } from '../../../src/adapters/mongodb/queries/aggregate-pipeline';
+import { buildAggregateCacheKey, buildPreparedAggregateCacheKey } from '../../../src/adapters/mongodb/queries/query-cache-keys';
 
 function wire(pipeline: unknown): unknown {
     return BSON.deserialize(BSON.serialize({ pipeline })).pipeline;
 }
 
 describe('pipeline capture at the driver document boundary', () => {
+    it('uses identical raw descriptor and prepared read keys without repeating serialization', () => {
+        const { expr } = require('../../../dist/cjs/index.cjs');
+        const collection = { namespace: 'db.items', collectionName: 'items' } as never;
+        const hex = new ObjectId().toHexString();
+        const marker = { __expr__: 'not valid(', __compiled__: false };
+        for (const enabled of [false, true]) {
+            let calls = 0;
+            const pipeline = [{ toBSON() { calls++; return { $match: { _id: hex } }; } },
+                { $project: { value: expr(`LITERAL("${hex}")`), payload: { $literal: marker }, timestamp: { $literal: Timestamp.fromNumber(123) } } }];
+            const defaults = { autoConvertObjectId: enabled, maxTimeMS: 1000 };
+            const options = { let: { value: 'kept' }, collation: { locale: 'simple' } };
+            const prepared = prepareAggregatePipeline(pipeline, defaults);
+            assert.equal(calls, 1);
+            assert.equal(prepared[0].$match._id instanceof ObjectId, enabled);
+            assert.equal(prepared[1].$project.value.$literal, hex);
+            assert.deepEqual(prepared[1].$project.payload.$literal, marker);
+            const key = buildPreparedAggregateCacheKey(collection, defaults, prepared, options);
+            assert.equal(buildPreparedAggregateCacheKey(collection, defaults, prepared, options), key);
+            assert.equal(calls, 1);
+            assert.equal(buildAggregateCacheKey(collection, defaults, pipeline, options), key);
+            assert.equal(calls, 2);
+        }
+    });
+
     it('prepares hooks exactly once with the compiled pipeline passed to the driver', async () => {
         let prepared: unknown, executed: unknown, calls = 0;
         const collection = { namespace: 'db.items', collectionName: 'items', aggregate(pipeline: unknown) {

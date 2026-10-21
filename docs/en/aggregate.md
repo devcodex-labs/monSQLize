@@ -2,7 +2,7 @@
 
 Pipeline documents are captured when the chain is created, before asynchronous cache or driver work. Later edits to the caller's stages or write targets do not change that chain's `await`, `toArray()`, `stream()` or `explain()` execution. Document classes, Maps and `toBSON()` conversions are materialized at capture time; BSON values retain their serialized meaning. Write-path checks and execution use the captured target.
 
-DSL-compiled `$merge` / `$out` targets also drive write-path checks and target-cache invalidation, respecting the existing `autoInvalidate` / `cache.invalidate` controls. Model aggregation retains its Model source; a rejected check does not access the driver or cache.
+Write-path checks and target-cache invalidation use the same prepared pipeline after supported expressions, including DSL values in `$merge.into`, have been compiled, respecting the existing `autoInvalidate` / `cache.invalidate` controls. Model aggregation retains its Model source; a rejected check does not access the driver or cache.
 
 When `meta: true` is enabled, awaiting the chain and calling `toArray()` both return a `ResultWithMeta` envelope; read its `data` field for the result array.
 

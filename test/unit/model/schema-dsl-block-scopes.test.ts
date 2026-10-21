@@ -4,6 +4,18 @@ import { isClosureSensitiveFunctionSource } from '../../../src/capabilities/mode
 
 describe('schema extension lexical block identity', () => {
     const cases: Array<[string, boolean]> = [
+        ['() => { const tools = { async*factory() { yield 1; } }; void tools; return { type: "string" }; }', false],
+        ['() => { const tools = { async*factory() { yield factory; } }; void tools; return { type: "string" }; }', true],
+        ['factory() { return { type: "string", const: factory }; }', true],
+        ['factory() { const apply = () => factory; return { type: "string", const: apply() }; }', true],
+        ['factory() { const held = factory; const apply = () => held; return { type: "string", const: apply() }; }', true],
+        ['factory() { const apply = value => value; return { type: "string", const: apply("stable") }; }', false],
+        ['factory() { return { type: "string" }; }', false],
+        ['function factory() { const again = factory; void again; return { type: "string" }; }', false],
+        ['async(value = factory) => ({ type: "string", const: value })', true],
+        ['({ make = () => factory } = {}) => ({ type: "string", const: make() })', true],
+        ['({ make = () => 1 } = {}) => ({ type: "string", minLength: make() })', false],
+        ['𐐀 => ({ type: "string", const: 𐐀 })', false],
         ['() => { let n = 0; n++\n function local() { return n; }\n return { type: "string", minLength: local() }; }', false],
         ['() => { let n = 2; n--\n function local() { return n; }\n return { type: "string", minLength: local() }; }', false],
         ['() => { const async = 1; const f = async\n function local() { return f; }\n return { type: "string", minLength: local() }; }', false],
@@ -40,4 +52,7 @@ describe('schema extension lexical block identity', () => {
             assert.equal(isClosureSensitiveFunctionSource(source), expected);
         });
     }
+    it('does not treat an inferred display name as an arrow lexical binding', () => {
+        assert.equal(isClosureSensitiveFunctionSource('() => ({ type: "string", const: factory })', 'factory'), true);
+    });
 });

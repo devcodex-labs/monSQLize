@@ -110,6 +110,25 @@ function flattenComparableValues(value: unknown): unknown[] {
     return value === undefined || value === null ? [] : [value];
 }
 
+/** Detects values whose string grouping key cannot preserve MongoDB equality. */
+function requiresNativePopulateKeys(values: readonly unknown[]): boolean {
+    const families = new Map<string, string>();
+    for (const value of values) {
+        let family: string;
+        if (value instanceof Date) family = 'date';
+        else if (value && typeof value === 'object'
+            && (value as { _bsontype?: string })._bsontype === 'ObjectId'
+            && typeof (value as { toHexString?: unknown }).toHexString === 'function') family = 'objectId';
+        else if (['string', 'number', 'boolean', 'bigint'].includes(typeof value)) family = typeof value;
+        else return true;
+        const key = toKey(value);
+        const previous = families.get(key);
+        if (previous !== undefined && previous !== family) return true;
+        families.set(key, family);
+    }
+    return false;
+}
+
 function resolveNestedPopulatePaths(value: PopulateConfig['populate']): PopulatePath[] {
     if (value === undefined) {
         return [];
@@ -199,7 +218,9 @@ export async function populateModelPath<TDocument>(
     }
 
     const localValues = docs.map((doc) => getByPath(doc, relation.localField));
-    const keys = unique(localValues.flatMap((value) => flattenComparableValues(value)));
+    const rawKeys = localValues.flatMap((value) => flattenComparableValues(value));
+    const nativeKeys = requiresNativePopulateKeys(rawKeys);
+    const keys = nativeKeys ? rawKeys : unique(rawKeys);
 
     if (config.limit !== undefined && (!Number.isSafeInteger(config.limit) || config.limit < 0)) {
         throw createError(ErrorCodes.INVALID_ARGUMENT, 'populate limit must be a non-negative integer');
@@ -267,8 +288,8 @@ export async function populateModelPath<TDocument>(
     // MongoDB owns ordering and collation equality. Binary reads can stay batched.
     const hasSort = Boolean(config.sort && Object.keys(config.sort).length > 0);
     const hasWindow = hasSort || config.limit !== undefined || config.skip !== undefined;
-    let requiresNativeMatching = false;
-    if (!hasWindow && keys.some((key) => typeof key === 'string')) {
+    let requiresNativeMatching = nativeKeys;
+    if (!hasWindow && !requiresNativeMatching && rawKeys.some((key) => typeof key === 'string')) {
         try {
             const collation = await relatedCollection[MODEL_COLLECTION_COLLATION]?.();
             requiresNativeMatching = collation === undefined || (collation !== null && collation.locale !== 'simple');
@@ -281,7 +302,7 @@ export async function populateModelPath<TDocument>(
             ...(config.limit !== undefined ? { limit: config.limit } : {}),
         };
         for (const [index, doc] of docs.entries()) {
-            const parentKeys = unique(flattenComparableValues(localValues[index]));
+            const parentKeys = flattenComparableValues(localValues[index]);
             const rows = parentKeys.length > 0 ? await readForKeys(parentKeys, scopedOptions) : [];
             const hydrated = await hydrateRelated(rows);
             const matches = dedupeDocuments(hydrated);

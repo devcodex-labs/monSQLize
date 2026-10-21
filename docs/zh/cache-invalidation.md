@@ -59,6 +59,10 @@ await products.updateOne(
 
 对于聚合写入管道（`$merge` / `$out`），descriptor 失效会按写入目标集合解析。
 
+aggregate descriptor 应传入与缓存读取相同的原始管道及影响结果的选项，包括受支持的 `expr` 值。读取与失效采用相同的 ObjectId 转换和表达式语义，已准备的 literal 值不会再次解释。无效 descriptor 仍按 best effort 处理，不撤销成功写入。事务保留登记时解析的 key，提交后失效，回滚则丢弃。
+
+本次 key 代次更新会让 aggregate 缓存冷启动，避免复用此前混淆 literal 字符串和 ObjectId 的条目；按操作失效仍覆盖新旧两代。混合版本部署期间优先按操作或命名空间失效，因为旧进程的精确 descriptor 无法重建新 key。
+
 | Descriptor 形态 | 作用 |
 | --- | --- |
 | `{ operation, query, options }` 或 `{ op, query, options }` | 重建 `find`、`findOne` 或 `count` 的精确读缓存 key。 |

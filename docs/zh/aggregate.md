@@ -2,7 +2,7 @@
 
 管道文档在创建链时固定，早于异步缓存或驱动工作。调用方之后修改阶段或写目标，不会改变该链的 `await`、`toArray()`、`stream()`、`explain()` 执行。文档类、Map 和 `toBSON()` 转换在捕获时物化，BSON 值保留序列化语义。写路径检查与执行使用同一份目标。
 
-DSL 编译得到的 `$merge` / `$out` 目标同样用于写路径检查和目标缓存失效，失效仍遵从既有 `autoInvalidate` / `cache.invalidate` 控制。Model 聚合保留 Model 来源标记；检查拒绝时不会访问驱动或缓存。
+写路径检查和目标缓存失效使用支持表达式编译后的同一份管道，其中包括 `$merge.into` 中的 DSL 值；失效仍遵从既有 `autoInvalidate` / `cache.invalidate` 控制。Model 聚合保留 Model 来源标记；检查拒绝时不会访问驱动或缓存。
 
 开启 `meta: true` 时，等待链和调用 `toArray()` 都返回 `ResultWithMeta` 信封，结果数组位于 `data` 字段。
 

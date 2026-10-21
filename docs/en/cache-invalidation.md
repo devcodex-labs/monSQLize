@@ -59,6 +59,10 @@ Supported descriptor operations: `find`, `findOne`, `count`, `findPage`, `aggreg
 
 For aggregate write pipelines (`$merge` / `$out`), descriptor invalidation is resolved against the write target collection.
 
+For an aggregate descriptor, pass the same original pipeline and result-affecting options as the cached read, including supported `expr` values. Captured pipelines use the same ObjectId conversion and expression semantics for reading and invalidation; prepared literal values are not interpreted again. Invalid descriptors remain best effort and do not undo a successful write. Transaction intents retain the resolved key until commit; abort discards it.
+
+Aggregate caches start cold after this key-generation update, so entries that previously conflated literal strings and ObjectIds are not reused. Operation-wide invalidation still covers both generations. During a mixed-version rollout, prefer operation-wide or namespace-wide invalidation because exact descriptors from older processes cannot rebuild the new keys.
+
 | Descriptor shape | Effect |
 | --- | --- |
 | `{ operation, query, options }` or `{ op, query, options }` | Rebuilds the exact read cache key for `find`, `findOne`, or `count`. |

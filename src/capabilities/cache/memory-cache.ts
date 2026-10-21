@@ -13,10 +13,12 @@ class MemoryCache extends BaseMemoryCache {
 
     override getMany(keys: string[]): Record<string, unknown> {
         if (!keys.includes('__proto__')) return super.getMany(keys);
-        if (keys.some((key) => typeof key !== 'string' || key.length === 0)) return super.getMany(keys);
+        for (const key of keys) {
+            if (typeof key !== 'string' || key.length === 0) return super.getMany(keys);
+        }
         const result: Record<string, unknown> = {};
         for (const key of keys) {
-            const value = this.get(key);
+            const value = super.get(key);
             if (value !== undefined) Object.defineProperty(result, key, { value, enumerable: true, configurable: true, writable: true });
         }
         return result;
@@ -24,10 +26,13 @@ class MemoryCache extends BaseMemoryCache {
 
     override getRemainingTtlMany(keys: string[]): Record<string, number | null> {
         if (!keys.includes('__proto__')) return super.getRemainingTtlMany(keys);
+        for (const key of keys) {
+            if (typeof key !== 'string' || key.length === 0) return super.getRemainingTtlMany(keys);
+        }
         const result = super.getRemainingTtlMany(keys.filter((key) => key !== '__proto__'));
         for (const key of keys) {
             if (key !== '__proto__') continue;
-            const value = this.getRemainingTtl(key);
+            const value = super.getRemainingTtl(key);
             if (value !== undefined) Object.defineProperty(result, key, { value, enumerable: true, configurable: true, writable: true });
         }
         return result;

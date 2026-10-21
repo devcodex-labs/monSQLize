@@ -13,7 +13,7 @@ import type {
     WriteCacheControlOptions,
 } from '../../../types/internal/query';
 import {
-    buildAggregateCacheKey,
+    buildPreparedAggregateCacheKey,
     buildCountCacheKey,
     buildDistinctCacheKey,
     buildFindByIdsCacheKey,
@@ -22,6 +22,7 @@ import {
     buildFindOneCacheKey,
     buildFindPageCacheKey,
 } from '../queries/query-cache-keys';
+import { prepareAggregatePipeline } from '../queries/aggregate-pipeline';
 
 type AggregateWriteTarget = {
     dbName?: string;
@@ -300,7 +301,14 @@ function entryToIntents<TSchema extends Document>(
         }
     } else if (operation === 'aggregate') {
         if (Array.isArray(entry.pipeline) || descriptorOptions !== undefined) {
-            return linkedQueryKeyIntents(buildAggregateCacheKey(collection, defaults, entry.pipeline, descriptorOptions), defaults);
+            let prepared: Document[];
+            try {
+                prepared = prepareAggregatePipeline(entry.pipeline, defaults);
+            } catch {
+                // A bad best-effort descriptor must not reject a write that already succeeded.
+                return [];
+            }
+            return linkedQueryKeyIntents(buildPreparedAggregateCacheKey(collection, defaults, prepared, descriptorOptions), defaults);
         }
     } else if (operation === 'findPage') {
         const findPageOptions = isRecord(entry.options)

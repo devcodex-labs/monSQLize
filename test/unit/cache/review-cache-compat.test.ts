@@ -109,6 +109,53 @@ describe('review cache adapter and own-key contracts', { timeout: 10000 }, () =>
         });
     }
 
+    for (const shape of ['subclass', 'instance']) {
+        it(`keeps scalar overrides out of value and TTL batches (${shape})`, async () => {
+            const ESM = await import(pathToFileURL(path.join(process.cwd(), 'dist/esm/index.mjs')).href);
+            for (const Runtime of [CJS, ESM.default]) {
+                let getCalls = 0, ttlCalls = 0;
+                class Decorated extends Runtime.MemoryCache {
+                    constructor(options: unknown) { super(options); }
+                    get() { getCalls++; return 'decorated'; }
+                    getRemainingTtl() { ttlCalls++; return 12345; }
+                }
+                const cache = shape === 'subclass' ? new Decorated({ cleanupInterval: 0 }) : new Runtime.MemoryCache({ cleanupInterval: 0 });
+                if (shape === 'instance') {
+                    cache.get = () => { getCalls++; throw new Error('scalar get must not run'); };
+                    cache.getRemainingTtl = () => { ttlCalls++; throw new Error('scalar TTL must not run'); };
+                }
+                try {
+                    cache.setMany(Object.fromEntries([['a', 'A'], ['__proto__', 'P']]), 0);
+                    cache.resetStats();
+                    assert.deepEqual(cache.getMany(['a']), { a: 'A' });
+                    assert.deepEqual(cache.getMany(['__proto__', 'a', '__proto__', 'missing']), Object.fromEntries([['__proto__', 'P'], ['a', 'A']]));
+                    assert.equal(getCalls, 0);
+                    assert.equal(cache.getStats().hits, 4); assert.equal(cache.getStats().misses, 1);
+                    assert.deepEqual(cache.getRemainingTtlMany(['a', '__proto__']), Object.fromEntries([['a', null], ['__proto__', null]]));
+                    assert.equal(ttlCalls, 0);
+                    if (shape === 'subclass') {
+                        assert.equal(cache.get('a'), 'decorated'); assert.equal(cache.getRemainingTtl('a'), 12345);
+                    }
+                } finally { cache.destroy(); }
+            }
+        });
+    }
+
+    it('delegates invalid sparse special-key batches before value reads', () => {
+        const cache = new CJS.MemoryCache({ cleanupInterval: 0 });
+        const trailing = ['__proto__']; trailing.length = 2;
+        const leading = new Array<string>(2); leading[1] = '__proto__';
+        try {
+            cache.set('__proto__', 'p'); cache.resetStats();
+            for (const keys of [trailing, leading, ['__proto__', '']]) {
+                const before = cache.getStats();
+                assert.throws(() => cache.getMany(keys), TypeError);
+                assert.equal(cache.getStats().hits, before.hits); assert.equal(cache.getStats().misses, before.misses);
+                assert.throws(() => cache.getRemainingTtlMany(keys), TypeError);
+            }
+        } finally { cache.destroy(); }
+    });
+
     it('preserves MemoryCache validation, duplicate statistics and input-order LRU', () => {
         const cache = new CJS.MemoryCache({ cleanupInterval: 0, maxEntries: 2 });
         try {

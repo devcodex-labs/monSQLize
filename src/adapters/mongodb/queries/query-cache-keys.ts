@@ -10,6 +10,7 @@ import { resolveCursorStrategy } from './cursor-strategy';
 import { convertObjectIdStrings } from '../utils/objectid-converter';
 import { DEFAULT_FIND_PAGE_LIMIT, hashPayload } from './find-page-cache-helpers';
 import { snapshotPipelineValue } from './pipeline-snapshot';
+import { prepareAggregatePipeline } from './aggregate-pipeline';
 import {
     buildCollectionCacheNamespace,
     buildResultCacheKeyOptions,
@@ -129,12 +130,22 @@ export function buildAggregateCacheKey<TSchema extends Document = Document>(
     pipeline?: unknown[],
     options?: Record<string, unknown>,
 ): string {
+    return buildPreparedAggregateCacheKey(collection, defaults, prepareAggregatePipeline(pipeline, defaults), options);
+}
+
+/** Serializes the pipeline already used by the driver without repeating conversion or compilation. */
+export function buildPreparedAggregateCacheKey<TSchema extends Document = Document>(
+    collection: Collection<TSchema>,
+    defaults: RuntimeDefaults = {},
+    pipeline: unknown[] = [],
+    options?: Record<string, unknown>,
+): string {
     const executeOptions = {
         ...(defaults.maxTimeMS !== undefined ? { maxTimeMS: defaults.maxTimeMS } : {}),
         ...(options ?? {}),
     };
     const namespace = buildCollectionCacheNamespace(collection, defaults);
-    return `aggregate:${namespace}:${stableCacheKeyString(normalizePipelineForCache(pipeline, defaults), 'document')}:${stableCacheKeyString(buildResultCacheKeyOptions(executeOptions))}`;
+    return `aggregate:${namespace}:prepared-v1:${stableCacheKeyString(pipeline, 'document')}:${stableCacheKeyString(buildResultCacheKeyOptions(executeOptions))}`;
 }
 
 export function buildFindOneByIdCacheKey<TSchema extends Document = Document>(

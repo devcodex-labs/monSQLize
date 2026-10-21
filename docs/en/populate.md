@@ -2,7 +2,9 @@
 
 When a nonempty `sort` is supplied, related documents are read sequentially per parent using MongoDB sorting, including native null/missing, BSON, array and related-collection collation rules. `skip` and `limit` apply within each parent's related query. This increases database queries compared with batching. The parent's collation is not automatically copied to related reads.
 
-Without sorting or a window, non-string relations such as ObjectIds retain batches of up to 200 distinct keys. For string keys, each populate reads the related collection's default collation once in its actual database/pool. Confirmed binary rules retain batching; other rules use per-parent native queries to preserve equality. Missing privileges, unavailable metadata or unknown results also use per-parent queries, so correct matching does not require granting catalog access. Metadata is not cached across calls. This path adds one metadata request and up to one related query per parent.
+Without sorting or a window, unambiguous scalar relations such as ObjectIds retain batches of up to 200 distinct keys. Keys of different BSON types that share a string representation, such as `1` and `'1'`, and complex object keys use per-parent native queries with their original values. Existing ObjectId conversion settings still apply; this path can add one related query per parent.
+
+For other string-key batches, each populate reads the related collection's default collation once in its actual database/pool. Confirmed binary rules retain batching; other rules use per-parent native queries to preserve equality. Missing privileges, unavailable metadata or unknown results also use per-parent queries, so correct matching does not require granting catalog access. Metadata is not cached across calls. This path adds one metadata request and up to one related query per parent.
 
 **Function**: Model layer related query, supports 6 methods ()
 

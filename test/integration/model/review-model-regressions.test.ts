@@ -66,6 +66,49 @@ describe('review model mutation, population and extension contracts', () => {
         }
     });
 
+    it('matches colliding relation key types with native MongoDB before lossy grouping', async () => {
+        MonSQLize.Model.define('parents', { schema: {}, options: { autoIndex: false },
+            relations: { children: { from: 'children', localField: 'key', foreignField: 'owner' } } });
+        const id = new ObjectId();
+        const pairs: unknown[][] = [[1, '1'], [true, 'true'], [new Date(123), new Date(123).toISOString()],
+            [id, id.toHexString()], [{ n: 1 }, { n: 2 }]];
+        for (const mode of [{ label: 'disabled', options: false, convertHex: false }, { label: 'enabled', options: true, convertHex: true },
+            { label: 'excluded', options: { enabled: true, excludeFields: ['owner'] }, convertHex: false }]) {
+            const runtime = new MonSQLize({ type: 'mongodb', databaseName: `repair_typed_relations_${mode.label}`,
+                autoConvertObjectId: mode.options, config: { uri, options: { monitorCommands: true } } });
+            runtimes.add(runtime); await runtime.connect();
+            const db = runtime._adapter.db, events: any[] = [];
+            db.client.on('commandStarted', (event: any) => events.push(event));
+            for (const pair of pairs) for (const values of [pair, [...pair].reverse()]) {
+                await db.collection('parents').deleteMany({}); await db.collection('children').deleteMany({});
+                await db.collection('children').insertMany(values.map((owner, index) => ({ owner, index })));
+                await db.collection('parents').insertMany([{ order: 0, key: values[0] }, { order: 1, key: values[1] }, { order: 2, key: values }]);
+                events.length = 0;
+                const rows = await runtime.model('parents').find({}, { sort: { order: 1 } }).populate({ path: 'children', select: ['index'] });
+                assert.equal(events.filter((event) => event.commandName === 'find' && event.command.find === 'children').length, 3);
+                assert.equal(events.filter((event) => event.commandName === 'listCollections').length, 0);
+                for (const row of rows) {
+                    const rawKeys = Array.isArray(row.key) ? row.key : [row.key];
+                    const queryKeys = rawKeys.map((key: unknown) => mode.convertHex && typeof key === 'string' && /^[a-f\d]{24}$/i.test(key) ? new ObjectId(key) : key);
+                    const expected = await db.collection('children').find({ owner: { $in: queryKeys } }).toArray();
+                    assert.deepEqual(row.children.map((child: any) => child.index).sort(), expected.map((child: any) => child.index).sort());
+                    assert.ok(row.children.every((child: any) => !Object.prototype.hasOwnProperty.call(child, 'owner')));
+                    assert.ok(row.children.every((child: any) => !Object.prototype.hasOwnProperty.call(child, '_id')));
+                }
+            }
+            await db.collection('parents').deleteMany({}); await db.collection('children').deleteMany({});
+            const ids = [new ObjectId(), new ObjectId()];
+            await db.collection('parents').insertMany(ids.map((key) => ({ key: key.toHexString() })));
+            await db.collection('children').insertMany(ids.map((owner) => ({ owner })));
+            events.length = 0;
+            const binary = await runtime.model('parents').find({}).populate('children');
+            assert.deepEqual(binary.map((row: any) => row.children.length), mode.convertHex ? [1, 1] : [0, 0]);
+            assert.equal(events.filter((event) => event.commandName === 'find' && event.command.find === 'children').length, 1);
+            assert.equal(events.filter((event) => event.commandName === 'listCollections').length, 1);
+            await runtime.close(); runtimes.delete(runtime);
+        }
+    });
+
     it('retains collation metadata routing through a pool and an ESM accessor used by CJS Model', async () => {
         const ESM = await import(pathToFileURL(path.join(process.cwd(), 'dist/esm/index.mjs')).href);
         const targetDb = 'repair_populate_pool_target';
@@ -177,6 +220,10 @@ describe('review model mutation, population and extension contracts', () => {
 
     it('rejects different captured factories after block, catch, loop and class shadows end', async () => {
         const makers = [
+            (factory: string) => ({ factory: () => ({ type: 'string', const: factory }) }).factory,
+            (factory: string) => ({ factory() { return { type: 'string', const: factory }; } }).factory,
+            (factory: string) => ({ factory() { const apply = () => factory; return { type: 'string', const: apply() }; } }).factory,
+            (factory: string) => ({ factory() { const held = factory; const apply = () => held; return { type: 'string', const: apply() }; } }).factory,
             (pattern: string) => () => ({ type: 'string', const: pattern }),
             (pattern: string) => () => { const f = function pattern() { return 1; }; void f; return { type: 'string', pattern }; },
             (pattern: string) => () => { { function pattern() { return 1; } void pattern; } return { type: 'string', pattern }; },
@@ -203,6 +250,9 @@ describe('review model mutation, population and extension contracts', () => {
 
     it('permits stable ASI and Unicode factories on a shared runtime without losing expression closures', async () => {
         const sources = [
+            '({ factory: () => { const tools = { async*factory() { yield 1; } }; void tools; return { type: "string" }; } }).factory',
+            '({ factory() { const apply = value => value; return { type: "string", const: apply("stable") }; } }).factory',
+            'function factory() { const again = factory; void again; return { type: "string" }; }',
             '() => { const pattern = "^stable$"\n function local() { return pattern; }\n return { type: "string", pattern: local() }; }',
             '() => { let n = 0; n++\n function local() { return n; }\n return { type: "string", minLength: local() }; }',
             '() => { let n = 2; n--\n function local() { return n; }\n return { type: "string", minLength: local() }; }',

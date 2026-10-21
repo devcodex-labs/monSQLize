@@ -183,7 +183,7 @@ function findMatchingBracketStart(source: string, start: number): number {
     return -1;
 }
 
-function findArrowParameterStart(source: string, arrowIndex: number): number {
+export function findArrowParameterStart(source: string, arrowIndex: number): number {
     let index = arrowIndex - 1;
     while (index >= 0 && /\s/.test(source[index])) {
         index -= 1;
@@ -191,10 +191,9 @@ function findArrowParameterStart(source: string, arrowIndex: number): number {
     if (source[index] === ')') {
         return findMatchingParenStart(source, index);
     }
-    while (index >= 0 && isIdentifierPart(source[index])) {
-        index -= 1;
-    }
-    const identifierStart = index + 1;
+    const identifier = /[$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*$/u.exec(source.slice(0, index + 1));
+    if (!identifier) return -1;
+    const identifierStart = identifier.index;
     const before = source.slice(0, identifierStart).trimEnd();
     if (before.endsWith('async')) {
         const asyncStart = before.length - 'async'.length;
@@ -300,7 +299,7 @@ function getClassMethodNameBinding(header: string, headerStart: number): Functio
     let remaining = header.trim();
     let offset = header.indexOf(remaining);
     for (;;) {
-        const next = remaining.replace(/^(?:static|async|get|set)\s+/, '').trimStart();
+        const next = remaining.replace(/^(?:(?:static|async|get|set)\s+|async(?=\*))/, '').trimStart();
         if (next === remaining) {
             break;
         }
@@ -323,7 +322,7 @@ function getClassMethodNameBinding(header: string, headerStart: number): Functio
 function stripClassMethodModifiers(header: string): string {
     let remaining = header.trim();
     for (;;) {
-        const next = remaining.replace(/^(?:static|async|get|set)\s+/, '').trimStart();
+        const next = remaining.replace(/^(?:(?:static|async|get|set)\s+|async(?=\*))/, '').trimStart();
         if (next === remaining) {
             break;
         }

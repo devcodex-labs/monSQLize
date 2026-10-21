@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { ObjectId, Int32, Long, Decimal128 } from 'mongodb';
 import { createMemoryServerBootstrap } from '../../bootstrap/memory-server';
 import { findByIdsDocuments } from '../../../src/adapters/mongodb/queries/find-by-id';
+import { buildPreparedAggregateCacheKey } from '../../../src/adapters/mongodb/queries/query-cache-keys';
 
 const MonSQLize = require('../../../dist/cjs/index.cjs');
 const plain = (value: unknown) => JSON.parse(JSON.stringify(value));
@@ -118,6 +119,71 @@ describe('review repair query contracts against native MongoDB', () => {
         // A Model source may write to a model-only target using the same compiled pipeline.
         await model.aggregate([{ $limit: 1 }, { $merge: { into: MonSQLize.expr('"blocked_output"') } }]);
         assert.equal(await nativeDb.collection('blocked_output').countDocuments(), 1);
+    });
+
+    it('invalidates supported DSL aggregate descriptors after updates and merge writes', async () => {
+        const target = runtime.collection('descriptor_output');
+        for (const syntax of ['dsl', 'native', 'literal']) for (const write of ['update', 'merge']) {
+            await nativeDb.collection('descriptor_output').deleteMany({}); await runtime.getCache().clear();
+            await nativeDb.collection('descriptor_output').insertOne({ _id: ids[0], score: 1 });
+            const p = [{ $match: { _id: ids[0] } }, { $project: { _id: 0,
+                score: syntax === 'native' ? { $add: ['$score', 1] } : MonSQLize.expr('score+1'),
+                ...(syntax === 'literal' ? { literal: MonSQLize.expr('LITERAL("507f1f77bcf86cd799439011")') } : {}),
+            } }];
+            assert.equal((await target.aggregate(p, { cache: 10000 }))[0].score, 2);
+            const options = { autoInvalidate: true, cache: { invalidate: [{ operation: 'aggregate', pipeline: p }] } };
+            if (write === 'update') await target.updateOne({ _id: ids[0] }, { $set: { score: 9 } }, options);
+            else {
+                await raw.updateOne({ _id: ids[0] }, { $set: { score: 9 } });
+                await collection.aggregate([{ $match: { _id: ids[0] } }, { $merge: { into: 'descriptor_output', whenMatched: 'replace' } }], options);
+            }
+            const actual = await target.aggregate(p, { cache: 10000 });
+            assert.equal(actual[0].score, 10);
+            if (syntax === 'literal') assert.equal(actual[0].literal, '507f1f77bcf86cd799439011');
+        }
+    });
+
+    it('does not reuse legacy aggregate keys that conflated literal strings and ObjectIds', async () => {
+        const target = runtime.collection('descriptor_legacy');
+        await nativeDb.collection('descriptor_legacy').deleteMany({}); await runtime.getCache().clear();
+        const id = new ObjectId(); await nativeDb.collection('descriptor_legacy').insertOne({ score: 1 });
+        const pipeline = [{ $project: { _id: 0, value: { $literal: id } } }];
+        const key = buildPreparedAggregateCacheKey(target.raw(), target.management.defaults, pipeline);
+        const legacy = key.replace(':prepared-v1:', ':');
+        assert.notEqual(key, legacy);
+        await runtime.getCache().set(legacy, [{ value: id.toHexString() }], 10000);
+        const [row] = await target.aggregate(pipeline, { cache: 10000 });
+        assert.ok(row.value instanceof ObjectId); assert.equal(row.value.toHexString(), id.toHexString());
+        assert.ok(await runtime.getCache().get(legacy)); assert.ok(await runtime.getCache().get(key));
+        await target.updateOne({}, { $set: { score: 2 } }, { cache: { invalidate: 'aggregate' } });
+        assert.equal(await runtime.getCache().get(legacy), undefined);
+        assert.equal(await runtime.getCache().get(key), undefined);
+    });
+
+    it('keeps successful aggregate writes and valid descriptors when another descriptor cannot compile', async () => {
+        const target = runtime.collection('descriptor_output');
+        await nativeDb.collection('descriptor_output').deleteMany({}); await runtime.getCache().clear();
+        const good = [{ $project: { _id: 0, score: MonSQLize.expr('score+1') } }];
+        const invalid = [{ $project: { value: MonSQLize.expr('not valid(') } }];
+        assert.deepEqual(await target.aggregate(good, { cache: 10000 }), []);
+        for (const terminal of ['await', 'array']) {
+            const score = terminal === 'array' ? 9 : 1;
+            await raw.updateOne({ _id: ids[0] }, { $set: { score } });
+            const chain = collection.aggregate([{ $match: { _id: ids[0] } }, { $merge: { into: 'descriptor_output' } }], {
+                cache: { invalidate: [{ operation: 'aggregate', pipeline: invalid }, { operation: 'aggregate', pipeline: good }] },
+            });
+            await (terminal === 'array' ? chain.toArray() : chain);
+            assert.equal(await nativeDb.collection('descriptor_output').countDocuments(), 1);
+            assert.equal((await target.aggregate(good, { cache: 10000 }))[0].score, score + 1);
+        }
+        assert.throws(() => target.aggregate(invalid), { code: 'INVALID_EXPRESSION' });
+        let conversions = 0;
+        await assert.rejects(async () => await collection.aggregate([{ $project: { invalid: { $notAnOperator: 1 } } }, { $merge: { into: 'descriptor_output' } }], {
+            cache: { invalidate: [{ operation: 'aggregate', pipeline: [{ toBSON() { conversions++; return { $match: {} }; } }] }] },
+        }));
+        assert.equal(conversions, 0);
+        await collection.aggregate([{ $match: { _id: ids[0] } }, { $out: 'descriptor_native_out' }]);
+        assert.equal(await nativeDb.collection('descriptor_native_out').countDocuments(), 1);
     });
 
     it('applies page inclusion, exclusion and array projections after custom stages', async () => {

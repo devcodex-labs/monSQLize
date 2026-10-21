@@ -14,7 +14,7 @@
  */
 
 import { readThroughCache } from '../../../core/cache-coordination';
-import { snapshotPipelineValue } from './pipeline-snapshot';
+import { prepareAggregatePipeline } from './aggregate-pipeline';
 import { ChangeStream, Collection, Document, FindOptions, Sort } from 'mongodb';
 
 import { createError, ErrorCodes } from '../../../core/errors';
@@ -37,7 +37,7 @@ import {
     normalizeQueryFilter,
 } from './query-helpers';
 import {
-    buildAggregateCacheKey,
+    buildPreparedAggregateCacheKey,
     buildFindCacheKey,
 } from './query-cache-keys';
 
@@ -385,7 +385,7 @@ class AggregateChain<TResult = unknown, TSchema extends Document = Document> imp
     }
 
     private buildCacheKey(): string {
-        return buildAggregateCacheKey(this.collection, this.defaults, this.pipeline, this.buildExecuteOptions());
+        return buildPreparedAggregateCacheKey(this.collection, this.defaults, this.pipeline, this.buildExecuteOptions());
     }
 
     explain(verbosity: boolean | string = 'queryPlanner'): Promise<unknown> {
@@ -510,10 +510,7 @@ export function createAggregateChain<TSchema extends Document = Document, TResul
     queryCache?: QueryCacheLike | null,
     writePipelineHooks?: AggregateWritePipelineHooks | ((pipeline: Document[]) => AggregateWritePipelineHooks | undefined),
 ): AggregateChainContract<TResult> {
-    const pipelineSnapshot = snapshotPipelineValue(pipeline);
-    const processedPipeline = hasExpressionInPipeline(pipelineSnapshot)
-        ? compilePipelineExpressions(pipelineSnapshot)
-        : pipelineSnapshot;
+    const processedPipeline = prepareAggregatePipeline(pipeline, defaults);
     // Policy checks must see the exact compiled pipeline passed to the driver.
     const preparedHooks = typeof writePipelineHooks === 'function'
         ? writePipelineHooks(processedPipeline)

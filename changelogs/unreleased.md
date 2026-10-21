@@ -2,6 +2,8 @@
 
 ## Changes after v3.3.1
 
+- Align supported DSL aggregate descriptor invalidation with captured execution pipelines without reinterpreting prepared literals. Preserve native relation equality for colliding BSON key types, distinguish factory display names from lexical bindings, and retain scalar-override and invalid-input compatibility in special-key MemoryCache batches. Regression coverage and bilingual boundaries accompany these fixes; dependency versions, public signatures, checkpoint formats and package budgets are unchanged.
+
 - Recheck aggregate write targets after DSL compilation and retain Model origin. Support frozen cache adapters and prototype-name batch keys without changing TTL, timeout or backfill fencing. Correct object-property/function-expression/block-function schema bindings; use native collation equality for unsorted string population, with documented metadata and query costs.
 - Keep slow-log queues usable after synchronous adapter failures, accept nested partial configuration in strict CJS/ESM consumers, and isolate synchronous diagnostic sink exceptions under the log policy. Regression coverage and bilingual documentation accompany these repairs; no dependency, checkpoint protocol or package-budget change is included.
 

@@ -83,7 +83,7 @@ function getExtensionObjectKey(value: object): string {
 function normalizeExtensionFunction(value: Function): string {
     try {
         const source = Function.prototype.toString.call(value);
-        if (isClosureSensitiveFunctionSource(source, value.name)) {
+        if (isClosureSensitiveFunctionSource(source)) {
             return JSON.stringify({
                 name: value.name,
                 length: value.length,

@@ -1,6 +1,7 @@
 import {
     addParameterIdentifiers,
     addScopedLocalIdentifiers,
+    findArrowParameterStart,
     findNestedFunctionScopes,
     findParentFunctionScope,
     isBoundByNestedFunctionScope,
@@ -388,10 +389,21 @@ function maskNumericLiterals(source: string): string {
     return masked;
 }
 
+function findRootArrowIndex(source: string): number {
+    for (const match of source.matchAll(/=>/g)) {
+        const index = match.index ?? 0;
+        const start = findArrowParameterStart(source, index);
+        if (start < 0) continue;
+        const prefix = source.slice(0, start).trim();
+        if (prefix === '' || prefix === 'async') return index;
+    }
+    return -1;
+}
+
 function extractFunctionBoundIdentifiers(maskedSource: string, blockScopes: FunctionScopeInfo[], statementSource: string): Set<string> {
     const identifiers = new Set<string>();
     const functionMatch = /^\s*(?:async\s+)?function(?:\s+([$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*))?\s*\(([^)]*)\)/u.exec(maskedSource);
-    const arrowIndex = maskedSource.indexOf('=>');
+    const arrowIndex = findRootArrowIndex(maskedSource);
     const methodMatch = /^\s*(?:async\s+)?(?:get\s+|set\s+)?([$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*)?\s*\(([^)]*)\)/u.exec(maskedSource);
     const rootFunctionIndex = functionMatch ? maskedSource.indexOf('function', functionMatch.index ?? 0) : -1;
     const nestedFunctionScopes = findNestedFunctionScopes(maskedSource, arrowIndex, rootFunctionIndex, statementSource);
@@ -400,13 +412,12 @@ function extractFunctionBoundIdentifiers(maskedSource: string, blockScopes: Func
         if (functionMatch[1]) identifiers.add(functionMatch[1]);
         addParameterIdentifiers(functionMatch[2] ?? '', identifiers);
     } else if (arrowIndex >= 0) {
-        let params = maskedSource.slice(0, arrowIndex).trim().replace(/^async\s+/, '').trim();
+        let params = maskedSource.slice(findArrowParameterStart(maskedSource, arrowIndex), arrowIndex).trim().replace(/^async\s+/, '').trim();
         if (params.startsWith('(')) {
             params = params.slice(1, params.lastIndexOf(')'));
         }
         addParameterIdentifiers(params, identifiers);
     } else if (methodMatch) {
-        if (methodMatch[1]) identifiers.add(methodMatch[1]);
         addParameterIdentifiers(methodMatch[2] ?? '', identifiers);
     }
 
@@ -484,7 +495,7 @@ function isBreakOrContinueLabelReference(source: string, start: number): boolean
     return previous === 'break' || previous === 'continue';
 }
 
-export function isClosureSensitiveFunctionSource(source: string, functionName?: string): boolean {
+export function isClosureSensitiveFunctionSource(source: string, _functionName?: string): boolean {
     const templateExpressions = extractTemplateExpressionSource(source);
     const sourceWithTemplateExpressions = templateExpressions ? `${source}\n${templateExpressions}` : source;
     const maskedSource = maskNumericLiterals(maskFunctionLiteralsAndComments(sourceWithTemplateExpressions));
@@ -493,10 +504,8 @@ export function isClosureSensitiveFunctionSource(source: string, functionName?: 
     const boundIdentifiers = extractFunctionBoundIdentifiers(maskedSource, blockScopes, statementSource);
     const functionMatch = /^\s*(?:async\s+)?function(?:\s+([$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*))?\s*\(([^)]*)\)/u.exec(maskedSource);
     const rootFunctionIndex = functionMatch ? maskedSource.indexOf('function', functionMatch.index ?? 0) : -1;
-    const nestedFunctionScopes = [...findNestedFunctionScopes(maskedSource, maskedSource.indexOf('=>'), rootFunctionIndex, statementSource), ...blockScopes];
-    if (functionName) {
-        boundIdentifiers.add(functionName);
-    }
+    const nestedFunctionScopes = [...findNestedFunctionScopes(maskedSource, findRootArrowIndex(maskedSource), rootFunctionIndex, statementSource), ...blockScopes];
+    // Display names and method names do not create lexical bindings in their bodies.
 
     for (const match of maskedSource.matchAll(functionIdentifierPattern)) {
         const identifier = match[0];

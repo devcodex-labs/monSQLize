@@ -60,6 +60,33 @@ describe('P4-A transaction integration', () => {
         await runtime.close();
     });
 
+    it('freezes DSL aggregate descriptor keys before transaction commit and discards them on abort', async () => {
+        const runtime = new MonSQLize({ type: 'mongodb', databaseName: 'repair_tx_descriptor', config: { uri }, autoConvertObjectId: false });
+        await runtime.connect();
+        try {
+            const col = runtime.collection('balances'), native = runtime._adapter.db.collection('balances');
+            for (const commit of [true, false]) {
+                await native.deleteMany({}); await runtime.getCache().clear(); await native.insertOne({ _id: 'A', balance: 1 });
+                const read = [{ $project: { _id: 0, balance: MonSQLize.expr('balance+1') } }];
+                assert.equal((await col.aggregate(read, { cache: 10000 }))[0].balance, 2);
+                await native.updateOne({ _id: 'A' }, { $set: { balance: 9 } });
+                let captures = 0, expression = 'balance+1';
+                const descriptor = [{ toBSON() { captures++; return { $project: { _id: 0, balance: MonSQLize.expr(expression) } }; } }];
+                const operation = runtime.withTransaction(async (tx: any) => {
+                    await col.updateOne({ _id: 'A' }, { $inc: { balance: 1 } }, { session: tx.session,
+                        cache: { invalidate: [{ operation: 'aggregate', pipeline: descriptor }] } });
+                    assert.equal(captures, 1); expression = 'balance+50';
+                    assert.equal((await col.aggregate(read, { cache: 10000 }))[0].balance, 2);
+                    if (!commit) throw new Error('descriptor abort');
+                });
+                if (commit) await operation; else await assert.rejects(operation, /descriptor abort/);
+                assert.equal(captures, 1);
+                assert.equal((await native.findOne({ _id: 'A' })).balance, commit ? 10 : 9);
+                assert.equal((await col.aggregate(read, { cache: 10000 }))[0].balance, commit ? 11 : 2);
+            }
+        } finally { await runtime.close(); }
+    });
+
     it('B10 defers partial-batch invalidation until commit and discards it on abort', async () => {
         const runtime = new MonSQLize({ type: 'mongodb', databaseName: 'b10_tx', config: { uri }, cache: new MonSQLize.MemoryCache() });
         await runtime.connect();
