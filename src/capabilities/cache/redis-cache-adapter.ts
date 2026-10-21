@@ -18,6 +18,28 @@ function createLegacyRedisError(message: string, code: string = ErrorCodes.INVAL
     return createError(code, message);
 }
 
+function preservePrototypeKeys(adapter: ReturnType<typeof createHubRedisCacheAdapter>) {
+    const readMany = adapter.getMany.bind(adapter);
+    const readTtls = adapter.getRemainingTtlMany?.bind(adapter);
+    adapter.getMany = async (keys) => {
+        if (!keys.includes('__proto__')) return readMany(keys);
+        const result = await readMany(keys.filter((key) => key !== '__proto__'));
+        if (keys.includes('__proto__')) {
+            const value = await adapter.get('__proto__');
+            if (value !== undefined) Object.defineProperty(result, '__proto__', { value, enumerable: true, configurable: true, writable: true });
+        }
+        return result;
+    };
+    if (readTtls && adapter.getRemainingTtl) adapter.getRemainingTtlMany = async (keys) => {
+        if (!keys.includes('__proto__')) return readTtls(keys);
+        const result = await readTtls(keys.filter((key) => key !== '__proto__'));
+        const value = await adapter.getRemainingTtl?.('__proto__');
+        if (value !== undefined) Object.defineProperty(result, '__proto__', { value, enumerable: true, configurable: true, writable: true });
+        return result;
+    };
+    return adapter;
+}
+
 /**
  * v1-compatible Redis cache adapter factory.
  *
@@ -35,7 +57,7 @@ export function createRedisCacheAdapter(
         }
 
         try {
-            return createHubRedisCacheAdapter(redisUrl, options);
+            return preservePrototypeKeys(createHubRedisCacheAdapter(redisUrl, options));
         } catch (error) {
             if (isMissingIoredisError(error)) {
                 throw createLegacyRedisError(LEGACY_IOREDIS_MISSING_ERROR, ErrorCodes.CACHE_UNAVAILABLE);
@@ -45,7 +67,7 @@ export function createRedisCacheAdapter(
     }
 
     if (redisUrlOrInstance && typeof redisUrlOrInstance === 'object') {
-        return createHubRedisCacheAdapter(redisUrlOrInstance, options);
+        return preservePrototypeKeys(createHubRedisCacheAdapter(redisUrlOrInstance, options));
     }
 
     throw createLegacyRedisError(LEGACY_INVALID_REDIS_ARG_ERROR);

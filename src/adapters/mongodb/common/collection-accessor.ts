@@ -11,6 +11,7 @@
 
 import { readThroughCache } from '../../../core/cache-coordination';
 import { cacheNamespace } from '../../../core/cache-scope';
+import { MODEL_COLLECTION_COLLATION } from '../../../core/model-query-context';
 import { ChangeStream, Collection, Db, Document } from 'mongodb';
 import { ErrorCodes, createError } from '../../../core/errors';
 import type { Logger } from '../../../core/logger';
@@ -36,6 +37,7 @@ import {
     dropIndexForAccessor,
     dropIndexesForAccessor,
     getValidatorForAccessor,
+    getDefaultCollationForAccessor,
     indexStatsForAccessor,
     listBookmarksForAccessor,
     listIndexesForAccessor,
@@ -144,6 +146,10 @@ export class MongoCollectionAccessor<TSchema extends Document = Document> {
         private readonly management: CollectionAccessorManagementOptions = {},
         private readonly dbRef?: Db,
     ) { }
+
+    [MODEL_COLLECTION_COLLATION]() {
+        return getDefaultCollationForAccessor(this.collectionRef, this.dbRef);
+    }
 
     /** When autoConvertObjectId is enabled, auto-converts filter/query values. */
     private _cvFilter<T>(val: T): T {
@@ -355,21 +361,20 @@ export class MongoCollectionAccessor<TSchema extends Document = Document> {
                 this.management.defaults?.autoConvertObjectId,
             ) as Document)
             : pipelineSnapshot;
-        const writeTarget = resolveAggregateWriteTarget(normalizedPipeline);
-        if (writeTarget) {
-            this.assertWritePath('aggregate', 'write', this.buildNamespaceView(
-                writeTarget.dbName ?? this.dbName,
-                writeTarget.collectionName,
-            ));
-        }
         return createAggregateChain(
             this.collectionRef,
             normalizedPipeline,
             options,
             this.management.defaults,
             this.management.queryCache,
-            writeTarget
-                ? {
+            (preparedPipeline) => {
+                const writeTarget = resolveAggregateWriteTarget(preparedPipeline);
+                if (!writeTarget) return undefined;
+                this.assertWritePath('aggregate', 'write', this.buildNamespaceView(
+                    writeTarget.dbName ?? this.dbName,
+                    writeTarget.collectionName,
+                ));
+                return {
                     onWriteComplete: async () => {
                         recordTransactionWriteOperation(options);
                         await invalidateAccessorReadCachesAfterWrite(
@@ -384,8 +389,8 @@ export class MongoCollectionAccessor<TSchema extends Document = Document> {
                             options,
                         );
                     },
-                }
-                : undefined,
+                };
+            },
         );
     }
 

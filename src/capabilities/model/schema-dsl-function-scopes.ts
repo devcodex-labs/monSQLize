@@ -1,4 +1,5 @@
 import { collectLocalDeclarationBindings } from './schema-dsl-local-declarations';
+import { addFunctionDeclarationIdentifier } from './schema-dsl-function-declarations';
 
 const functionIdentifierPattern = /[$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*/gu;
 const simpleFunctionIdentifierPattern = /^[$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*$/u;
@@ -665,7 +666,7 @@ export function addScopedLocalIdentifiers(
 export function findParentFunctionScope(scope: FunctionScopeInfo, scopes: readonly FunctionScopeInfo[]): FunctionScopeInfo | null {
     let parent: FunctionScopeInfo | null = null;
     for (const candidate of scopes) {
-        if (candidate === scope || candidate.start >= scope.start || candidate.end < scope.end) {
+        if (candidate.kind === 'block' || candidate === scope || candidate.start >= scope.start || candidate.end < scope.end) {
             continue;
         }
         if (!parent || (candidate.end - candidate.start) < (parent.end - parent.start)) {
@@ -675,7 +676,7 @@ export function findParentFunctionScope(scope: FunctionScopeInfo, scopes: readon
     return parent;
 }
 
-export function findNestedFunctionScopes(source: string, rootArrowIndex: number, rootFunctionIndex: number): FunctionScopeInfo[] {
+export function findNestedFunctionScopes(source: string, rootArrowIndex: number, rootFunctionIndex: number, statementSource = source): FunctionScopeInfo[] {
     const scopes: FunctionScopeInfo[] = [];
     for (const match of source.matchAll(/\bfunction\b/g)) {
         const functionIndex = match.index ?? 0;
@@ -757,7 +758,7 @@ export function findNestedFunctionScopes(source: string, rootArrowIndex: number,
             }
             const parent = findParentFunctionScope(childScope, scopes);
             if (parent === scope) {
-                scope.boundIdentifiers.add(childScope.name);
+                addFunctionDeclarationIdentifier(source, scope.bodyStart, childScope, scope.boundIdentifiers, blockScopes, statementSource);
             }
         }
     }

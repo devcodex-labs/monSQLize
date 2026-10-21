@@ -2,6 +2,9 @@
 
 ## Changes after v3.3.1
 
+- Recheck aggregate write targets after DSL compilation and retain Model origin. Support frozen cache adapters and prototype-name batch keys without changing TTL, timeout or backfill fencing. Correct object-property/function-expression/block-function schema bindings; use native collation equality for unsorted string population, with documented metadata and query costs.
+- Keep slow-log queues usable after synchronous adapter failures, accept nested partial configuration in strict CJS/ESM consumers, and isolate synchronous diagnostic sink exceptions under the log policy. Regression coverage and bilingual documentation accompany these repairs; no dependency, checkpoint protocol or package-budget change is included.
+
 - Capture aggregate pipelines before policy checks; reject pagination write stages and unsupported find-only pipeline projections, and apply supported page projections after custom stages.
 - Preserve input ID order with ordinary excluded/computed identities in one native query, bypassing internal-identity caches; reject combinations that cannot retain identity. Use MongoDB sorting for sorted population and update soft-delete timestamps in the original mutation.
 - Correct quoted/literal DSL strings, escaped delimiters, match-expression roles and block-scoped schema factories; align generic ModelInstance, synchronous totals and metadata toArray types.

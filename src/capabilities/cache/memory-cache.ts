@@ -11,6 +11,28 @@ import type { LockManager } from 'cache-hub';
 class MemoryCache extends BaseMemoryCache {
     private _compatLockManager: LockManager | null = null;
 
+    override getMany(keys: string[]): Record<string, unknown> {
+        if (!keys.includes('__proto__')) return super.getMany(keys);
+        if (keys.some((key) => typeof key !== 'string' || key.length === 0)) return super.getMany(keys);
+        const result: Record<string, unknown> = {};
+        for (const key of keys) {
+            const value = this.get(key);
+            if (value !== undefined) Object.defineProperty(result, key, { value, enumerable: true, configurable: true, writable: true });
+        }
+        return result;
+    }
+
+    override getRemainingTtlMany(keys: string[]): Record<string, number | null> {
+        if (!keys.includes('__proto__')) return super.getRemainingTtlMany(keys);
+        const result = super.getRemainingTtlMany(keys.filter((key) => key !== '__proto__'));
+        for (const key of keys) {
+            if (key !== '__proto__') continue;
+            const value = this.getRemainingTtl(key);
+            if (value !== undefined) Object.defineProperty(result, key, { value, enumerable: true, configurable: true, writable: true });
+        }
+        return result;
+    }
+
     override setLockManager(lockManager: LockManager): void {
         this._compatLockManager = lockManager;
         super.setLockManager(lockManager);

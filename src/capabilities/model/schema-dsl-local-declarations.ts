@@ -143,7 +143,7 @@ function findClosingPair(source: string, start: number, open: string, close: str
 }
 
 /** Resolves only proven lexical ranges; uncertain syntax stays closure-sensitive. */
-function resolveLocalBindingScope(source: string, start: number, index: number): LocalBindingScope | null | undefined {
+export function resolveLocalBindingScope(source: string, start: number, index: number): LocalBindingScope | null | undefined {
     const braces: number[] = [];
     const parens: number[] = [];
     for (let at = start; at < index; at++) {
@@ -182,6 +182,8 @@ export function collectLocalDeclarationBindings(
         if (excludedAt(index)) continue;
         const from = nextNonWhitespaceIndex(text, match.index + match[0].length);
         if (from < 0) continue;
+        const previous = previousNonWhitespaceIndex(text, match.index - 1);
+        if (text[previous] === '.' || (!/^[$_\p{ID_Start}]/u.test(text.slice(from)) && text[from] !== '{' && text[from] !== '[')) continue;
         const to = findLocalDeclarationEnd(text, from);
         result.push({ kind: match[1], pattern: text.slice(from, to), index,
             scope: match[1] === 'var' ? undefined : resolveLocalBindingScope(source, start, index) });

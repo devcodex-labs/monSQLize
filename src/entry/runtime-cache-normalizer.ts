@@ -13,6 +13,7 @@ import {
     type CacheSetOptions,
 } from '../capabilities/cache';
 import { withMultiLevelBackfillCleanup } from '../capabilities/cache/multi-level-backfill-fence';
+import { createCacheFacade } from '../capabilities/cache/cache-facade';
 
 function isCacheLike(value: unknown): value is CacheLike {
     if (!value || typeof value !== 'object') return false;
@@ -105,7 +106,7 @@ function wrapRemoteCache(
     const keys = (values: string[]) => values.map(key);
     const resolveTtl = (ttl: number | undefined) => ttl ?? defaultTtl;
 
-    return new Proxy(cache, {
+    return createCacheFacade(cache, {
         get(target, prop, receiver) {
             switch (prop) {
                 case 'get':

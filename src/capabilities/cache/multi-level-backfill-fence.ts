@@ -2,6 +2,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { CacheLike, CacheSetOptions } from 'cache-hub';
 import { createError, ErrorCodes } from '../../core/errors';
+import { createCacheFacade } from './cache-facade';
 
 interface SharedState {
     generation: number;
@@ -117,7 +118,7 @@ export function createBackfillFence(local: CacheLike, canBackfill: boolean): Bac
         && !state.invalidating && !state.dirty
         && !ticket.owner.paused && !ticket.owner.cleanupFailed && !ticket.owner.destroyed;
 
-    const guardedLocal = new Proxy(local, {
+    const guardedLocal = createCacheFacade(local, {
         get(target, property) {
             if (property === 'get') return (key: string) => bypassLocal() ? undefined : target.get(key);
             if (property === 'getMany') return (keys: string[]) => bypassLocal() ? {} : target.getMany(keys);

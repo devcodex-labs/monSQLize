@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-const { SlowQueryLogManager } = require('../../../dist/cjs/index.cjs');
+const { SlowQueryLogManager, BatchQueue } = require('../../../dist/cjs/index.cjs');
 const log = { database: 'app', collection: 'items', operation: 'find', durationMs: 600 };
 
 function gate() {
@@ -11,6 +11,51 @@ function gate() {
 }
 
 describe('SlowQueryLogManager accepted-operation lifecycle', { timeout: 10000 }, () => {
+    for (const synchronous of [true, false]) {
+        it(`recovers a queue after ${synchronous ? 'synchronous throw' : 'asynchronous rejection'}`, async () => {
+            let calls = 0;
+            const queue = new BatchQueue({ saveBatch() {
+                if (++calls === 1) {
+                    if (synchronous) throw new Error('sync failure');
+                    return Promise.reject(new Error('async failure'));
+                }
+                return Promise.resolve();
+            } }, { size: 1 }, null, 'silent');
+            await queue.add(log); await queue.add(log);
+            // Fail before close on the old implementation, which could starve the event loop.
+            assert.equal(calls, 2);
+            await queue.close();
+        });
+    }
+
+    it('serializes pending flushes and drains entries accepted during a flush', async () => {
+        const entered = gate(), release = gate(); let active = 0, maximum = 0, saved = 0;
+        const queue = new BatchQueue({ async saveBatch(rows: unknown[]) {
+            active++; maximum = Math.max(maximum, active);
+            entered.release(); await release.promise; saved += rows.length; active--;
+        } }, { size: 1 });
+        const adding = queue.add(log); await entered.promise; await queue.add(log);
+        const closing = queue.close(); release.release(); await adding; await closing;
+        assert.equal(saved, 2); assert.equal(maximum, 1);
+    });
+
+    for (const phase of ['initialize', 'write']) for (const policy of ['log', 'silent', 'throw']) {
+        it(`preserves ${policy} policy with a throwing diagnostic sink (${phase})`, async () => {
+            const failure = new Error('storage failure'); let diagnostics = 0, receivedError: unknown;
+            const manager = new SlowQueryLogManager({ enabled: true, batch: { enabled: false }, advanced: { errorHandling: policy } },
+                null, 'mongodb', { error(_message: unknown, error: unknown) { diagnostics++; receivedError = error; throw new Error('sink failure'); } },
+                { storage: {
+                    initialize: async () => { if (phase === 'initialize') throw failure; },
+                    save: async () => { throw failure; }, saveBatch: async () => {}, query: async () => [], close: async () => {},
+                } });
+            try {
+                if (policy === 'throw') await assert.rejects(manager.save(log), (error: unknown) => error === failure);
+                else await manager.save(log);
+                assert.equal(diagnostics, policy === 'log' ? 1 : 0);
+                if (policy === 'log') assert.equal(receivedError, failure);
+            } finally { await manager.close(); }
+        });
+    }
     for (const policy of ['log', 'silent', 'throw']) {
         for (const batch of [false, true]) {
             for (const phase of ['initialize', 'write']) {

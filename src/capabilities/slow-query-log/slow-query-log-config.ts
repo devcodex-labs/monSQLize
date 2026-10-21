@@ -49,7 +49,7 @@ export function deepClone<T>(value: T): T {
     return JSON.parse(JSON.stringify(value, (_key, current) => current instanceof Date ? current.toISOString() : current));
 }
 
-export function mergeSlowQueryLogConfig(target: SlowQueryLogConfig, source: Partial<SlowQueryLogConfig>): SlowQueryLogConfig {
+export function mergeSlowQueryLogConfig(target: SlowQueryLogConfig, source: Exclude<SlowQueryLogConfigInput, boolean>): SlowQueryLogConfig {
     return {
         ...target,
         ...source,

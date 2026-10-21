@@ -14,6 +14,15 @@ const config: SlowQueryLogConfig = SlowQueryLogConfigManager.mergeConfig({
     batch: { enabled: false, size: 1, interval: 100, maxBufferSize: 5 },
 });
 
+expectType<SlowQueryLogConfig>(SlowQueryLogConfigManager.mergeConfig({ batch: { enabled: false } }));
+expectType<SlowQueryLogConfig>(SlowQueryLogConfigManager.mergeConfig({ advanced: { errorHandling: 'silent' } }));
+expectType<SlowQueryLogConfig>(SlowQueryLogConfigManager.mergeConfig({ filter: { excludeOperations: ['find'] } }));
+// @ts-expect-error Nested inputs still enforce the field type.
+SlowQueryLogConfigManager.mergeConfig({ batch: { size: 'bad' } });
+// @ts-expect-error Normalized configuration still requires all batch fields.
+const incompleteNormalizedBatch: SlowQueryLogConfig['batch'] = { enabled: false };
+void incompleteNormalizedBatch;
+
 expectType<string>(generateQueryHash({ collection: 'users', query: { id: 1 } }));
 const manager = new SlowQueryLogManager(config);
 expectType<Promise<void>>(manager.initialize());

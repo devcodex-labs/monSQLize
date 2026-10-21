@@ -10,6 +10,8 @@ Persistent `firstSeen`/`lastSeen` use minimum/maximum event timestamps, even whe
 
 ## Overview
 
+Configuration inputs may omit unspecified fields inside `batch`, `filter` and `advanced`; merging still returns a complete configuration. After a synchronous storage throw or asynchronous rejection, later batches and `close()` can proceed; failed batches are not retried automatically. The `log` policy isolates synchronous diagnostic-sink exceptions, `silent` does not call the sink, and `throw` preserves the original storage error. Asynchronous sink Promise rejections are outside this guarantee.
+
 Slow query log persistence records operations that exceed the configured `slowQueryMs` threshold and lets you query aggregated slow-query statistics later. In the current MongoDB runtime, records are stored in MongoDB by default and may use memory storage for local or custom scenarios.
 
 

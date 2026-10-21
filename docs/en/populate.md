@@ -1,6 +1,8 @@
 # Populate API - Related Query
 
-When a nonempty `sort` is supplied, related documents are read sequentially per parent using MongoDB sorting, including native null/missing, BSON, array and related-collection collation rules. `skip` and `limit` apply within each parent's related query. This increases database queries compared with unsorted population; it avoids a second JavaScript ordering rule. The parent's collation is not automatically copied to related reads. Unsorted population retains batches of up to 200 distinct keys.
+When a nonempty `sort` is supplied, related documents are read sequentially per parent using MongoDB sorting, including native null/missing, BSON, array and related-collection collation rules. `skip` and `limit` apply within each parent's related query. This increases database queries compared with batching. The parent's collation is not automatically copied to related reads.
+
+Without sorting or a window, non-string relations such as ObjectIds retain batches of up to 200 distinct keys. For string keys, each populate reads the related collection's default collation once in its actual database/pool. Confirmed binary rules retain batching; other rules use per-parent native queries to preserve equality. Missing privileges, unavailable metadata or unknown results also use per-parent queries, so correct matching does not require granting catalog access. Metadata is not cached across calls. This path adds one metadata request and up to one related query per parent.
 
 **Function**: Model layer related query, supports 6 methods ()
 
@@ -348,6 +350,8 @@ for (const user of users) {
 
 **✅ monSQLize Populate (batch query)**:
 
+The two-query examples below assume non-string relation keys, no sorting/window, and at most 200 distinct keys. String relations may add metadata or per-parent queries, as described above.
+
 ```javascript
 //Only 2 queries are needed
 const users = await User.find().populate('posts');
@@ -377,7 +381,7 @@ const users2 = await User.find({}, { cache: 60000 }).populate('posts');
 | Method | Query shape for one single-level relation | Main variables |
 |------|-------|---------|
 | N+1 queries | One main query plus one related query per parent | Parent count, network latency, connection-pool contention |
-| Populate | One main query plus a batched related query | Relation cardinality, `$in` size, indexes, selected fields |
+| Populate | Batch reads for binary matching without sorting/windows; per-parent queries for nonbinary strings or unknown metadata | Collation, relation cardinality, `$in` size, indexes, selected fields |
 | Populate with valid cache hits | Cache reads can replace some or all database queries | Cache tier, serialization, payload size, hit rate, invalidation policy |
 
 Query-count reduction is structural; latency is workload-dependent. Measure it using the [performance evidence contract](./performance-evidence.md).
@@ -460,15 +464,15 @@ const users = await User.find({}, { cache: 60000 }).populate('posts');
 
 //Subsequent queries read directly from the cache, including populate data
 const users2 = await User.find({}, { cache: 60000 }).populate('posts');
-//0 database queries ⚡
+// Non-string keys can avoid database queries on complete valid hits; string keys still check metadata.
 ```
 
 
 ## Q2: How to avoid the N+1 problem?
 
-**A**: monSQLize automatically solves the N+1 problem.
+**A**: Binary batched relations avoid per-parent queries; sorting, windows and nonbinary/unknown string matching use the documented native-query path.
 
-Populate batches relation lookups:
+Without sorting/windows, populate batches non-string keys such as ObjectIds. See the opening notes for string rules and fallback query counts:
 ```javascript
 // Automatically converted to WHERE userId IN [id1, id2, id3, ...]
 const users = await User.find().populate('posts');

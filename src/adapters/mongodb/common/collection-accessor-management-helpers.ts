@@ -6,6 +6,7 @@ import { DEFAULT_FIND_PAGE_LIMIT } from '../queries/find-page-cache-helpers';
  * and collection info operations used by MongoCollectionAccessor.
  */
 import { Collection, Db, Document } from 'mongodb';
+import type { CollationOptions } from 'mongodb';
 import { createError, ErrorCodes } from '../../../core/errors';
 import type { Logger } from '../../../core/logger';
 import type { RuntimeDefaults } from '../../../types/internal/query';
@@ -40,6 +41,18 @@ type BookmarkContext<TSchema extends Document> = {
 
 function resolveDb<TSchema extends Document>(collectionRef: Collection<TSchema>, dbRef?: Db): Db {
     return dbRef ?? collectionRef.db;
+}
+
+export async function getDefaultCollationForAccessor<TSchema extends Document>(
+    collectionRef: Collection<TSchema>, dbRef?: Db,
+): Promise<CollationOptions | null | undefined> {
+    const row = await resolveDb(collectionRef, dbRef).listCollections(
+        { name: collectionRef.collectionName }, { nameOnly: false },
+    ).next();
+    if (!row) return undefined;
+    const collation = row.options?.collation;
+    if (collation === undefined) return null;
+    return collation && typeof collation.locale === 'string' ? collation : undefined;
 }
 
 function resolveBookmarkCache(context: BookmarkContext<Document>): BookmarkCacheLike | null | undefined {

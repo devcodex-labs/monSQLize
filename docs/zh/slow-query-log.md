@@ -10,6 +10,8 @@ Manager 的 `initialize()`、`save()`、`query()` 会同步登记接纳。`close
 
 ## 功能概述
 
+配置输入允许省略 `batch`、`filter`、`advanced` 内未指定的字段，合并结果仍为完整配置。批量存储同步抛错或异步拒绝后，后续批次和 `close()` 仍可继续；失败批次不自动重试。`log` 策略隔离诊断 sink 的同步异常，`silent` 不调用 sink，`throw` 继续抛出原存储错误；不承诺处理异步 sink 的 Promise 拒绝。
+
 ### 什么是慢查询日志持久化存储？
 
 慢查询日志持久化会记录超过 `slowQueryMs` 阈值的操作，并让你后续查询聚合后的慢查询统计。当前 MongoDB runtime 默认写入 MongoDB，也可以在本地或自定义场景使用 memory 存储。

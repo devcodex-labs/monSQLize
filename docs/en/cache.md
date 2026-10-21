@@ -8,11 +8,15 @@ Runtime close revokes that wrapper's pending backfill tickets and drains already
 
 ## Overview
 
+Injected adapters may have frozen own methods; calls retain the original adapter as `this`, and absent optional TTL capabilities remain absent. Memory, Redis and multi-level batch value reads support legal keys such as `__proto__` and `toString`, with hits returned as own properties. Memory/Redis batch TTL reads also retain these keys. Only `undefined` is a miss; `null`, `false`, `0` and empty strings are retained.
+
 monSQLize provides database query caching for collection reads, optional local/remote cache composition, manual invalidation and statistics. Cache invalidation is designed to keep read caches fresh enough for common application workloads, but it is not an atomic commit step with MongoDB writes.
 
 This page covers the current database-runtime cache path: query result cache, bookmark cache, Redis-backed remote cache, distributed invalidation, and cache statistics.
 
 ## Core Features
+
+Redis batches containing `__proto__` add a single-key value or TTL read; ordinary batches retain their existing batch call. Adapter wrappers return method views: the original adapter may be frozen, and non-configurable metadata should be defined on that original adapter. The view itself rejects freezing and new non-configurable properties.
 
 - ✅ **TTL Expiration**: Automatically eliminate expired data
 - ✅ **LRU eviction**: evict the least used entries when the cache is full

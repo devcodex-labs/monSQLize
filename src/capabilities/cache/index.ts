@@ -10,6 +10,8 @@ export { createRedisCacheAdapter } from './redis-cache-adapter';
 export { DistributedCacheInvalidator } from './distributed-cache-invalidator';
 import { MultiLevelCache as BaseMultiLevelCache } from 'cache-hub';
 import { createBackfillFence, registerBackfillFence, type BackfillFence } from './multi-level-backfill-fence';
+import { createCacheFacade } from './cache-facade';
+import { getManyWithOwnKeys, needsOwnKeyBatch } from './multi-level-own-key-batch';
 
 export type {
     CacheLike,
@@ -44,6 +46,7 @@ export class MultiLevelCache extends BaseMultiLevelCache {
     private readonly _localCompat: CacheLike;
     private readonly _remoteCompat: CacheLike | undefined;
     private readonly _publishRef: { current?: PublishFn };
+    private readonly _compatBatchOptions: { backfill: boolean; timeoutMs: number };
 
     constructor(options: MultiLevelCacheOptions) {
         const publishRef: { current?: PublishFn } = { current: options.publish };
@@ -58,6 +61,10 @@ export class MultiLevelCache extends BaseMultiLevelCache {
         this._localCompat = options.local;
         this._remoteCompat = options.remote;
         this._publishRef = publishRef;
+        this._compatBatchOptions = {
+            backfill: options.backfillOnRemoteHit ?? true,
+            timeoutMs: options.remoteTimeoutMs ?? 50,
+        };
     }
 
     override get<T = any>(key: string): Promise<T | undefined> {
@@ -65,7 +72,9 @@ export class MultiLevelCache extends BaseMultiLevelCache {
     }
 
     override getMany(keys: string[]): ReturnType<BaseMultiLevelCache['getMany']> {
-        return this._backfillFence.read(() => super.getMany(keys));
+        return this._backfillFence.read(() => needsOwnKeyBatch(keys)
+            ? getManyWithOwnKeys(this._backfillFence.local, this._remoteCompat, keys, this._compatBatchOptions)
+            : super.getMany(keys));
     }
 
     override set(key: string, value: unknown, ttl?: number, options?: CacheSetOptions): Promise<void> {
@@ -145,7 +154,8 @@ export function adaptLegacyCacheLike(v1Cache: Omit<CacheLike, 'has'>): CacheLike
     if ('has' in v1Cache && typeof (v1Cache as CacheLike).has === 'function') {
         return v1Cache as CacheLike;
     }
-    return new Proxy(v1Cache as CacheLike, {
+    return createCacheFacade(v1Cache as CacheLike, {
+        has(target, prop) { return prop === 'has' || Reflect.has(target, prop); },
         get(target, prop) {
             if (prop === 'has') {
                 return (key: string) => target.exists(key);

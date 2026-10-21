@@ -76,7 +76,6 @@ import {
     runModelV1Hook,
     type ModelV1HooksFactory,
 } from './model-write-helpers';
-import { resolveAggregateWriteTarget } from '../../adapters/mongodb/common/collection-accessor-cache-helpers';
 import { parseRequiredObjectId } from '../../adapters/mongodb/queries/query-helpers';
 import {
     orchestrateModelDeleteMany,
@@ -570,10 +569,7 @@ export class ModelInstance<TDocument = Record<string, unknown>> {
         const filteredPipeline = applySoftDeleteAggregatePipeline(pipeline, options, this._softDeleteConfig);
         return this.runV1HookedOperation('find', [filteredPipeline, options], (nextPipeline, nextOptions) => {
             const execute = () => this.collection.aggregate(nextPipeline as unknown[] | undefined, nextOptions);
-            if (resolveAggregateWriteTarget(Array.isArray(nextPipeline) ? nextPipeline as never[] : [])) {
-                return this.runModelWrite(execute);
-            }
-            return execute();
+            return this.runModelWrite(execute);
         });
     }
 

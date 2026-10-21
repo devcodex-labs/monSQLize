@@ -6,6 +6,7 @@ import {
     isBoundByNestedFunctionScope,
     type FunctionScopeInfo,
 } from './schema-dsl-function-scopes';
+import { addFunctionDeclarationIdentifier } from './schema-dsl-function-declarations';
 
 const functionIdentifierPattern = /[$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*/gu;
 const functionIdentifierPartPattern = /[$\u200c\u200d\p{ID_Continue}]/u;
@@ -97,42 +98,45 @@ function readTemplateLiteralEnd(source: string, start: number): number {
     return end;
 }
 
-function maskFunctionLiteralsAndComments(source: string): string {
+function maskFunctionLiteralsAndComments(source: string, preserveValueTokens = false): string {
     let masked = '';
+    const maskValue = (text: string) => preserveValueTokens
+        ? `${text.slice(0, -1).replace(/[^\r\n]/g, ' ')}0`
+        : ' '.repeat(text.length);
     for (let index = 0; index < source.length;) {
         const current = source[index];
         const next = source[index + 1];
         if (current === '/' && next === '/') {
             const end = source.indexOf('\n', index + 2);
             const commentEnd = end === -1 ? source.length : end;
-            masked += ' '.repeat(commentEnd - index);
+            masked += preserveValueTokens ? source.slice(index, commentEnd).replace(/[^\r\n]/g, ' ') : ' '.repeat(commentEnd - index);
             index = commentEnd;
             continue;
         }
         if (current === '/' && next === '*') {
             const end = source.indexOf('*/', index + 2);
             const commentEnd = end === -1 ? source.length : end + 2;
-            masked += ' '.repeat(commentEnd - index);
+            masked += preserveValueTokens ? source.slice(index, commentEnd).replace(/[^\r\n]/g, ' ') : ' '.repeat(commentEnd - index);
             index = commentEnd;
             continue;
         }
         if (current === '/' && next !== undefined && next !== '=' && canStartRegexLiteral(source, index)) {
             const regexEnd = readRegexLiteralEnd(source, index);
             if (regexEnd !== null) {
-                masked += ' '.repeat(regexEnd - index);
+                masked += maskValue(source.slice(index, regexEnd));
                 index = regexEnd;
                 continue;
             }
         }
         if (current === '\'' || current === '"') {
             const end = readQuotedLiteralEnd(source, index);
-            masked += ' '.repeat(end - index);
+            masked += maskValue(source.slice(index, end));
             index = end;
             continue;
         }
         if (current === '`') {
             const end = readTemplateLiteralEnd(source, index);
-            masked += ' '.repeat(end - index);
+            masked += maskValue(source.slice(index, end));
             index = end;
             continue;
         }
@@ -384,13 +388,13 @@ function maskNumericLiterals(source: string): string {
     return masked;
 }
 
-function extractFunctionBoundIdentifiers(maskedSource: string, blockScopes: FunctionScopeInfo[]): Set<string> {
+function extractFunctionBoundIdentifiers(maskedSource: string, blockScopes: FunctionScopeInfo[], statementSource: string): Set<string> {
     const identifiers = new Set<string>();
     const functionMatch = /^\s*(?:async\s+)?function(?:\s+([$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*))?\s*\(([^)]*)\)/u.exec(maskedSource);
     const arrowIndex = maskedSource.indexOf('=>');
     const methodMatch = /^\s*(?:async\s+)?(?:get\s+|set\s+)?([$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*)?\s*\(([^)]*)\)/u.exec(maskedSource);
     const rootFunctionIndex = functionMatch ? maskedSource.indexOf('function', functionMatch.index ?? 0) : -1;
-    const nestedFunctionScopes = findNestedFunctionScopes(maskedSource, arrowIndex, rootFunctionIndex);
+    const nestedFunctionScopes = findNestedFunctionScopes(maskedSource, arrowIndex, rootFunctionIndex, statementSource);
 
     if (functionMatch) {
         if (functionMatch[1]) identifiers.add(functionMatch[1]);
@@ -412,7 +416,7 @@ function extractFunctionBoundIdentifiers(maskedSource: string, blockScopes: Func
             continue;
         }
         if (!findParentFunctionScope(nestedScope, nestedFunctionScopes)) {
-            identifiers.add(nestedScope.name);
+            addFunctionDeclarationIdentifier(maskedSource, 0, nestedScope, identifiers, blockScopes, statementSource);
         }
     }
     return identifiers;
@@ -484,11 +488,12 @@ export function isClosureSensitiveFunctionSource(source: string, functionName?: 
     const templateExpressions = extractTemplateExpressionSource(source);
     const sourceWithTemplateExpressions = templateExpressions ? `${source}\n${templateExpressions}` : source;
     const maskedSource = maskNumericLiterals(maskFunctionLiteralsAndComments(sourceWithTemplateExpressions));
+    const statementSource = maskFunctionLiteralsAndComments(sourceWithTemplateExpressions, true);
     const blockScopes: FunctionScopeInfo[] = [];
-    const boundIdentifiers = extractFunctionBoundIdentifiers(maskedSource, blockScopes);
+    const boundIdentifiers = extractFunctionBoundIdentifiers(maskedSource, blockScopes, statementSource);
     const functionMatch = /^\s*(?:async\s+)?function(?:\s+([$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*))?\s*\(([^)]*)\)/u.exec(maskedSource);
     const rootFunctionIndex = functionMatch ? maskedSource.indexOf('function', functionMatch.index ?? 0) : -1;
-    const nestedFunctionScopes = [...findNestedFunctionScopes(maskedSource, maskedSource.indexOf('=>'), rootFunctionIndex), ...blockScopes];
+    const nestedFunctionScopes = [...findNestedFunctionScopes(maskedSource, maskedSource.indexOf('=>'), rootFunctionIndex, statementSource), ...blockScopes];
     if (functionName) {
         boundIdentifiers.add(functionName);
     }

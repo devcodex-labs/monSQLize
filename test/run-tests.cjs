@@ -40,6 +40,7 @@ const COMPAT = [
 ];
 
 const UNIT = [
+    'test/unit/cache/review-cache-compat.test.js',
     'test/unit/cache/cache-tag-backfill.test.js',
     'test/unit/cache/cache-delete-backfill.test.js',
     'test/unit/cache/cache-wrapper-lifecycle.test.js',

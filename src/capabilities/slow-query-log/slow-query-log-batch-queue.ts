@@ -52,7 +52,8 @@ export class BatchQueue {
             return;
         }
 
-        this.flushPromise = this.flushOnce();
+        // Register before invoking adapters that may throw before returning a Promise.
+        this.flushPromise = Promise.resolve().then(() => this.flushOnce());
         return this.flushPromise;
     }
 

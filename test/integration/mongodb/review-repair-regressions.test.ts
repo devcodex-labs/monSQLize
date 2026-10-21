@@ -89,6 +89,37 @@ describe('review repair query contracts against native MongoDB', () => {
         assert.equal(await nativeDb.collection('blocked_output').countDocuments(), 0);
     });
 
+    it('checks DSL-compiled merge targets before any driver or cache work', async () => {
+        const cache = runtime.getCache();
+        let cacheCalls = 0;
+        const get = cache.get, set = cache.set;
+        cache.get = function (...args: any[]) { cacheCalls++; return get.apply(this, args); };
+        cache.set = function (...args: any[]) { cacheCalls++; return set.apply(this, args); };
+        try {
+            for (const into of [MonSQLize.expr('"blocked_output"'), { db: databaseName, coll: MonSQLize.expr('"blocked_output"') }]) {
+                for (const terminal of ['await', 'array', 'stream', 'explain']) {
+                    assert.throws(() => {
+                        const chain = collection.aggregate([{ $merge: { into } }], { cache: 10000 });
+                        if (terminal === 'array') return chain.toArray();
+                        if (terminal === 'stream') return chain.stream();
+                        if (terminal === 'explain') return chain.explain();
+                        return chain;
+                    }, { code: 'INVALID_OPERATION' });
+                }
+            }
+            assert.equal(commands.filter((event) => event.commandName === 'aggregate').length, 0);
+            assert.equal(cacheCalls, 0);
+        } finally { cache.get = get; cache.set = set; }
+        const target = runtime.collection('compiled_output');
+        await nativeDb.collection('compiled_output').deleteMany({});
+        assert.equal((await target.find({}, { cache: 10000 })).length, 0);
+        await collection.aggregate([{ $limit: 1 }, { $merge: { into: MonSQLize.expr('"compiled_output"') } }], { autoInvalidate: true });
+        assert.equal((await target.find({}, { cache: 10000 })).length, 1);
+        // A Model source may write to a model-only target using the same compiled pipeline.
+        await model.aggregate([{ $limit: 1 }, { $merge: { into: MonSQLize.expr('"blocked_output"') } }]);
+        assert.equal(await nativeDb.collection('blocked_output').countDocuments(), 1);
+    });
+
     it('applies page inclusion, exclusion and array projections after custom stages', async () => {
         for (const accessor of [collection, model]) {
             for (const projection of [{ name: 1, _id: 0 }, ['name'], { secret: 0, _id: 0 }, {}]) {

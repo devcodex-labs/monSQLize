@@ -73,7 +73,13 @@ export interface SlowQueryLogConfig {
     };
 }
 
-export type SlowQueryLogConfigInput = boolean | Partial<SlowQueryLogConfig>;
+export type SlowQueryLogConfigInput = boolean | (
+    Omit<Partial<SlowQueryLogConfig>, 'batch' | 'filter' | 'advanced'> & {
+        batch?: Partial<SlowQueryLogConfig['batch']>;
+        filter?: Partial<SlowQueryLogConfig['filter']>;
+        advanced?: Partial<SlowQueryLogConfig['advanced']>;
+    }
+);
 
 export interface SlowQueryLogStorage {
     initialize(): Promise<void>;

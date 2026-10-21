@@ -508,12 +508,16 @@ export function createAggregateChain<TSchema extends Document = Document, TResul
     options?: Parameters<Collection<TSchema>['aggregate']>[1],
     defaults?: RuntimeDefaults,
     queryCache?: QueryCacheLike | null,
-    writePipelineHooks?: AggregateWritePipelineHooks,
+    writePipelineHooks?: AggregateWritePipelineHooks | ((pipeline: Document[]) => AggregateWritePipelineHooks | undefined),
 ): AggregateChainContract<TResult> {
     const pipelineSnapshot = snapshotPipelineValue(pipeline);
     const processedPipeline = hasExpressionInPipeline(pipelineSnapshot)
         ? compilePipelineExpressions(pipelineSnapshot)
         : pipelineSnapshot;
+    // Policy checks must see the exact compiled pipeline passed to the driver.
+    const preparedHooks = typeof writePipelineHooks === 'function'
+        ? writePipelineHooks(processedPipeline)
+        : writePipelineHooks;
 
     return new AggregateChain<TResult, TSchema>(
         collection,
@@ -521,7 +525,7 @@ export function createAggregateChain<TSchema extends Document = Document, TResul
         (options ?? {}) as Record<string, unknown>,
         defaults ?? {},
         queryCache,
-        writePipelineHooks,
+        preparedHooks,
     );
 }
 

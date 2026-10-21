@@ -4,6 +4,20 @@ import { isClosureSensitiveFunctionSource } from '../../../src/capabilities/mode
 
 describe('schema extension lexical block identity', () => {
     const cases: Array<[string, boolean]> = [
+        ['() => { let n = 0; n++\n function local() { return n; }\n return { type: "string", minLength: local() }; }', false],
+        ['() => { let n = 2; n--\n function local() { return n; }\n return { type: "string", minLength: local() }; }', false],
+        ['() => { const async = 1; const f = async\n function local() { return f; }\n return { type: "string", minLength: local() }; }', false],
+        ['() => { const pattern = "stable"\n function local() { return pattern; }\n return { type: "string", pattern: local() }; }', false],
+        ['() => { const 𐐀 = 1; return { type: "string", minLength: 𐐀 }; }', false],
+        ['() => { const f = // comment\n function pattern() { return 1; }; void f; return { type: "string", pattern }; }', true],
+        ['() => ({ type: "string", const: pattern })', true],
+        ['() => { const f = function pattern() { return 1; }; void f; return { type: "string", pattern }; }', true],
+        ['() => { const f =\n function pattern() { return 1; }; void f; return { type: "string", pattern }; }', true],
+        ['() => { { function pattern() { return 1; } void pattern; } return { type: "string", pattern }; }', true],
+        ['() => { for (; function pattern() { return 1; };) { break; } return { type: "string", pattern }; }', true],
+        ['() => { const f = function recursive() { return recursive; }; void f; return { type: "string" }; }', false],
+        ['() => { function local() { return 1; } void local; return { type: "string" }; }', false],
+        ['() => { { const x = 1; function local() { return x; } void local; } return { type: "string" }; }', false],
         ['value => { { const pattern = /inside/; void pattern; } return pattern.test(value); }', true],
         ['value => { { let pattern = /inside/; void pattern; } return pattern.test(value); }', true],
         ['value => { try { throw 1; } catch (pattern) { void pattern; } return pattern.test(value); }', true],

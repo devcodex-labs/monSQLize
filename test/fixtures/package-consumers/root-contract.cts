@@ -1,4 +1,12 @@
-import MonSQLize, { ModelInstance, Logger, type ResultWithMeta } from 'monsqlize';
+import MonSQLize, { ModelInstance, Logger, SlowQueryLogConfigManager, type SlowQueryLogConfig, type ResultWithMeta } from 'monsqlize';
+
+const partialSlowLog: SlowQueryLogConfig = SlowQueryLogConfigManager.mergeConfig({
+    batch: { enabled: false }, advanced: { errorHandling: 'silent' }, filter: { excludeOperations: ['find'] },
+});
+new MonSQLize({ type: 'mongodb', databaseName: 'app', slowQueryLog: { batch: { enabled: false } } });
+// @ts-expect-error Invalid nested values must remain rejected in the installed package.
+SlowQueryLogConfigManager.mergeConfig({ advanced: { errorHandling: 'invalid' } });
+void partialSlowLog;
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
 type Assert<T extends true> = T;

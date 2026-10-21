@@ -17,6 +17,8 @@
 import type { DeleteBatchResult, IncrementOneResult, InsertBatchResult, InsertManyResult, UpdateBatchResult, UpdateResult, VectorSearchHit, VectorSearchOptions } from '../../../types/collection';
 import type { ModelScopeOptions, PopulateConfig, PopulateProxy } from '../../../types/model';
 import { createError, ErrorCodes } from '../../core/errors';
+import type { CollationOptions } from 'mongodb';
+import { MODEL_COLLECTION_COLLATION } from '../../core/model-query-context';
 
 /** Populate path: either a field name string or a full PopulateConfig object. */
 export type PopulatePath = string | PopulateConfig;
@@ -32,6 +34,7 @@ export interface ModelRuntimeLike {
 
 /** Collection operation interface used during populate resolution (subset of methods required). */
 export interface ModelCollectionLike<TDocument = Record<string, unknown>> {
+    [MODEL_COLLECTION_COLLATION]?(): Promise<CollationOptions | null | undefined>;
     getNamespace(): { iid: string; type: 'mongodb'; db: string; collection: string; pool?: string; };
     raw(): unknown;
     findOne(query?: unknown, options?: unknown): Promise<unknown>;

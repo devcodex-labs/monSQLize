@@ -55,7 +55,8 @@ export function handleSlowQueryLogError(
         throw error instanceof Error ? error : new Error(String(error));
     }
     if (policy === 'log') {
-        logger?.error?.('[SlowQueryLog] operation failed', error);
+        try { logger?.error?.('[SlowQueryLog] operation failed', error); }
+        catch { /* Diagnostic sinks must not turn the log policy into throw. */ }
     }
 }
 

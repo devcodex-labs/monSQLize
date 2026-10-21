@@ -1,6 +1,8 @@
 # Populate API - 关联查询
 
-传入非空 `sort` 时，关联记录按父文档逐个顺序查询，由 MongoDB 执行排序，遵从原生 null/missing、BSON、数组及关联集合的 collation 规则。`skip`、`limit` 应用于每个父文档的关联查询。这会比无排序 populate 增加数据库查询次数，避免维护另一套 JavaScript 排序规则。父查询的 collation 不会自动复制到关联读取。无排序时保留每批最多 200 个不同 key 的批读路径。
+传入非空 `sort` 时，关联记录按父文档逐个顺序查询，由 MongoDB 执行排序，遵从原生 null/missing、BSON、数组及关联集合的 collation 规则。`skip`、`limit` 应用于每个父文档的关联查询。这会比批读增加数据库查询次数。父查询的 collation 不会自动复制到关联读取。
+
+无排序且无窗口时，ObjectId 等非字符串关联保持每批最多 200 个去重 key 的批读。含字符串 key 时，每次 populate 读取一次实际目标库/池中关联集合的默认 collation；确认二进制规则后批读，其他规则交给 MongoDB 逐父查询以保留等值语义。元数据无权限、不可用或未知时也逐父查询，不要求额外授权才能返回正确匹配，不长期缓存该信息。此路径会增加一次元数据请求及最多每父一条关联查询。
 
 **功能**: Model层关联查询，支持6个方法（）
 
@@ -334,6 +336,8 @@ for (const user of users) {
 
 **✅ monSQLize Populate（批量查询）**:
 
+以下两次查询示例假定非字符串关联 key、无排序/窗口、去重 key 不超过 200；字符串关联可能另读元数据或逐父查询，见页首。
+
 ```javascript
 // 只需要2次查询
 const users = await User.find().populate('posts');
@@ -362,7 +366,7 @@ const users2 = await User.find({}, { cache: 60000 }).populate('posts');
 | 方式 | 单个单层关系的查询形态 | 主要变量 |
 |------|-------|---------|
 | N+1 查询 | 一次主查询，加上每个父文档一次关联查询 | 父文档数量、网络延迟、连接池竞争 |
-| Populate | 一次主查询，加一次批量关联查询 | 关系基数、`$in` 大小、索引、选择字段 |
+| Populate | 二进制匹配且无排序/窗口时批读；字符串非二进制或元数据未知时逐父查询 | collation、关系基数、`$in` 大小、索引、选择字段 |
 | Populate 有效缓存命中 | 缓存读取可替代部分或全部数据库查询 | 缓存层级、序列化、负载大小、命中率、失效策略 |
 
 查询次数减少是结构特征，延迟仍取决于工作负载。请按[性能证据契约](./performance-evidence.md)测量。
@@ -440,14 +444,14 @@ const users = await User.find({}, { cache: 60000 }).populate('posts');
 
 // 后续查询直接从缓存读取，包括 populate 的数据
 const users2 = await User.find({}, { cache: 60000 }).populate('posts');
-// 0次数据库查询 ⚡
+// 非字符串 key 完整有效命中时可不查数据库；字符串 key 仍读取元数据。
 ```
 
 ### Q2: 如何避免 N+1 问题？
 
-**A**: monSQLize 自动解决 N+1 问题。
+**A**: 二进制批读关系避免逐父查询；排序、窗口及字符串非二进制/未知规则按页首说明使用原生查询路径。
 
-populate 内部使用批量查询：
+无排序/窗口且使用 ObjectId 等非字符串 key 的 populate 使用批量查询；字符串规则与回退查询次数见页首：
 ```javascript
 // 自动转换为 WHERE userId IN [id1, id2, id3, ...]
 const users = await User.find().populate('posts');

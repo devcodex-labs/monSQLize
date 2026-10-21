@@ -144,6 +144,7 @@ describe('Model P0 vector, populate, and protected relation deletion', () => {
                         { _id: 'tag-b', label: 'B', categoryId: 'category-b', private: true },
                     ];
                 },
+                [Symbol.for('monsqlize.internal.model-collection-collation.v1')]: async () => null,
             }),
             scopedModel: () => ({
                 getRelations: () => ({

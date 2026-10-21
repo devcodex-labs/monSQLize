@@ -5,6 +5,7 @@
  * relation utilities — decoupled from the ModelInstance class to simplify testing.
  */
 import { ErrorCodes, createError } from '../../core/errors';
+import { MODEL_COLLECTION_COLLATION } from '../../core/model-query-context';
 import type { Readable } from 'node:stream';
 import type {
     ModelDefinition,
@@ -263,9 +264,17 @@ export async function populateModelPath<TDocument>(
         return hydrated;
     };
 
-    // MongoDB owns BSON/null/array/collation ordering; keep unsorted reads batched.
+    // MongoDB owns ordering and collation equality. Binary reads can stay batched.
     const hasSort = Boolean(config.sort && Object.keys(config.sort).length > 0);
-    if (hasSort || config.limit !== undefined || config.skip !== undefined) {
+    const hasWindow = hasSort || config.limit !== undefined || config.skip !== undefined;
+    let requiresNativeMatching = false;
+    if (!hasWindow && keys.some((key) => typeof key === 'string')) {
+        try {
+            const collation = await relatedCollection[MODEL_COLLECTION_COLLATION]?.();
+            requiresNativeMatching = collation === undefined || (collation !== null && collation.locale !== 'simple');
+        } catch { requiresNativeMatching = true; }
+    }
+    if (hasWindow || requiresNativeMatching) {
         const scopedOptions = {
             ...readOptions,
             ...(config.skip !== undefined ? { skip: config.skip } : {}),

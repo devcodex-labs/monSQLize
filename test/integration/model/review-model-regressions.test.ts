@@ -1,6 +1,8 @@
 import { after, afterEach, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ObjectId } from 'mongodb';
+import { pathToFileURL } from 'node:url';
+import path from 'node:path';
 const { createRuntime } = require('schema-dsl/runtime');
 import { createMemoryServerBootstrap } from '../../bootstrap/memory-server';
 const MonSQLize = require('../../../dist/cjs/index.cjs');
@@ -20,6 +22,83 @@ describe('review model mutation, population and extension contracts', () => {
         runtimes.add(runtime); await runtime.connect(); return runtime;
     };
 
+    it('uses native collation equality for unsorted string relations in the selected database', async () => {
+        const targetDb = 'repair_populate_collation_target';
+        MonSQLize.Model.define('children', { schema: {}, connection: { database: targetDb }, options: { autoIndex: false } });
+        MonSQLize.Model.define('parents', { schema: {}, options: { autoIndex: false },
+            relations: { children: { from: 'children', localField: 'key', foreignField: 'owner' },
+                binary: { from: 'binary_children', localField: 'key', foreignField: 'owner' } },
+        });
+        const runtime = await connect('repair_populate_collation_source');
+        const client = runtime._adapter.db.client;
+        const db = client.db(targetDb), source = runtime._adapter.db;
+        if (!(await db.listCollections({ name: 'children' }).toArray()).length) {
+            await db.createCollection('children', { collation: { locale: 'en', strength: 2 } });
+        }
+        await db.collection('children').deleteMany({}); await source.collection('parents').deleteMany({});
+        await source.collection('binary_children').deleteMany({});
+        await db.collection('children').insertMany([{ owner: 'a', n: 1 }, { owner: 'B', n: 2 }]);
+        await source.collection('binary_children').insertMany([{ owner: 'A', n: 3 }, { owner: 'b', n: 4 }]);
+        await source.collection('parents').insertMany([{ key: 'A' }, { key: 'b' }, { key: ['A', 'b'] }]);
+        const commands: any[] = [];
+        client.on('commandStarted', (event: any) => commands.push(event));
+        const rows = await runtime.model('parents').find({}).populate('children');
+        assert.deepEqual(rows.map((row: any) => row.children.map((child: any) => child.n)), [[1], [2], [1, 2]]);
+        const metadata = commands.filter((event) => event.commandName === 'listCollections' && event.command.$db === targetDb);
+        assert.equal(metadata.length, 1);
+        assert.equal(commands.filter((event) => event.commandName === 'find' && event.command.find === 'children').length, 3);
+        commands.length = 0;
+        const binary = await runtime.model('parents').find({}).populate('binary');
+        assert.deepEqual(binary.map((row: any) => row.binary.map((child: any) => child.n)), [[3], [4], [3, 4]]);
+        assert.equal(commands.filter((event) => event.commandName === 'find' && event.command.find === 'binary_children').length, 1);
+        const scoped = runtime.scopedCollection;
+        for (const behavior of ['missing', 'throw']) {
+            runtime.scopedCollection = function (...args: any[]) {
+                const collection = scoped.apply(this, args);
+                if (args[0] === 'children') collection[Symbol.for('monsqlize.internal.model-collection-collation.v1')]
+                    = behavior === 'missing' ? undefined : async () => { throw new Error('catalog unavailable'); };
+                return collection;
+            };
+            try {
+                const fallback = await runtime.model('parents').find({}).populate('children');
+                assert.deepEqual(fallback.map((row: any) => row.children.map((child: any) => child.n)), [[1], [2], [1, 2]]);
+            } finally { runtime.scopedCollection = scoped; }
+        }
+    });
+
+    it('retains collation metadata routing through a pool and an ESM accessor used by CJS Model', async () => {
+        const ESM = await import(pathToFileURL(path.join(process.cwd(), 'dist/esm/index.mjs')).href);
+        const targetDb = 'repair_populate_pool_target';
+        MonSQLize.Model.define('children', { schema: {}, connection: { database: targetDb, pool: 'analytics' }, options: { autoIndex: false } });
+        MonSQLize.Model.define('parents', { schema: {}, options: { autoIndex: false },
+            relations: { children: { from: 'children', localField: 'key', foreignField: 'owner' } } });
+        const options = { type: 'mongodb', databaseName: 'repair_populate_pool_source', config: { uri },
+            pools: [{ name: 'analytics', uri, role: 'analytics', options: { monitorCommands: true } }, { name: 'primary', uri, role: 'primary' }],
+        };
+        const cjs = new MonSQLize(options), esm = new ESM.default(options);
+        runtimes.add(cjs); runtimes.add(esm); await cjs.connect(); await esm.connect();
+        const related = esm.pool('analytics').use(targetDb).collection('children');
+        const db = related.raw().client.db(targetDb);
+        if (!(await db.listCollections({ name: 'children' }).toArray()).length) {
+            await db.createCollection('children', { collation: { locale: 'en', strength: 2 } });
+        }
+        await db.collection('children').deleteMany({}); await db.collection('children').insertOne({ owner: 'a' });
+        await cjs.collection('parents').deleteMany({}); await cjs.collection('parents').insertOne({ key: 'A' });
+        const scoped = cjs.scopedCollection;
+        const metadata: any[] = [];
+        related.raw().client.on('commandStarted', (event: any) => { if (event.commandName === 'listCollections') metadata.push(event); });
+        cjs.scopedCollection = function (name: string, scope: any) {
+            if (name === 'children') { assert.equal(scope.pool, 'analytics'); assert.equal(scope.database, targetDb); return related; }
+            return scoped.call(this, name, scope);
+        };
+        try {
+            const [row] = await cjs.model('parents').find({}).populate('children');
+            assert.equal(row.children.length, 1); assert.equal(row.children[0].owner, 'a');
+            assert.equal(related.getNamespace().pool, 'analytics');
+            assert.equal(metadata.length, 1); assert.equal(metadata[0].command.$db, targetDb);
+        } finally { cjs.scopedCollection = scoped; }
+    });
+
     it('uses native null, BSON, array and collection-collation ordering for sorted population', async () => {
         MonSQLize.Model.define('parents', { schema: {}, options: { autoIndex: false },
             relations: { children: { from: 'children', localField: 'childIds', foreignField: '_id' } },
@@ -36,8 +115,9 @@ describe('review model mutation, population and extension contracts', () => {
         }));
         await children.insertMany(docs);
         await parents.insertMany([0, 1, 2].map((index) => ({ parent: index, childIds: docs.slice(index, 205 + index).map((doc) => doc._id) })));
-        const commands: any[] = [];
+        const commands: any[] = [], catalog: any[] = [];
         runtime._adapter.db.client.on('commandStarted', (event: any) => { if (event.commandName === 'find' && event.command.find === 'children') commands.push(event); });
+        runtime._adapter.db.client.on('commandStarted', (event: any) => { if (event.commandName === 'listCollections') catalog.push(event); });
         for (const direction of [1, -1]) {
             commands.length = 0;
             const populated = await runtime.model('parents').find({}, { sort: { parent: 1 } })
@@ -51,6 +131,7 @@ describe('review model mutation, population and extension contracts', () => {
         commands.length = 0;
         const unsorted = await runtime.model('parents').find({}).populate('children');
         assert.equal(commands.length, 2);
+        assert.equal(catalog.length, 0);
         for (const parent of unsorted) assert.deepEqual(parent.children.map((row: any) => String(row._id)), parent.childIds.map(String));
         const limited = await runtime.model('parents').findOne({ parent: 0 })
             .populate({ path: 'children', sort: { rank: 1, _id: 1 }, skip: 1, limit: 2, select: ['name'] });
@@ -96,6 +177,9 @@ describe('review model mutation, population and extension contracts', () => {
 
     it('rejects different captured factories after block, catch, loop and class shadows end', async () => {
         const makers = [
+            (pattern: string) => () => ({ type: 'string', const: pattern }),
+            (pattern: string) => () => { const f = function pattern() { return 1; }; void f; return { type: 'string', pattern }; },
+            (pattern: string) => () => { { function pattern() { return 1; } void pattern; } return { type: 'string', pattern }; },
             (pattern: string) => () => { { const pattern = 'local'; void pattern; } return { type: 'string', pattern }; },
             (pattern: string) => () => { try { throw 1; } catch (pattern) { void pattern; } return { type: 'string', pattern }; },
             (pattern: string) => () => { for (const pattern of []) { void pattern; } return { type: 'string', pattern }; },
@@ -117,9 +201,29 @@ describe('review model mutation, population and extension contracts', () => {
         }
     });
 
+    it('permits stable ASI and Unicode factories on a shared runtime without losing expression closures', async () => {
+        const sources = [
+            '() => { const pattern = "^stable$"\n function local() { return pattern; }\n return { type: "string", pattern: local() }; }',
+            '() => { let n = 0; n++\n function local() { return n; }\n return { type: "string", minLength: local() }; }',
+            '() => { let n = 2; n--\n function local() { return n; }\n return { type: "string", minLength: local() }; }',
+            '() => { const async = 1; const f = async\n function local() { return f; }\n return { type: "string", minLength: local() }; }',
+            '() => { const 𐐀 = 1; return { type: "string", minLength: 𐐀 }; }',
+        ];
+        for (const [index, source] of sources.entries()) {
+            const shared = createRuntime();
+            const make = () => new MonSQLize({ type: 'mongodb', databaseName: 'repair_asi_schema_scopes', config: { uri },
+                schemaDsl: { runtime: shared, extensions: [{ type: 'customType', literal: `review-asi-${index}`,
+                    factoryName: `reviewAsiFactory${index}`, schema: { type: 'string' }, factory: new Function(`return (${source})`)() }] },
+            });
+            const first = make(), second = make();
+            try { await first.connect(); await second.connect(); }
+            finally { await first.close(); await second.close(); shared.dispose(); }
+        }
+    });
+
     it('permits independently created stable block-local factories on a shared runtime', async () => {
         const shared = createRuntime();
-        const makeFactory = () => () => { { const pattern = '^stable$'; return { type: 'string', pattern }; } };
+        const makeFactory = () => () => { { const pattern = '^stable$'; function local() { return pattern; } return { type: 'string', pattern: local() }; } };
         const make = () => new MonSQLize({ type: 'mongodb', databaseName: 'repair_stable_schema_scopes', config: { uri },
             schemaDsl: { runtime: shared, extensions: [{ type: 'customType', literal: 'review-stable',
                 factoryName: 'reviewStableFactory', schema: { type: 'string' }, factory: makeFactory() }] },

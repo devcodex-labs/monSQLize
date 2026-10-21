@@ -2,12 +2,25 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { BSON, ObjectId, Timestamp, Binary } from 'mongodb';
 import { snapshotPipelineValue } from '../../../src/adapters/mongodb/queries/pipeline-snapshot';
+import { createAggregateChain } from '../../../src/adapters/mongodb/queries';
 
 function wire(pipeline: unknown): unknown {
     return BSON.deserialize(BSON.serialize({ pipeline })).pipeline;
 }
 
 describe('pipeline capture at the driver document boundary', () => {
+    it('prepares hooks exactly once with the compiled pipeline passed to the driver', async () => {
+        let prepared: unknown, executed: unknown, calls = 0;
+        const collection = { namespace: 'db.items', collectionName: 'items', aggregate(pipeline: unknown) {
+            executed = pipeline; return { toArray: async () => [] };
+        } };
+        const { expr } = require('../../../dist/cjs/index.cjs');
+        await createAggregateChain(collection as never, [{ $merge: { into: expr('"compiled"') } }], {}, {}, null, (pipeline) => {
+            prepared = pipeline; calls++;
+            assert.equal(pipeline[0].$merge.into, 'compiled'); return undefined;
+        }).toArray();
+        assert.equal(calls, 1); assert.equal(executed, prepared);
+    });
     it('captures class documents, nested targets, getters and Map documents', () => {
         class Target { db = 'audit'; coll = 'allowed'; }
         class Stage { $out = new Target(); }
