@@ -1,9 +1,10 @@
 import { after, before, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ObjectId, Int32, Long, Decimal128 } from 'mongodb';
+import { ObjectId, Int32, Long, Decimal128, BSON } from 'mongodb';
+import { runInNewContext } from 'node:vm';
 import { createMemoryServerBootstrap } from '../../bootstrap/memory-server';
 import { findByIdsDocuments } from '../../../src/adapters/mongodb/queries/find-by-id';
-import { buildPreparedAggregateCacheKey } from '../../../src/adapters/mongodb/queries/query-cache-keys';
+import { buildFindCacheKey, buildPreparedAggregateCacheKey } from '../../../src/adapters/mongodb/queries/query-cache-keys';
 
 const MonSQLize = require('../../../dist/cjs/index.cjs');
 const plain = (value: unknown) => JSON.parse(JSON.stringify(value));
@@ -68,6 +69,102 @@ describe('review repair query contracts against native MongoDB', () => {
             }
         }
         assert.equal(commands.filter((event) => event.commandName === 'aggregate').length, 0);
+    });
+
+    it('isolates BSON input families in every shared query cache consumer', async () => {
+        const empty = new BSON.Binary(), one = new BSON.Binary(); one.put(0);
+        const cases: Array<[string, any, any]> = [
+            ['undefined', { x: undefined }, {}], ['empty bytes', Buffer.alloc(0), {}],
+            ['buffer view', Buffer.from([9, 1, 8]).subarray(1, 2), { '0': 1 }],
+            ['uint8 view', new Uint8Array([9, 1, 8]).subarray(1, 2), { '0': 1 }],
+            ['foreign bytes', runInNewContext('new Uint8Array([1])'), { '0': 1 }],
+            ['map', new Map([['x', 1]]), {}], ['foreign map', runInNewContext('new Map([["x",1]])'), {}],
+            ['foreign date', runInNewContext('new Date(1)'), {}],
+            ['foreign regex', runInNewContext('/a/i'), {}], ['binary position', empty, one], ['negative zero', -0, 0],
+        ];
+        const canonical = (value: any) => BSON.EJSON.stringify(value, { relaxed: false });
+        for (const [label, a, b] of cases) {
+            await raw.deleteMany({});
+            const rows = [{ _id: ids[0], n: 1, name: 'a1', payload: a, kind: 'double' },
+                { _id: ids[1], n: 2, name: 'a2', payload: a, kind: 'double' },
+                { _id: ids[2], n: 3, name: 'b', payload: b, kind: 'int' }];
+            await raw.insertMany(rows);
+            for (const operation of ['find', 'findOne', 'count', 'distinct', 'aggregate', 'findPage', 'findOneById', 'findByIds']) {
+                await runtime.getCache().clear();
+                const run = async (value: any, native: boolean, ttl = 10000) => {
+                    const query = label === 'negative zero'
+                        ? { $expr: { $eq: ['$kind', { $type: { $literal: value } }] } } : { payload: value };
+                    const options = { cache: ttl, sort: { n: 1 } };
+                    if (operation === 'find') return native ? raw.find(query).sort({ n: 1 }).toArray() : collection.find(query, options);
+                    if (operation === 'findOne') return native ? raw.findOne(query, { sort: { n: 1 } }) : collection.findOne(query, options);
+                    if (operation === 'count') return native ? raw.countDocuments(query) : collection.count(query, { cache: ttl });
+                    if (operation === 'distinct') return native ? raw.distinct('name', query) : collection.distinct('name', query, { cache: ttl });
+                    if (operation === 'aggregate') {
+                        const pipeline = [{ $match: query }, { $sort: { n: 1 } }];
+                        return native ? raw.aggregate(pipeline).toArray() : collection.aggregate(pipeline, { cache: ttl });
+                    }
+                    if (operation === 'findPage') return native ? raw.find(query).sort({ n: 1, _id: 1 }).toArray()
+                        : (await collection.findPage({ query, sort: { n: 1 }, limit: 10, cache: ttl })).items;
+                    const projection = { _id: 0, value: { $literal: value } };
+                    if (operation === 'findOneById') return native ? raw.findOne({ _id: ids[0] }, { projection })
+                        : collection.findOneById(ids[0], { projection, cache: ttl });
+                    return native ? raw.find({ _id: { $in: [ids[0]] } }, { projection }).toArray()
+                        : collection.findByIds([ids[0]], { projection, cache: ttl, preserveOrder: false });
+                };
+                const expectedA = canonical(await run(a, true)), expectedB = canonical(await run(b, true));
+                assert.notEqual(expectedA, expectedB, label + '/' + operation + ': native control');
+                assert.equal(canonical(await run(a, false)), expectedA, label + '/' + operation + ': first');
+                assert.equal(canonical(await run(b, false)), expectedB, label + '/' + operation + ': hot');
+                assert.equal(canonical(await run(b, false)), expectedB, label + '/' + operation + ': repeated');
+                assert.equal(canonical(await run(b, false, 0)), expectedB, label + '/' + operation + ': uncached');
+            }
+        }
+    });
+
+    it('keeps v2 entries cold and precisely invalidates only the requested v3 BSON query', async () => {
+        const query = { payload: { x: undefined } }, other = { payload: {} }, options = { sort: { score: 1 }, limit: 10 };
+        await raw.updateOne({ _id: ids[0] }, { $set: { payload: { x: null } } });
+        await raw.updateOne({ _id: ids[1] }, { $set: { payload: {} } });
+        const key = buildFindCacheKey(raw, collection.management.defaults, query, options);
+        const otherKey = buildFindCacheKey(raw, collection.management.defaults, other, options);
+        // Frozen baseline-v2 fixture: undefined was omitted and input flags were absent.
+        const legacy = key.slice(0, key.indexOf(':v3:'))
+            + ':v2:["object",[["payload",["object",[]]]]]'
+            + ':v2:["object",[["limit",["number","10"]],["sort",["object",[["score",["number","1"]]]]]]]';
+        await runtime.getCache().set(legacy, [{ name: 'poison' }], 10000);
+        assert.equal((await collection.find(query, { ...options, cache: 10000 }))[0].name, 'a');
+        await collection.find(other, { ...options, cache: 10000 });
+        await collection.updateOne({ _id: ids[0] }, { $set: { name: 'new' } }, {
+            cache: { invalidate: [{ operation: 'find', query, options }] },
+        });
+        assert.equal(await runtime.getCache().get(key), undefined);
+        assert.ok(await runtime.getCache().get(otherKey)); assert.ok(await runtime.getCache().get(legacy));
+        assert.equal((await collection.find(query, { ...options, cache: 10000 }))[0].name, 'new');
+        await collection.invalidate('find');
+        assert.equal(await runtime.getCache().get(key), undefined); assert.equal(await runtime.getCache().get(legacy), undefined);
+    });
+
+    it('uses inherited undefined flags for reads and aggregate target descriptor invalidation', async () => {
+        const inherited = new MonSQLize({ type: 'mongodb', databaseName, autoConvertObjectId: false,
+            config: { uri: bootstrap.getUri(), options: { ignoreUndefined: true } } });
+        try {
+            await inherited.connect();
+            const source = inherited.collection('rf12_source'), target = inherited.collection('rf12_target');
+            await source.raw().deleteMany({}); await target.raw().deleteMany({});
+            await source.raw().insertOne({ _id: ids[0], payload: {}, name: 'new' });
+            await target.raw().insertMany([{ _id: ids[0], payload: {}, name: 'old' },
+                { _id: ids[1], payload: { x: null }, name: 'null' },
+                { _id: ids[2], payload: {}, name: 'second' }]);
+            const query = { payload: { x: undefined } };
+            assert.equal((await target.findOne(query, { cache: 10000, sort: { _id: 1 } })).name, 'old');
+            assert.equal((await target.findOne(query, { cache: 10000, ignoreUndefined: false })).name, 'null');
+            assert.equal(await target.count(query, { cache: 10000, ignoreUndefined: false }), 1);
+            assert.equal(await target.count(query, { cache: 10000, ignoreUndefined: true }), 2);
+            await source.aggregate([{ $out: 'rf12_target' }], {
+                cache: { invalidate: [{ operation: 'findOne', query, options: { sort: { _id: 1 } } }] },
+            });
+            assert.equal((await target.findOne(query, { cache: 10000, sort: { _id: 1 } })).name, 'new');
+        } finally { await inherited.close(); }
     });
 
     it('materializes native out after DSL conversion and never consumes or fills a read cache entry', async () => {

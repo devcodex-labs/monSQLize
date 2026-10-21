@@ -6,6 +6,14 @@ Runtime close revokes that wrapper's pending backfill tickets and drains already
 
 `MultiLevelCache` key/batch/pattern deletion and received key/pattern invalidation also prevent older remote reads from refilling L1 after deletion, while preserving deletion results and unrelated local entries. `clear()` only clears L1 and revokes older fills; it retains L2 for future reads. See [cache invalidation](./cache-invalidation.md) for failure, reentry and consistency boundaries.
 
+## BSON query identity and cache migration
+
+The stable query-key encoder uses generation `v3`. It preserves explicit `undefined` document members, distinguishes negative zero from positive zero, and retains Date, RegExp, Map insertion order and binary subtype/content, including values from another JavaScript realm. Buffer and Uint8Array views use their visible bytes; BSON Binary uses its effective `position`. Ordinary option-property order remains normalized; BSON document field order remains significant.
+
+All shared consumers use this generation: find/findOne/count/distinct, aggregate, ID lookups, Model query variants, page results, totals and bookmarks. Keys include effective `ignoreUndefined` using the operation option, inherited driver option, then `false`, with null/undefined inheriting the parent. Count operations forward that option as well.
+
+These caches start cold after upgrading. Rebuild bookmarks with `prewarmBookmarks()`; their public key prefix remains `bm:v4`, while its hash changes. Exact descriptors rebuild the current generation. Existing broad operation/collection invalidation still covers old and new entries; use broad invalidation or isolate caches during mixed-version deployment. Business data and sync checkpoints do not migrate. This change does not expand support for custom function serialization or other BSON decoding options.
+
 ## Overview
 
 Injected adapters may have frozen own methods; calls retain the original adapter as `this`, and absent optional TTL capabilities remain absent. Memory, Redis and multi-level batch value reads support legal keys such as `__proto__` and `toString`, with hits returned as own properties. Memory/Redis batch TTL reads also retain these keys. Only `undefined` is a miss; `null`, `false`, `0` and empty strings are retained.

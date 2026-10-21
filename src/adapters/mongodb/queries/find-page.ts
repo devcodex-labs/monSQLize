@@ -25,6 +25,7 @@ import {
     buildAggregateDriverOptions,
     buildCursorFilter,
     buildEffectiveProjection,
+    buildResultCacheKeyOptions,
     decodeCursor,
     encodeCursor,
     getSortValues,
@@ -136,6 +137,7 @@ export async function executeFindPage<TSchema extends Document = Document>(
 ): Promise<FindPageResult<TSchema>> {
     const { options: nativeOptions, ...pageOptions } = options;
     const capturedNativeOptions = { ...(nativeOptions ?? {}) };
+    capturedNativeOptions.ignoreUndefined = buildResultCacheKeyOptions(capturedNativeOptions, collection.bsonOptions).ignoreUndefined;
     if (typeof (capturedNativeOptions as Record<string, unknown>).out === 'string') {
         throw createError(ErrorCodes.INVALID_OPERATION, 'findPage does not support write aggregation options. Use aggregate instead.');
     }

@@ -188,10 +188,8 @@ export class MongoCollectionAccessor<TSchema extends Document = Document> {
     }
 
     private buildCacheCollectionView(dbName: string, collectionName: string): Collection<TSchema> {
-        return {
-            namespace: `${dbName}.${collectionName}`,
-            collectionName,
-        } as unknown as Collection<TSchema>;
+        const db = dbName === this.dbName ? (this.dbRef ?? this.collectionRef.db) : this.collectionRef.db.client.db(dbName);
+        return db.collection<TSchema>(collectionName);
     }
 
     private async invalidateReadCaches(operation?: 'find' | 'findOne' | 'count' | 'findPage' | 'all' | string): Promise<number> {
@@ -754,6 +752,7 @@ export class MongoCollectionAccessor<TSchema extends Document = Document> {
     private bookmarkContext() {
         return {
             namespace: cacheNamespace(`${this.dbName}:${this.collectionName}`, this.management.defaults),
+            bsonOptions: this.collectionRef.bsonOptions,
             cache: this.management.cache,
             getCache: this.management.getCache,
             logger: this.management.logger,

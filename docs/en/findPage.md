@@ -2,6 +2,8 @@
 
 Totals cache keys distinguish BSON/RegExp queries and the effective count options, including inherited `let`, collation and hint. Parameterized `$expr` filters receive `let` in both reads and counts, preserving BSON document field order. Defined top-level options override nested `options`; totals-specific hint/collation/maxTimeMS overrides retain their priority. Session reads bypass totals caching. Bookmark keys preserve compound-sort order and share effective query options with maintenance APIs. Totals and bookmark `v4` keys start cold; old entries leave through TTL or existing collection invalidation.
 
+The shared `v3` encoder also separates undefined document members, negative zero and native binary values. Set the native input flag in `options.ignoreUndefined`; its nullish inheritance is shared by page reads, sync/async totals, and bookmark prewarm/list/read/clear. Page pipeline keys retain the literals actually executed, including string/ObjectId differences when automatic filter conversion is enabled. Upgrading changes page/totals/bookmark hashes and requires cold prewarming; see [cache migration](./cache.md#bson-query-identity-and-cache-migration).
+
 ## Overview
 
 `findPage` is read-only: a top-level `$out` or `$merge` in `pipeline` throws `INVALID_OPERATION` before cache or database access. Pipeline structure is captured when called. Use `aggregate` for write pipelines, subject to write-path policy.

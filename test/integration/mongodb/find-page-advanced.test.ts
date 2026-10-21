@@ -71,6 +71,100 @@ describe('findPage() — advanced modes coverage', () => {
         assert.equal((await col.listBookmarks(binary)).count, 3);
     });
 
+    it('RF12 isolates page, totals and bookmark reuse by BSON values and undefined flags', async () => {
+        const raw = col.raw();
+        await raw.deleteMany({});
+        await raw.insertMany(Array.from({ length: 8 }, (_, index) => ({
+            val: index + 1, flag: index % 2 ? null : 1, obj: index % 2 ? { x: null } : {},
+        })));
+        const base = { query: { flag: undefined }, sort: { val: 1 }, limit: 1 };
+        const narrow = { ...base, options: { ignoreUndefined: false } };
+        const wide = { ...base, options: { ignoreUndefined: true } };
+        for (const mode of ['sync', 'async']) {
+            const read = (dims: any) => col.findPage({ ...dims, cache: 10000, totals: { mode, ttlMs: 10000 } });
+            let a = await read(narrow), b = await read(wide);
+            if (mode === 'async') {
+                for (let i = 0; i < 60 && (a.totals.total == null || b.totals.total == null); i++) {
+                    await delay(10); a = await read(narrow); b = await read(wide);
+                }
+            }
+            assert.equal(a.items[0].val, 2); assert.equal(b.items[0].val, 1);
+            assert.equal(a.totals.total, 4); assert.equal(b.totals.total, 8);
+        }
+        await raw.updateOne({ val: 1 }, { $set: { obj: { x: null } } });
+        const literal = (needle: any) => col.findPage({
+            query: { $expr: { $eq: ['$obj', '$$needle'] } }, options: { let: { needle: { $literal: needle } } },
+            sort: { val: 1 }, limit: 1, totals: { mode: 'sync' }, cache: 0,
+        });
+        assert.equal((await literal({ x: undefined })).items[0].val, 1);
+        assert.equal((await literal({ x: undefined })).totals.total, 5);
+        assert.equal((await literal({})).items[0].val, 3);
+        assert.equal((await literal({})).totals.total, 3);
+        await col.prewarmBookmarks(narrow, [1, 2]);
+        assert.equal((await col.listBookmarks(wide)).count, 0);
+        assert.equal((await col.findPage({ ...wide, page: 3 })).items[0].val, 3);
+        await col.prewarmBookmarks(wide, [1, 2]);
+        await col.clearBookmarks(narrow);
+        assert.equal((await col.listBookmarks(wide)).count, 2);
+        assert.equal((await col.listBookmarks(narrow)).count, 0);
+        await col.clearBookmarks();
+        assert.equal((await col.findPage({ ...wide, page: 3 })).items[0].val, 3);
+    });
+
+    it('RF12 retains inherited true flags in bookmark management and exact page descriptors', async () => {
+        const inherited = new MonSQLize({ type: 'mongodb', databaseName: 'test_findpage_adv', autoConvertObjectId: false,
+            config: { uri, options: { ignoreUndefined: true } } });
+        try {
+            await inherited.connect();
+            const target = inherited.collection('rf12_inherited'), raw = target.raw();
+            await raw.deleteMany({});
+            await raw.insertMany(Array.from({ length: 8 }, (_, i) => ({ val: i + 1, flag: i % 2 ? null : 1 })));
+            const dims = { query: { flag: undefined }, sort: { val: 1 as const }, limit: 1 };
+            const narrow = { ...dims, options: { ignoreUndefined: false } };
+            await target.prewarmBookmarks(dims, [1, 2]);
+            assert.equal((await target.listBookmarks({ ...dims, options: { ignoreUndefined: undefined } })).count, 2);
+            assert.equal((await target.listBookmarks(narrow)).count, 0);
+            assert.equal((await target.findPage({ ...narrow, page: 3 })).items[0].val, 6);
+            const key = buildFindPageCacheKey(raw, target.management.defaults, dims).key;
+            const otherKey = buildFindPageCacheKey(raw, target.management.defaults, narrow).key;
+            await target.findPage({ ...dims, cache: 10000 }); await target.findPage({ ...narrow, cache: 10000 });
+            await target.updateOne({ val: 1 }, { $set: { val: 0 } }, {
+                cache: { invalidate: [{ operation: 'findPage', options: dims }] },
+            });
+            assert.equal(await inherited.getCache().get(key), undefined);
+            assert.ok(await inherited.getCache().get(otherKey));
+            assert.equal((await target.findPage({ ...dims, cache: 10000 })).items[0].val, 0);
+        } finally { await inherited.close(); }
+    });
+
+    it('RF12 captures native option getters once in page and bookmark calls', async () => {
+        const nativeOptions = () => {
+            let reads = 0;
+            return { get ignoreUndefined() {
+                assert.equal(++reads, 1, 'Read the caller option only once'); return false;
+            } };
+        };
+        assert.equal((await col.findPage({ options: nativeOptions(), limit: 1 })).items.length, 1);
+        const dims = { sort: { val: 1 }, limit: 1 };
+        await col.prewarmBookmarks({ ...dims, options: nativeOptions() }, [1, 2]);
+        assert.equal((await col.listBookmarks({ ...dims, options: nativeOptions() })).count, 2);
+        await col.clearBookmarks({ ...dims, options: nativeOptions() });
+        assert.equal((await col.listBookmarks({ ...dims, options: nativeOptions() })).count, 0);
+    });
+
+    it('RF12 keys page pipelines by executed literals with auto conversion enabled', async () => {
+        const converted = new MonSQLize({ type: 'mongodb', databaseName: 'test_findpage_adv',
+            autoConvertObjectId: true, config: { uri } });
+        try {
+            await converted.connect();
+            const target = converted.collection('items'), id = 'abcdefabcdefabcdefabcdef';
+            const read = (value: any) => target.findPage({ sort: { val: 1 }, limit: 1, cache: 10000,
+                pipeline: [{ $project: { val: 1, value: { $literal: value } } }] });
+            assert.equal((await read(id)).items[0].value, id);
+            assert.ok((await read(new ObjectId(id))).items[0].value instanceof ObjectId);
+        } finally { await converted.close(); }
+    });
+
     it('AR08 forwards let to sync and async totals and isolates effective values', async () => {
         const query = { $expr: { $gte: ['$val', '$$floor'] } };
         const read = (floor: number, mode = 'sync', extra = {}) => col.findPage({

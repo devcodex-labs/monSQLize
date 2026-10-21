@@ -2,6 +2,8 @@
 
 ## Changes after v3.3.1
 
+- Upgrade shared query-key encoding to v3 for undefined members, negative zero, native binary views/effective Binary length, Maps and cross-realm BSON leaves. Align effective ignoreUndefined across read keys, count execution, exact descriptors, totals and bookmark management. Preserve executed page pipeline literals. Query/totals/bookmark caches start cold; business data, sync checkpoints and package budgets remain unchanged.
+
 - Respect every ECMAScript comment line terminator when comparing schema factories, preserving captured values and stable local factories through comments, templates and automatic semicolon insertion.
 
 - Classify native aggregate `out` before write checks and capture result options across cache waits while preserving sessions/signals. Start aggregate caches at a new generation. Align explicit soft-delete Model aggregate invalidation, retain native matching for uppercase converted relation keys, and distinguish contextual words, complete default-call parameters, separate parameter/body bindings and template scopes in schema factories. Default invalidation, checkpoint formats, dependency versions and package budgets remain unchanged.

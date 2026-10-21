@@ -3,6 +3,8 @@
 totals 缓存键区分 BSON/RegExp 查询和实际 count 选项，包括继承的 `let`、collation、hint。参数化 `$expr` 筛选在数据读取与计数时都接收 `let`，保留 BSON 文档字段顺序。已定义的顶层选项覆盖嵌套 `options`；totals 专属 hint/collation/maxTimeMS 覆盖仍优先。带 session 的读取绕过 totals 缓存。书签保留复合排序顺序，并与维护 API 共用生效查询选项。totals 与书签 `v4` 键冷启动，旧条目通过 TTL 或已有集合失效机制退出。
 
 
+共享 `v3` 编码也区分文档 undefined 成员、负零和原生二进制值。原生输入选项使用 `options.ignoreUndefined`，其空值继承规则在分页读取、同步/异步 totals、书签预热/列表/续读/清理之间保持一致。分页管线键保留实际执行的字面值，即使筛选自动转换开启，也区分管线中的字符串与 ObjectId。升级后分页、totals、书签的哈希变化，需要冷预热；见[缓存迁移](./cache.md#bson-查询身份与缓存迁移)。
+
 ## 概述
 
 `findPage` 是只读操作：`pipeline` 中的顶层 `$out` 或 `$merge` 会在访问缓存或数据库前报 `INVALID_OPERATION`，管道结构在调用时固定。写管道请使用 `aggregate`，并遵守写路径策略。

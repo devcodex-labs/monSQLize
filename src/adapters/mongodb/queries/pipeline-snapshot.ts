@@ -1,4 +1,5 @@
 import { BSON } from 'mongodb';
+import { types as utilTypes } from 'node:util';
 
 /**
  * Captures pipeline structure before policy checks or asynchronous execution.
@@ -15,7 +16,7 @@ function capture<T>(value: T, seen: WeakMap<object, unknown>, conversions: numbe
     // BSON invokes a value converter and, for a document result, its document converter.
     // Capture that result now so execution cannot run a different converter after validation.
     for (let count = 0; count < conversions; count += 1) {
-        if (count > 0 && (typeof value === 'function' || isNativeLeaf(value) || Array.isArray(value) || value instanceof Map)) break;
+        if (count > 0 && (typeof value === 'function' || isNativeLeaf(value) || Array.isArray(value) || utilTypes.isMap(value))) break;
         const converter = (value as { toBSON?: unknown }).toBSON;
         if (typeof converter !== 'function') break;
         value = converter.call(value) as T;
@@ -32,7 +33,7 @@ function capture<T>(value: T, seen: WeakMap<object, unknown>, conversions: numbe
         : Object.create(Object.getPrototypeOf(value) === null ? null : Object.prototype);
     seen.set(original, copy);
     seen.set(value, copy);
-    if (value instanceof Map) {
+    if (utilTypes.isMap(value)) {
         const keys: string[] = [];
         for (const [key, entry] of value) {
             if (typeof key !== 'string') throw new TypeError('Pipeline document Map keys must be strings.');
@@ -74,16 +75,16 @@ function preserveKeyOrder(copy: object, keys: Array<string | symbol>): object {
 }
 
 function isNativeLeaf(value: unknown): boolean {
-    return value instanceof Date || value instanceof RegExp || value instanceof Uint8Array
+    return utilTypes.isDate(value) || utilTypes.isRegExp(value) || utilTypes.isUint8Array(value)
         || (value != null && (value as { _bsontype?: unknown })._bsontype != null);
 }
 
 function copyNativeLeaf<T extends object>(value: T): T {
     // Do not retain caller-owned converters on a leaf after capturing its native value.
-    if (value instanceof Date) return new Date(value.getTime()) as T;
-    if (value instanceof RegExp) return new RegExp(value.source, value.flags) as T;
+    if (utilTypes.isDate(value)) return new Date(value.getTime()) as T;
+    if (utilTypes.isRegExp(value)) return new RegExp(value.source, value.flags) as T;
     if (Buffer.isBuffer(value)) return Buffer.from(value) as T;
-    if (value instanceof Uint8Array) return new Uint8Array(value) as T;
+    if (utilTypes.isUint8Array(value)) return new Uint8Array(value) as T;
     const stable = new Proxy(value, {
         get(target, key) {
             if (key === 'toBSON') return undefined;

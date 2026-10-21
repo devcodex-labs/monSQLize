@@ -1,7 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { runInNewContext } from 'node:vm';
 import { BSON, ObjectId, Timestamp, Binary, ReadPreference, ReadConcern } from 'mongodb';
-import { snapshotResultOptions, buildResultCacheKeyOptions } from '../../../src/adapters/mongodb/queries/query-helpers';
+import { snapshotResultOptions, buildResultCacheKeyOptions, stableCacheKeyString } from '../../../src/adapters/mongodb/queries/query-helpers';
 import { snapshotPipelineValue } from '../../../src/adapters/mongodb/queries/pipeline-snapshot';
 import { createAggregateChain } from '../../../src/adapters/mongodb/queries';
 import { isStandardAggregateBsonMode, prepareAggregateExecution, prepareAggregatePipeline } from '../../../src/adapters/mongodb/queries/aggregate-pipeline';
@@ -12,6 +13,51 @@ function wire(pipeline: unknown): unknown {
 }
 
 describe('pipeline capture at the driver document boundary', () => {
+    it('preserves BSON input identity across stable key generations', () => {
+        const key = (value: unknown) => stableCacheKeyString(value, 'document');
+        assert.ok(key({}).startsWith('v3:'));
+        assert.notEqual(key({ x: undefined }), key({}));
+        assert.notEqual(key(-0), key(0));
+        assert.notEqual(key({ a: 1, b: 2 }), key({ b: 2, a: 1 }));
+        assert.equal(stableCacheKeyString({ a: 1, b: 2 }), stableCacheKeyString({ b: 2, a: 1 }));
+        assert.equal(stableCacheKeyString({ absent: undefined }), stableCacheKeyString({}));
+        for (const value of [Buffer.alloc(0), Buffer.from([1]), new Uint8Array([1]),
+            runInNewContext('new Uint8Array([1])')]) {
+            assert.notEqual(key(value), key(Object.fromEntries(Object.entries(value))));
+        }
+        const bytes = new Uint8Array([9, 1, 8]);
+        assert.equal(key(bytes.subarray(1, 2)), key(new BSON.Binary(Buffer.from([1]))));
+        assert.equal(key(Buffer.from(bytes).subarray(1, 2)), key(new Uint8Array([1])));
+        const empty = new BSON.Binary(), one = new BSON.Binary(); one.put(0);
+        assert.notEqual(key(empty), key(one));
+        assert.equal(key(empty), key(Buffer.alloc(0)));
+        assert.notEqual(key(new BSON.Binary(Buffer.from([1]), 0)), key(new BSON.Binary(Buffer.from([1]), 128)));
+        for (const expression of ['new Date(1)', '/a/i', 'new Map([["x", 1]])']) {
+            const value = runInNewContext(expression);
+            assert.notEqual(key(value), key({}));
+            assert.equal(key(value), key(snapshotPipelineValue(value)));
+        }
+        const map = new Map([['2', 'second'], ['1', 'first']]);
+        assert.equal(key(map), key(snapshotPipelineValue(map)));
+        assert.notEqual(key(map), key({ '1': 'first', '2': 'second' }));
+    });
+
+    it('keys undefined serialization by effective driver inheritance', () => {
+        const parent = { ignoreUndefined: true };
+        assert.equal(buildResultCacheKeyOptions({}, parent).ignoreUndefined, true);
+        assert.equal(buildResultCacheKeyOptions({ ignoreUndefined: undefined }, parent).ignoreUndefined, true);
+        assert.equal(buildResultCacheKeyOptions({ ignoreUndefined: null }, parent).ignoreUndefined, true);
+        assert.equal(buildResultCacheKeyOptions({ ignoreUndefined: false }, parent).ignoreUndefined, false);
+        assert.equal(buildResultCacheKeyOptions().ignoreUndefined, false);
+    });
+
+    it('captures cross-realm BSON native leaves without changing wire values', () => {
+        const input = runInNewContext('[{ $match: { date: new Date(1), regex: /a/i, bytes: new Uint8Array([9,1,8]).subarray(1,2), map: new Map([["2","b"],["1","a"]]) } }]');
+        const snapshot = snapshotPipelineValue(input);
+        assert.deepEqual(BSON.serialize({ pipeline: snapshot }), BSON.serialize({ pipeline: input }));
+        input[0].$match.bytes[0] = 7; input[0].$match.date.setTime(20);
+        assert.equal(snapshot[0].$match.bytes[0], 1); assert.equal(snapshot[0].$match.date.getTime(), 1);
+    });
     it('captures native BSON decoding flags and preserves fieldsAsRaw prototype behavior', () => {
         const fields: any = Object.create({ payload: false });
         const captured = prepareAggregateExecution([], { fieldsAsRaw: fields });

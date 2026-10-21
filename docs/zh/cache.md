@@ -6,6 +6,14 @@
 
 `MultiLevelCache` 按键、批量、模式删除及接收远端 key/pattern 失效也会阻止旧远端读取在删除后重新回填 L1，并保留删除结果和无关本地条目。`clear()` 只清 L1 并撤销旧回填，保留 L2 供新读取使用。失败、重入和一致性边界见[缓存失效](./cache-invalidation.md)。
 
+## BSON 查询身份与缓存迁移
+
+稳定查询键编码升级为 `v3`：保留文档中显式的 `undefined` 成员，区分负零和正零，保留 Date、RegExp、Map 插入顺序及二进制子类型和内容，包括来自其他 JavaScript 执行环境的值。Buffer、Uint8Array 视图只使用可见字节；BSON Binary 使用有效 `position`。普通选项属性顺序继续归一化，BSON 文档字段顺序继续保留。
+
+所有共享消费者使用同一代编码：find/findOne/count/distinct、aggregate、ID 查询、Model 查询变体、分页结果、totals 和书签。键按“操作选项、继承的驱动选项、默认 false”的顺序解析有效 `ignoreUndefined`，null/undefined 继续继承父值；count 也会将该选项传给驱动。
+
+升级后这些缓存需要冷预热；书签可用 `prewarmBookmarks()` 重建。书签公开前缀仍是 `bm:v4`，内部哈希会改变。精确 descriptor 重建当前代键；现有按操作或集合的广泛失效仍覆盖新旧条目。混合版本部署时请使用广泛失效或隔离缓存。业务数据与同步检查点不迁移。本次不扩展自定义函数序列化或其他 BSON 解码选项的支持。
+
 ## 概述
 
 可注入冻结的自有方法适配器；调用保留原适配器的 `this`，不会凭空增加可选 TTL 能力。Memory、Redis 与多层缓存的批量值读取支持 `__proto__`、`toString` 等合法 key，命中结果均为自有属性；Memory/Redis 的批量 TTL 也保留这些 key。只有 `undefined` 表示未命中，`null`、`false`、`0`、空字符串均保留。

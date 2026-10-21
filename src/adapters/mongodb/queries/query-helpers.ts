@@ -1,5 +1,6 @@
 /** Shared MongoDB query normalization, cursor and cache helpers. */
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { types as utilTypes } from 'node:util';
 import { cacheNamespace, relatedCacheNamespaces } from '../../../core/cache-scope';
 
 import { BSON, Collection, Document, ObjectId, ReadConcern, ReadPreference, Sort } from 'mongodb';
@@ -459,18 +460,23 @@ const ORDERED_OPTION_FIELDS = new Set(['query', 'filter', 'pipeline', 'sort', 'h
 function normalizeCacheKeyValue(value: unknown, mode: CacheKeyMode): unknown {
     if (value === null) return ['null'];
     if (value === undefined) return ['undefined'];
-    if (typeof value === 'number') return ['number', String(value)];
+    if (typeof value === 'number') return ['number', Object.is(value, -0) ? '-0' : String(value)];
     if (typeof value === 'bigint') return ['bigint', value.toString()];
     if (typeof value !== 'object') return [typeof value, value];
-    if (value instanceof Date) return ['date', String(value.getTime())];
-    if (value instanceof RegExp) return ['regexp', value.source, value.flags];
+    if (utilTypes.isDate(value)) return ['date', String(value.getTime())];
+    if (utilTypes.isRegExp(value)) return ['regexp', value.source, value.flags];
+    if (utilTypes.isUint8Array(value)) value = new BSON.Binary(value);
     if (Array.isArray(value)) return ['array', value.map((item) => normalizeCacheKeyValue(item, mode))];
     const bsonType = (value as { _bsontype?: unknown })._bsontype;
     if (typeof bsonType === 'string') {
-        return ['bson', bsonType, BSON.EJSON.serialize(value, { relaxed: false })];
+        const binary = value as BSON.Binary;
+        const leaf = bsonType === 'Binary'
+            ? new BSON.Binary(binary.buffer.subarray(0, binary.position), binary.sub_type) : value;
+        return ['bson', bsonType, BSON.EJSON.serialize(leaf, { relaxed: false })];
     }
-    const entries = Object.entries(value as Record<string, unknown>)
-        .filter(([, item]) => item !== undefined && typeof item !== 'function' && typeof item !== 'symbol');
+    const entries = (utilTypes.isMap(value) ? [...(value as Map<string, unknown>).entries()] : Object.entries(value as Record<string, unknown>))
+        .filter(([, item]) => (mode === 'document' || item !== undefined)
+            && typeof item !== 'function' && typeof item !== 'symbol');
     if (mode === 'options') entries.sort(([left], [right]) => left.localeCompare(right));
     return ['object', entries.map(([key, item]) => [
         key,
@@ -479,11 +485,16 @@ function normalizeCacheKeyValue(value: unknown, mode: CacheKeyMode): unknown {
 }
 
 export function stableCacheKeyString(value: unknown, mode: CacheKeyMode = 'options'): string {
-    return `v2:${JSON.stringify(normalizeCacheKeyValue(value, mode))}`;
+    return `v3:${JSON.stringify(normalizeCacheKeyValue(value, mode))}`;
 }
 
-export function buildResultCacheKeyOptions(options: Record<string, unknown> = {}): Record<string, unknown> {
-    const keyOptions: Record<string, unknown> = {};
+export function buildResultCacheKeyOptions(
+    options: Record<string, unknown> = {},
+    inheritedBsonOptions: { ignoreUndefined?: unknown } = {},
+): Record<string, unknown> & { ignoreUndefined: boolean } {
+    const keyOptions: Record<string, unknown> & { ignoreUndefined: boolean } = {
+        ignoreUndefined: (options.ignoreUndefined ?? inheritedBsonOptions.ignoreUndefined ?? false) as boolean,
+    };
     for (const field of RESULT_CACHE_KEY_OPTION_FIELDS) {
         if (options[field] !== undefined) {
             keyOptions[field] = options[field];
@@ -527,6 +538,7 @@ export function buildCountDriverOptions<TSchema extends Document = Document>(
         'readPreference',
         'signal',
         'let',
+        'ignoreUndefined',
     ]);
     for (const key of Object.keys(driverOptions)) {
         if (!allowed.has(key)) {

@@ -7,6 +7,7 @@ import type { TotalsInfo, TotalsOptions } from '../../../../types/collection';
 import {
     buildCollectionCacheNamespace,
     buildCountDriverOptions,
+    buildResultCacheKeyOptions,
     hasSessionOption,
     isCollectionCacheBarrierActive,
     stableCacheKeyString,
@@ -25,7 +26,8 @@ function buildTotalsCacheKey<TSchema extends Document>(
         query,
         limit,
         mode: totals.mode ?? 'sync',
-        countOptions,
+        countOptions: { ...countOptions,
+            ignoreUndefined: buildResultCacheKeyOptions(countOptions, collection.bsonOptions).ignoreUndefined },
     };
     const token = hashPayload(stableCacheKeyString(payload));
     const namespace = buildCollectionCacheNamespace(collection, defaults);

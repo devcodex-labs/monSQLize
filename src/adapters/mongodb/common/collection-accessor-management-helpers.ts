@@ -1,4 +1,5 @@
 import { DEFAULT_FIND_PAGE_LIMIT } from '../queries/find-page-cache-helpers';
+import { buildResultCacheKeyOptions } from '../queries/query-helpers';
 /**
  * Management operation helper functions for the collection accessor.
  *
@@ -31,6 +32,7 @@ import {
 
 type BookmarkContext<TSchema extends Document> = {
     defaults?: RuntimeDefaults;
+    bsonOptions?: Collection['bsonOptions'];
     cvFilter?: (query: Document) => Document;
     namespace: string;
     cache?: BookmarkCacheLike | null;
@@ -96,7 +98,10 @@ function normalizeAccessorBookmarkDims<TSchema extends Document>(
     if (!Number.isInteger(requested) || requested <= 0) throw createError(ErrorCodes.INVALID_PAGINATION, 'limit must be a positive integer.');
     const limit = context.defaults?.findPageMaxLimit !== undefined
         ? Math.min(requested, context.defaults.findPageMaxLimit) : requested;
-    return { ...keyDims, limit, query: context.cvFilter?.(keyDims.query ?? {}) ?? keyDims.query ?? {} };
+    const options = { ...(keyDims.options ?? {}) };
+    options.ignoreUndefined = buildResultCacheKeyOptions(options, context.bsonOptions).ignoreUndefined;
+    return { ...keyDims, limit, query: context.cvFilter?.(keyDims.query ?? {}) ?? keyDims.query ?? {},
+        options };
 }
 
 export function prewarmBookmarksForAccessor<TSchema extends Document>(
