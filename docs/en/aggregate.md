@@ -2,6 +2,8 @@
 
 Pipeline documents are captured when the chain is created, before asynchronous cache or driver work. Later edits to the caller's stages or write targets do not change that chain's `await`, `toArray()`, `stream()` or `explain()` execution. Document classes, Maps and `toBSON()` conversions are materialized at capture time; BSON values retain their serialized meaning. Write-path checks and execution use the captured target.
 
+String-valued native `options.out` is appended as a literal `$out` stage after pipeline preparation, so it receives the same write-target checks and skips result caching. `findPage` rejects this write option. Result-affecting options such as `let`, `hint` and `collation` are captured; a terminal fixes one option set for its cache key and driver execution. Sessions and abort signals retain their resource identity. Later fluent changes apply to subsequent terminals, without changing an already-started execution. Native BSON decoding options are captured with collection defaults; nonstandard decoding modes (including active `fieldsAsRaw`) bypass result caching to preserve their native result shape. Dynamic `fieldsAsRaw` proxies retain native lookup behavior and always bypass this cache.
+
 Write-path checks and target-cache invalidation use the same prepared pipeline after supported expressions, including DSL values in `$merge.into`, have been compiled, respecting the existing `autoInvalidate` / `cache.invalidate` controls. Model aggregation retains its Model source; a rejected check does not access the driver or cache.
 
 When `meta: true` is enabled, awaiting the chain and calling `toArray()` both return a `ResultWithMeta` envelope; read its `data` field for the result array.

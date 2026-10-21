@@ -59,7 +59,12 @@ const ALLOWED_RAW = new Set<WritePathPolicyRawMode>(['inherit', 'allow', 'block'
 const ALLOWED_MANAGEMENT = new Set<WritePathPolicyManagementMode>(['inherit', 'allow', 'block']);
 const ALLOWED_VIOLATION_ACTIONS = new Set<WritePathPolicyViolationAction>(['throw', 'warn']);
 
-const modelWriteSourceStorage = new AsyncLocalStorage<WritePathSource>();
+type AggregateInvalidationNormalizer = (input: {
+    dbName: string; collectionName: string; poolName?: string; pipeline: unknown[] | undefined; options?: Record<string, unknown>;
+}) => unknown[] | 'broad';
+const modelWriteSourceStorage = new AsyncLocalStorage<{
+    source: WritePathSource; normalizeAggregateInvalidation?: AggregateInvalidationNormalizer;
+}>();
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -386,10 +391,14 @@ export function assertClientLevelWritePathAllowed(config: {
     throw createError(ErrorCodes.INVALID_OPERATION, message, [details]);
 }
 
-export function runWithModelWriteSource<T>(fn: () => T): T {
-    return modelWriteSourceStorage.run('model', fn);
+export function runWithModelWriteSource<T>(fn: () => T, normalizeAggregateInvalidation?: AggregateInvalidationNormalizer): T {
+    return modelWriteSourceStorage.run({ source: 'model', normalizeAggregateInvalidation }, fn);
 }
 
 export function getCurrentWritePathSource(): WritePathSource | undefined {
-    return modelWriteSourceStorage.getStore();
+    return modelWriteSourceStorage.getStore()?.source;
+}
+
+export function getModelAggregateInvalidationNormalizer(): AggregateInvalidationNormalizer | undefined {
+    return modelWriteSourceStorage.getStore()?.normalizeAggregateInvalidation;
 }

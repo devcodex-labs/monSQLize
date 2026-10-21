@@ -35,6 +35,7 @@ describe('review repair query contracts against native MongoDB', () => {
     });
     beforeEach(async () => {
         await raw.deleteMany({}); await runtime.getCache().clear();
+        await nativeDb.collection('blocked_output').deleteMany({});
         ids = [new ObjectId(), new ObjectId(), new ObjectId()];
         await raw.insertMany([
             { _id: ids[0], name: 'a', score: 1, secret: 'hidden', arr: [1, 2], active: true },
@@ -45,6 +46,20 @@ describe('review repair query contracts against native MongoDB', () => {
     });
 
     it('rejects every top-level pagination write before executing a Mongo command', async () => {
+        for (const terminal of ['await', 'array', 'stream', 'explain']) {
+            assert.throws(() => {
+                const chain = collection.aggregate([{ $match: {} }], { out: 'blocked_output', cache: 10000 });
+                if (terminal === 'array') return chain.toArray();
+                if (terminal === 'stream') return chain.stream();
+                if (terminal === 'explain') return chain.explain();
+                return chain;
+            }, /writePathPolicy blocked/);
+        }
+        for (const accessor of [collection, model]) {
+            for (const pipeline of [undefined, [], [{ $match: {} }]]) {
+                await assert.rejects(() => accessor.findPage({ pipeline, options: { out: 'blocked_output' }, cache: 10000 }), { code: 'INVALID_OPERATION' });
+            }
+        }
         const hidden = Object.defineProperty({ $match: {} }, '$out', { value: 'blocked_output', enumerable: false });
         const converted = { toBSON: () => ({ $merge: 'blocked_output' }) };
         for (const stage of [{ $out: '' }, { $merge: { into: 'blocked_output' } }, hidden, converted]) {
@@ -53,6 +68,50 @@ describe('review repair query contracts against native MongoDB', () => {
             }
         }
         assert.equal(commands.filter((event) => event.commandName === 'aggregate').length, 0);
+    });
+
+    it('materializes native out after DSL conversion and never consumes or fills a read cache entry', async () => {
+        const pipeline = [{ $project: { score: MonSQLize.expr('score+1') } }];
+        assert.equal((await collection.aggregate(pipeline, { cache: 10000 })).length, 3);
+        const target = 'ABCDEFABCDEFABCDEFABCDEF'; await nativeDb.collection(target).drop().catch(() => {});
+        await collection.aggregate(pipeline, { out: target, cache: 10000 });
+        assert.equal(await nativeDb.collection(target).countDocuments(), 3);
+        await nativeDb.collection(target).drop();
+        const stream = collection.aggregate(pipeline, { out: target, cache: 10000 }).stream();
+        for await (const row of stream) void row;
+        assert.equal(await nativeDb.collection(target).countDocuments(), 3);
+        await model.aggregate([{ $match: {} }], { out: 'blocked_output', cache: 10000 });
+        assert.equal(await nativeDb.collection('blocked_output').countDocuments(), 2);
+        await assert.rejects(async () => await collection.aggregate([{ $out: 'out_first' }], { out: 'out_second' }));
+    });
+
+    it('captures pagination native out exactly once before asynchronous cache work', async () => {
+        let reads = 0;
+        const options: any = { pipeline: [{ $match: { active: true } }], limit: 10, cache: 10000,
+            get options() { reads++; return reads === 1 ? {} : { out: 'late_output' }; } };
+        assert.equal((await collection.findPage(options)).items.length, 2); assert.equal(reads, 1);
+        const native: any = {};
+        const pending = collection.findPage({ pipeline: [{ $match: { active: true } }], options: native, cache: 10000 });
+        native.out = 'late_output'; await pending;
+        assert.equal(commands.some((event) => event.command.pipeline?.some((stage: any) => '$out' in stage)), false);
+    });
+
+    it('isolates mutable BSON decoding options from ordinary aggregate cache results', async () => {
+        const pipeline = [{ $limit: 1 }, { $project: { _id: 0, payload: { $literal: [{ value: 1 }] } } }];
+        const plainRows = await collection.aggregate(pipeline, { cache: 10000 });
+        const fields: any = Object.create({ payload: false });
+        const chain = collection.aggregate(pipeline, { fieldsAsRaw: fields, cache: 10000 });
+        fields.payload = true;
+        assert.deepEqual(await chain, plainRows);
+        const rawRows = await collection.aggregate(pipeline, { fieldsAsRaw: fields, cache: 10000 });
+        const nativeRows = await raw.aggregate(pipeline, { fieldsAsRaw: fields }).toArray();
+        assert.ok(Buffer.isBuffer(rawRows[0].payload[0])); assert.deepEqual(rawRows, nativeRows);
+        assert.deepEqual(await collection.aggregate(pipeline, { cache: 10000 }), plainRows);
+        const buffers = await collection.aggregate(pipeline, { raw: true, cache: 10000 });
+        assert.ok(Buffer.isBuffer(buffers[0]));
+        const dynamic = new Proxy({}, { get: (_target, key) => key === 'payload' });
+        assert.deepEqual(await collection.aggregate(pipeline, { fieldsAsRaw: dynamic, cache: 10000 }),
+            await raw.aggregate(pipeline, { fieldsAsRaw: dynamic }).toArray());
     });
 
     it('captures class stages for every aggregate terminal and pagination', async () => {
@@ -149,7 +208,7 @@ describe('review repair query contracts against native MongoDB', () => {
         const id = new ObjectId(); await nativeDb.collection('descriptor_legacy').insertOne({ score: 1 });
         const pipeline = [{ $project: { _id: 0, value: { $literal: id } } }];
         const key = buildPreparedAggregateCacheKey(target.raw(), target.management.defaults, pipeline);
-        const legacy = key.replace(':prepared-v1:', ':');
+        const legacy = key.replace(':prepared-v2:', ':prepared-v1:');
         assert.notEqual(key, legacy);
         await runtime.getCache().set(legacy, [{ value: id.toHexString() }], 10000);
         const [row] = await target.aggregate(pipeline, { cache: 10000 });

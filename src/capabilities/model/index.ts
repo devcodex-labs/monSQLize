@@ -241,7 +241,11 @@ export class ModelInstance<TDocument = Record<string, unknown>> {
     }
 
     private runModelWrite<TResult>(executor: () => TResult): TResult {
-        return runWithModelWriteSource(executor);
+        return runWithModelWriteSource(executor, ({ dbName, collectionName, poolName, pipeline, options }) => {
+            if (dbName !== this.dbName || collectionName !== this.collectionName
+                || (poolName ?? 'default') !== (this.poolName ?? 'default')) return 'broad';
+            return applySoftDeleteAggregatePipeline(pipeline, options, this._softDeleteConfig);
+        });
     }
 
     private async runV1HookedOperation<TResult>(

@@ -87,6 +87,28 @@ describe('P4-A transaction integration', () => {
         } finally { await runtime.close(); }
     });
 
+    it('resolves soft-delete Model aggregate invalidation before commit and discards it on abort', async () => {
+        MonSQLize.Model.define('visibility_balances', { schema: {}, options: { softDelete: true, autoIndex: false } });
+        const runtime = new MonSQLize({ type: 'mongodb', databaseName: 'repair_tx_model_descriptor', config: { uri }, autoConvertObjectId: false });
+        try {
+            await runtime.connect();
+            const col = runtime.collection('visibility_balances'), model = runtime.model('visibility_balances'), raw = col.raw();
+            const read = [{ $project: { _id: 0, balance: MonSQLize.expr('balance+1') } }];
+            for (const commit of [true, false]) {
+                await raw.deleteMany({}); await runtime.getCache().clear(); await raw.insertOne({ _id: 'A', balance: 1, deletedAt: null });
+                assert.equal((await model.aggregate(read, { cache: 10000 }))[0].balance, 2);
+                const operation = runtime.withTransaction(async (tx: any) => {
+                    await model.updateOne({ _id: 'A' }, { $set: { balance: 9 } }, { session: tx.session,
+                        cache: { invalidate: [{ operation: 'aggregate', pipeline: read }] } });
+                    assert.equal((await model.aggregate(read, { cache: 10000 }))[0].balance, 2);
+                    if (!commit) throw new Error('model descriptor abort');
+                });
+                if (commit) await operation; else await assert.rejects(operation, /model descriptor abort/);
+                assert.equal((await model.aggregate(read, { cache: 10000 }))[0].balance, commit ? 10 : 2);
+            }
+        } finally { await runtime.close(); MonSQLize.Model._clear(); }
+    });
+
     it('B10 defers partial-batch invalidation until commit and discards it on abort', async () => {
         const runtime = new MonSQLize({ type: 'mongodb', databaseName: 'b10_tx', config: { uri }, cache: new MonSQLize.MemoryCache() });
         await runtime.connect();

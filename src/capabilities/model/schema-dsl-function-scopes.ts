@@ -1,9 +1,7 @@
-import { collectLocalDeclarationBindings } from './schema-dsl-local-declarations';
-import { addFunctionDeclarationIdentifier } from './schema-dsl-function-declarations';
+import { collectLocalDeclarationBindings, findClosingPair, functionIdentifierPattern, functionIdentifierPartPattern, nonWhitespaceIndex, topLevelIndices } from './schema-dsl-local-declarations';
+import { addFunctionDeclarationIdentifier, readFunctionHeader } from './schema-dsl-function-declarations';
 
-const functionIdentifierPattern = /[$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*/gu;
 const simpleFunctionIdentifierPattern = /^[$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*$/u;
-const functionIdentifierPartPattern = /[$\u200c\u200d\p{ID_Continue}]/u;
 
 export type FunctionScopeInfo = {
     start: number;
@@ -27,15 +25,9 @@ function isIdentifierPart(char: string | undefined): boolean {
 
 function splitTopLevel(source: string, delimiter: string): string[] {
     const parts: string[] = [];
-    let depth = 0;
     let start = 0;
-    for (let index = 0; index < source.length; index += 1) {
-        const char = source[index];
-        if (char === '{' || char === '[' || char === '(') {
-            depth += 1;
-        } else if (char === '}' || char === ']' || char === ')') {
-            depth = Math.max(0, depth - 1);
-        } else if (char === delimiter && depth === 0) {
+    for (const index of topLevelIndices(source)) {
+        if (source[index] === delimiter) {
             parts.push(source.slice(start, index));
             start = index + 1;
         }
@@ -45,30 +37,13 @@ function splitTopLevel(source: string, delimiter: string): string[] {
 }
 
 function indexOfTopLevel(source: string, needle: string): number {
-    let depth = 0;
-    for (let index = 0; index < source.length; index += 1) {
-        const char = source[index];
-        if (char === '{' || char === '[' || char === '(') {
-            depth += 1;
-        } else if (char === '}' || char === ']' || char === ')') {
-            depth = Math.max(0, depth - 1);
-        } else if (char === needle && depth === 0) {
-            return index;
-        }
-    }
+    for (const index of topLevelIndices(source)) if (source[index] === needle) return index;
     return -1;
 }
 
 function indexOfTopLevelWord(source: string, word: string): number {
-    let depth = 0;
-    for (let index = 0; index < source.length; index += 1) {
-        const char = source[index];
-        if (char === '{' || char === '[' || char === '(') {
-            depth += 1;
-        } else if (char === '}' || char === ']' || char === ')') {
-            depth = Math.max(0, depth - 1);
-        } else if (
-            depth === 0
+    for (const index of topLevelIndices(source)) {
+        if (index > 0
             && source.startsWith(word, index)
             && !isIdentifierPart(source[index - 1])
             && !isIdentifierPart(source[index + word.length])
@@ -95,19 +70,7 @@ function stripLocalDeclarationBinding(declaration: string): string {
 }
 
 function findMatchingBrace(source: string, start: number): number {
-    let depth = 0;
-    for (let index = start; index < source.length; index += 1) {
-        const char = source[index];
-        if (char === '{') {
-            depth += 1;
-        } else if (char === '}') {
-            depth -= 1;
-            if (depth === 0) {
-                return index;
-            }
-        }
-    }
-    return -1;
+    return findClosingPair(source, start, '{', '}');
 }
 
 function addBindingIdentifiers(pattern: string, identifiers: Set<string>): void {
@@ -152,35 +115,11 @@ export function addParameterIdentifiers(parameters: string, identifiers: Set<str
 }
 
 function findMatchingParenStart(source: string, start: number): number {
-    let depth = 0;
-    for (let index = start; index >= 0; index -= 1) {
-        const char = source[index];
-        if (char === ')') {
-            depth += 1;
-        } else if (char === '(') {
-            depth -= 1;
-            if (depth === 0) {
-                return index;
-            }
-        }
-    }
-    return -1;
+    return findClosingPair(source, start, ')', '(', -1);
 }
 
 function findMatchingBracketStart(source: string, start: number): number {
-    let depth = 0;
-    for (let index = start; index >= 0; index -= 1) {
-        const char = source[index];
-        if (char === ']') {
-            depth += 1;
-        } else if (char === '[') {
-            depth -= 1;
-            if (depth === 0) {
-                return index;
-            }
-        }
-    }
-    return -1;
+    return findClosingPair(source, start, ']', '[', -1);
 }
 
 export function findArrowParameterStart(source: string, arrowIndex: number): number {
@@ -295,7 +234,8 @@ function addSemicolonlessClassFieldScopes(scopes: FunctionScopeInfo[], header: s
     }
 }
 
-function getClassMethodNameBinding(header: string, headerStart: number): FunctionScopeInfo | null {
+function getClassMethodNameBinding(header: string, headerStart: number): FunctionScopeInfo[] {
+    const scopes: FunctionScopeInfo[] = [];
     let remaining = header.trim();
     let offset = header.indexOf(remaining);
     for (;;) {
@@ -303,6 +243,8 @@ function getClassMethodNameBinding(header: string, headerStart: number): Functio
         if (next === remaining) {
             break;
         }
+        const modifier = /^(static|async|get|set)/.exec(remaining)![1];
+        scopes.push(createClassMemberBindingScope(modifier, headerStart + offset));
         offset += remaining.length - next.length;
         remaining = next;
     }
@@ -310,13 +252,14 @@ function getClassMethodNameBinding(header: string, headerStart: number): Functio
     offset += remaining.length - withoutGenerator.length;
     remaining = withoutGenerator;
     if (remaining.startsWith('[')) {
-        return null;
+        return scopes;
     }
     const match = /^#?([$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*)\s*\(/u.exec(remaining);
     if (!match) {
-        return null;
+        return scopes;
     }
-    return createClassMemberBindingScope(match[1], headerStart + offset + match[0].lastIndexOf(match[1]));
+    scopes.push(createClassMemberBindingScope(match[1], headerStart + offset + match[0].lastIndexOf(match[1])));
+    return scopes;
 }
 
 function stripClassMethodModifiers(header: string): string {
@@ -458,12 +401,7 @@ function findClassBodyStart(source: string, classIndex: number): number {
 }
 
 function previousNonWhitespaceIndex(source: string, start: number): number {
-    for (let index = start; index >= 0; index -= 1) {
-        if (!/\s/.test(source[index])) {
-            return index;
-        }
-    }
-    return -1;
+    return nonWhitespaceIndex(source, start, -1);
 }
 
 function isClassDeclarationBinding(source: string, classIndex: number): boolean {
@@ -548,10 +486,7 @@ function findClassMemberScopes(source: string): FunctionScopeInfo[] {
                         break;
                     }
                     if (isMethod) {
-                        const methodNameScope = getClassMethodNameBinding(methodHeader, methodStart);
-                        if (methodNameScope) {
-                            scopes.push(methodNameScope);
-                        }
+                        scopes.push(...getClassMethodNameBinding(methodHeader, methodStart));
                         const boundIdentifiers = new Set<string>();
                         if (parameters !== null) {
                             addParameterIdentifiers(parameters, boundIdentifiers);
@@ -616,13 +551,7 @@ function findObjectMethodScopes(source: string): FunctionScopeInfo[] {
         if (bodyEnd <= bodyStart) {
             continue;
         }
-        const methodNameScope = getClassMethodNameBinding(header, headerStart);
-        if (methodNameScope) {
-            scopes.push({
-                ...methodNameScope,
-                kind: 'object-member',
-            });
-        }
+        scopes.push(...getClassMethodNameBinding(header, headerStart).map((scope) => ({ ...scope, kind: 'object-member' as const })));
         const boundIdentifiers = new Set<string>();
         addParameterIdentifiers(source.slice(parenStart + 1, parenEnd), boundIdentifiers);
         scopes.push({
@@ -682,25 +611,22 @@ export function findNestedFunctionScopes(source: string, rootArrowIndex: number,
         if (functionIndex === rootFunctionIndex) {
             continue;
         }
-        const bodyStart = source.indexOf('{', functionIndex);
-        if (bodyStart <= 0) {
-            continue;
-        }
+        const header = readFunctionHeader(source.slice(functionIndex));
+        if (!header) continue;
+        const bodyStart = functionIndex + header.bodyStart;
         const bodyEnd = findMatchingBrace(source, bodyStart);
         if (bodyEnd > bodyStart) {
-            const header = source.slice(functionIndex, bodyStart);
-            const functionMatch = /function(?:\s+([$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*))?\s*\(([^)]*)\)/u.exec(header);
             const boundIdentifiers = new Set<string>();
-            if (functionMatch?.[1]) {
-                boundIdentifiers.add(functionMatch[1]);
+            if (header.name) {
+                boundIdentifiers.add(header.name);
             }
-            addParameterIdentifiers(functionMatch?.[2] ?? '', boundIdentifiers);
+            addParameterIdentifiers(header.parameters, boundIdentifiers);
             scopes.push({
                 start: functionIndex,
                 end: bodyEnd,
                 bodyStart,
                 bodyEnd,
-                name: functionMatch?.[1],
+                name: header.name,
                 kind: 'function',
                 boundIdentifiers,
             });
@@ -745,24 +671,27 @@ export function findNestedFunctionScopes(source: string, rootArrowIndex: number,
     scopes.sort((left, right) => left.start - right.start || right.end - left.end);
 
     const blockScopes: FunctionScopeInfo[] = [];
+    const bodyScopes: FunctionScopeInfo[] = [];
     for (const scope of scopes) {
         if (scope.kind === 'class-member' || scope.kind === 'object-member') {
             continue;
         }
         const childScopes = scopes.filter((candidate) => candidate !== scope && candidate.start > scope.start && candidate.end <= scope.end);
-        addScopedLocalIdentifiers(source, scope.bodyStart, scope.bodyEnd, scope.boundIdentifiers, childScopes, blockScopes);
+        const bodyIdentifiers = new Set<string>();
+        addScopedLocalIdentifiers(source, scope.bodyStart, scope.bodyEnd, bodyIdentifiers, childScopes, blockScopes);
         for (const childScope of childScopes) {
             if (childScope.kind !== 'function' || !childScope.name) {
                 continue;
             }
             const parent = findParentFunctionScope(childScope, scopes);
-            if (parent === scope) {
-                addFunctionDeclarationIdentifier(source, scope.bodyStart, childScope, scope.boundIdentifiers, blockScopes, statementSource);
+            if (parent === scope && childScope.start >= scope.bodyStart && childScope.start <= scope.bodyEnd) {
+                addFunctionDeclarationIdentifier(source, scope.bodyStart, childScope, bodyIdentifiers, blockScopes, statementSource);
             }
         }
+        bodyScopes.push({ ...scope, start: scope.bodyStart, kind: 'block', boundIdentifiers: bodyIdentifiers });
     }
 
-    return [...scopes, ...blockScopes];
+    return [...scopes, ...blockScopes, ...bodyScopes];
 }
 
 export function isBoundByNestedFunctionScope(identifier: string, index: number, scopes: readonly FunctionScopeInfo[]): boolean {

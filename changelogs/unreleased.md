@@ -2,6 +2,8 @@
 
 ## Changes after v3.3.1
 
+- Classify native aggregate `out` before write checks and capture result options across cache waits while preserving sessions/signals. Start aggregate caches at a new generation. Align explicit soft-delete Model aggregate invalidation, retain native matching for uppercase converted relation keys, and distinguish contextual words, complete default-call parameters, separate parameter/body bindings and template scopes in schema factories. Default invalidation, checkpoint formats, dependency versions and package budgets remain unchanged.
+
 - Align supported DSL aggregate descriptor invalidation with captured execution pipelines without reinterpreting prepared literals. Preserve native relation equality for colliding BSON key types, distinguish factory display names from lexical bindings, and retain scalar-override and invalid-input compatibility in special-key MemoryCache batches. Regression coverage and bilingual boundaries accompany these fixes; dependency versions, public signatures, checkpoint formats and package budgets are unchanged.
 
 - Recheck aggregate write targets after DSL compilation and retain Model origin. Support frozen cache adapters and prototype-name batch keys without changing TTL, timeout or backfill fencing. Correct object-property/function-expression/block-function schema bindings; use native collation equality for unsorted string population, with documented metadata and query costs.

@@ -1,3 +1,23 @@
+export const functionIdentifierPattern = /[$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*/gu;
+export const functionIdentifierPartPattern = /[$\u200c\u200d\p{ID_Continue}]/u;
+
+export function nonWhitespaceIndex(source: string, start: number, direction = 1): number {
+    for (let index = start; index >= 0 && index < source.length; index += direction) {
+        if (!/\s/.test(source[index])) return index;
+    }
+    return -1;
+}
+
+/** Indices outside balanced groups in already-masked function source. */
+export function* topLevelIndices(source: string): Generator<number> {
+    let depth = 0;
+    for (let index = 0; index < source.length; index++) {
+        if ('{[('.includes(source[index])) depth++;
+        else if ('}])'.includes(source[index])) depth = Math.max(0, depth - 1);
+        else if (depth === 0) yield index;
+    }
+}
+
 const localDeclarationBoundaryWords = new Set([
     'break',
     'case',
@@ -28,21 +48,11 @@ function isIdentifierPart(char: string | undefined): boolean {
 }
 
 function nextNonWhitespaceIndex(source: string, start: number): number {
-    for (let index = start; index < source.length; index += 1) {
-        if (!/\s/.test(source[index])) {
-            return index;
-        }
-    }
-    return -1;
+    return nonWhitespaceIndex(source, start);
 }
 
 function previousNonWhitespaceIndex(source: string, start: number): number {
-    for (let index = start; index >= 0; index -= 1) {
-        if (!/\s/.test(source[index])) {
-            return index;
-        }
-    }
-    return -1;
+    return nonWhitespaceIndex(source, start, -1);
 }
 
 function readIdentifierAt(source: string, start: number): string | null {
@@ -57,31 +67,12 @@ function readIdentifierAt(source: string, start: number): string | null {
 }
 
 function currentDeclaratorHasInitializer(source: string, start: number, end: number): boolean {
-    let depth = 0;
-    let segmentStart = start;
-    for (let index = start; index < end; index += 1) {
-        const char = source[index];
-        if (char === '{' || char === '[' || char === '(') {
-            depth += 1;
-        } else if (char === '}' || char === ']' || char === ')') {
-            depth = Math.max(0, depth - 1);
-        } else if (char === ',' && depth === 0) {
-            segmentStart = index + 1;
-        }
+    let initialized = false;
+    for (const index of topLevelIndices(source.slice(start, end))) {
+        if (source[start + index] === ',') initialized = false;
+        else if (source[start + index] === '=') initialized = true;
     }
-
-    depth = 0;
-    for (let index = segmentStart; index < end; index += 1) {
-        const char = source[index];
-        if (char === '{' || char === '[' || char === '(') {
-            depth += 1;
-        } else if (char === '}' || char === ']' || char === ')') {
-            depth = Math.max(0, depth - 1);
-        } else if (char === '=' && depth === 0) {
-            return true;
-        }
-    }
-    return false;
+    return initialized;
 }
 
 function shouldEndLocalDeclarationAtLineBreak(source: string, start: number, index: number): boolean {
@@ -133,9 +124,9 @@ type LocalDeclarationBinding = {
     scope: LocalBindingScope | null | undefined;
 };
 
-function findClosingPair(source: string, start: number, open: string, close: string): number {
+export function findClosingPair(source: string, start: number, open: string, close: string, direction = 1): number {
     let depth = 0;
-    for (let index = start; index < source.length; index++) {
+    for (let index = start; index >= 0 && index < source.length; index += direction) {
         if (source[index] === open) depth++;
         else if (source[index] === close && --depth === 0) return index;
     }

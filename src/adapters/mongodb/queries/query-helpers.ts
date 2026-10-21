@@ -1,13 +1,9 @@
-/**
- * Query operation helpers (cursor building, filter normalization, pagination, streaming, etc.).
- *
- * Extracted from the MongoCollectionAccessor query path to reduce main-file
- * complexity and enable independent testing.
- */
+/** Shared MongoDB query normalization, cursor and cache helpers. */
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { cacheNamespace, relatedCacheNamespaces } from '../../../core/cache-scope';
 
-import { BSON, Collection, Document, ObjectId, Sort } from 'mongodb';
+import { BSON, Collection, Document, ObjectId, ReadConcern, ReadPreference, Sort } from 'mongodb';
+import { snapshotPipelineValue } from './pipeline-snapshot';
 
 import { createError, ErrorCodes } from '../../../core/errors';
 import {
@@ -22,14 +18,6 @@ import {
     type ObjectIdConversionOptions,
 } from '../utils/objectid-converter';
 
-/**
- * Internal query-layer helpers.
- *
- * Design goals:
- * - Centralize ObjectId / cursor / sort / projection cross-cutting logic from `queries/index.ts`.
- * - Preserve existing behavior exactly; structural refactor only.
- * - Pave the way for further splitting find / findPage into thin modules.
- */
 
 /** Converts any MongoDB `Sort` input into a normalized `{ field: 1 | -1 }` map, always including `_id`. */
 export function normalizeSortShape(sort?: Sort): SortShape {
@@ -359,6 +347,42 @@ const RESULT_CACHE_KEY_OPTION_FIELDS = [
     'allowDiskUse',
     'let',
 ];
+
+/** Capture result data without cloning sessions, signals or other live driver resources. */
+export function snapshotResultOptions(options: Record<string, unknown> = {}): Record<string, unknown> {
+    const captured = { ...options };
+    for (const field of RESULT_CACHE_KEY_OPTION_FIELDS) {
+        const value = captured[field];
+        if (value instanceof ReadPreference) {
+            captured[field] = new ReadPreference(value.mode, snapshotPipelineValue(value.tags), {
+                maxStalenessSeconds: value.maxStalenessSeconds,
+                hedge: snapshotPipelineValue(value.hedge),
+            });
+        } else if (value instanceof ReadConcern) {
+            captured[field] = new ReadConcern(value.level as ConstructorParameters<typeof ReadConcern>[0]);
+        } else if (field === 'readConcern' && value != null) {
+            const concern = ReadConcern.fromOptions({ readConcern: value as NonNullable<Parameters<typeof ReadConcern.fromOptions>[0]>['readConcern'] });
+            captured[field] = concern ? new ReadConcern(concern.level as ConstructorParameters<typeof ReadConcern>[0]) : value;
+        } else if (field === 'readPreference' && value && typeof value === 'object') {
+            // ReadPreference options use direct property access, including prototype getters.
+            const config = value as Record<string, unknown>;
+            const mode = config.mode || config.preference;
+            captured[field] = typeof mode === 'string' ? { mode,
+                tags: snapshotPipelineValue(config.tags), maxStalenessSeconds: config.maxStalenessSeconds,
+            } : value;
+        } else if (value !== undefined) {
+            captured[field] = snapshotPipelineValue(value);
+        }
+    }
+    for (const field of ['readPreferenceTags', 'hedge']) {
+        if (captured[field] !== undefined) captured[field] = snapshotPipelineValue(captured[field]);
+    }
+    if (captured.readPreference != null) {
+        captured.readPreference = ReadPreference.fromOptions({ ...captured, session: undefined } as Parameters<typeof ReadPreference.fromOptions>[0]);
+        delete captured.readPreferenceTags;
+    }
+    return captured;
+}
 
 function stripControlOptions(options: Record<string, unknown> = {}): Record<string, unknown> {
     const driverOptions = { ...options };

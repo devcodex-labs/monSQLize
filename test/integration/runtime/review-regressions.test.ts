@@ -1,6 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveMemoryServerBinaryVersion } from '../../bootstrap/memory-server-policy';
+import { resolveMemoryServerBinaryVersion, resolveMemoryServerLaunchTimeoutMs } from '../../bootstrap/memory-server-policy';
 import { ensureWebCryptoGlobal } from '../../bootstrap/webcrypto';
 const MonSQLize = require('../../../dist/cjs/index.cjs');
 const { ObjectId, MongoClient } = require('mongodb');
@@ -11,7 +11,8 @@ const deferred = () => { let resolve!: () => void; const promise = new Promise<v
 let server: any, runtime: any;
 before(async () => {
   ensureWebCryptoGlobal();
-  server = await MongoMemoryServer.create({ binary: { version: binaryVersion } });
+  const launchTimeout = resolveMemoryServerLaunchTimeoutMs();
+  server = await MongoMemoryServer.create({ binary: { version: binaryVersion }, instance: { ...(launchTimeout ? { launchTimeout } : {}) } });
   runtime = new MonSQLize({ type: 'mongodb', databaseName: 'independent_verify', config: { uri: server.getUri() }, cache: { autoInvalidate: true }, logger: { level: 'silent' } });
   await runtime.connect();
 });
@@ -195,7 +196,8 @@ test('Excluding only _id retains business fields and cursor anchors', async () =
 });
 
 test('Dedicated tenant pools isolate their query caches', async () => {
-  const other = await MongoMemoryServer.create({ binary: { version: binaryVersion } });
+  const launchTimeout = resolveMemoryServerLaunchTimeoutMs();
+  const other = await MongoMemoryServer.create({ binary: { version: binaryVersion }, instance: { ...(launchTimeout ? { launchTimeout } : {}) } });
   const multi = new MonSQLize({ type: 'mongodb', databaseName: 'dedicated_tenants', config: { uri: server.getUri() }, pools: [
     { name: 'tenantA', uri: server.getUri(), role: 'primary', healthCheck: { enabled: false } },
     { name: 'tenantB', uri: other.getUri(), role: 'primary', healthCheck: { enabled: false } },
@@ -326,7 +328,8 @@ test('Cached page totals finish and invalidate after writes', { timeout: 5000 },
 
 test('A real delayed MongoDB commit cannot overlap timeout rollback', async () => {
   // This failpoint belongs only to this owned test replica set.
-  const repl = await MongoMemoryReplSet.create({ binary: { version: binaryVersion }, replSet: {
+  const launchTimeout = resolveMemoryServerLaunchTimeoutMs();
+  const repl = await MongoMemoryReplSet.create({ binary: { version: binaryVersion }, instanceOpts: [{ ...(launchTimeout ? { launchTimeout } : {}) }], replSet: {
     count: 1, storageEngine: 'wiredTiger', args: ['--setParameter', 'enableTestCommands=1'],
   } });
   let real: any, admin: any;

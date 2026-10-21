@@ -22,6 +22,82 @@ describe('review model mutation, population and extension contracts', () => {
         runtimes.add(runtime); await runtime.connect(); return runtime;
     };
 
+    it('invalidates both Collection and soft-delete Model aggregate descriptors for all visibility modes', async () => {
+        MonSQLize.Model.define('items', { schema: {}, options: { softDelete: true, autoIndex: false } });
+        const runtime = await connect('repair_model_aggregate_visibility');
+        const collection = runtime.collection('items'), model = runtime.model('items'), raw = collection.raw();
+        const pipeline = [{ $sort: { _id: 1 } }, { $project: { _id: 0, score: MonSQLize.expr('score+1') } }];
+        for (const visibility of [{}, { withDeleted: true }, { onlyDeleted: true }]) {
+            await raw.deleteMany({}); await runtime.getCache().clear();
+            await raw.insertMany([{ _id: 1, score: 1, deletedAt: null }, { _id: 2, score: 2, deletedAt: new Date(1) }]);
+            await model.aggregate(pipeline, { ...visibility, cache: 10000 });
+            await collection.aggregate(pipeline, { ...visibility, cache: 10000 });
+            await runtime.getCache().set('unrelated-control', 1, 10000);
+            const options = Object.freeze({ withDeleted: true, cache: Object.freeze({ invalidate: Object.freeze([
+                Object.freeze({ operation: 'aggregate', pipeline, options: Object.freeze({ ...visibility }) }),
+            ]) }) });
+            await model.updateMany({}, { $set: { score: 9 } }, options);
+            const expected = visibility.withDeleted ? [{ score: 10 }, { score: 10 }] : [{ score: 10 }];
+            assert.deepEqual(await model.aggregate(pipeline, { ...visibility, cache: 10000 }), expected);
+            assert.deepEqual(await collection.aggregate(pipeline, { ...visibility, cache: 10000 }), [{ score: 10 }, { score: 10 }]);
+            assert.equal(await runtime.getCache().get('unrelated-control'), 1);
+        }
+    });
+
+    it('keeps explicit invalidation controls and aligns soft-delete, restore, hooks and aggregate writes', async () => {
+        let inject = false;
+        const pipeline = [{ $project: { _id: 0, score: 1 } }];
+        const control = { cache: { invalidate: [{ operation: 'aggregate', pipeline }] } };
+        MonSQLize.Model.define('items', { schema: {}, options: { softDelete: true, autoIndex: false },
+            hooks: () => ({ update: { before(_context: unknown, filter: unknown, update: unknown, options: unknown) {
+                return inject ? [filter, update, control] : [filter, update, options];
+            } } }),
+        });
+        const runtime = await connect('repair_model_aggregate_writes');
+        const model = runtime.model('items'), collection = runtime.collection('items'), raw = collection.raw();
+        await raw.deleteMany({}); await raw.insertOne({ _id: 1, score: 1, deletedAt: null });
+        assert.deepEqual(await model.aggregate(pipeline, { cache: 10000 }), [{ score: 1 }]);
+        for (const options of [undefined, { cache: { invalidate: false } }, { cache: { invalidate: [] } }]) {
+            await model.updateOne({ _id: 1 }, { $set: { score: 2 } }, options);
+            assert.deepEqual(await model.aggregate(pipeline, { cache: 10000 }), [{ score: 1 }]);
+        }
+        inject = true; await model.updateOne({ _id: 1 }, { $set: { score: 3 } }); inject = false;
+        assert.deepEqual(await model.aggregate(pipeline, { cache: 10000 }), [{ score: 3 }]);
+        await model.deleteOne({ _id: 1 }, control); assert.deepEqual(await model.aggregate(pipeline, { cache: 10000 }), []);
+        await model.restore({ _id: 1 }, control); assert.deepEqual(await model.aggregate(pipeline, { cache: 10000 }), [{ score: 3 }]);
+        await model.aggregate([{ $set: { score: 4 } }, { $merge: 'items' }], control);
+        assert.deepEqual(await model.aggregate(pipeline, { cache: 10000 }), [{ score: 4 }]);
+        const target = runtime.collection('visibility_output');
+        await target.aggregate(pipeline, { cache: 10000 }); await target.find({}, { cache: 10000 });
+        await model.aggregate([], { out: 'visibility_output', ...control });
+        assert.deepEqual(await target.aggregate(pipeline, { cache: 10000 }), [{ score: 4 }]);
+        assert.deepEqual(await target.find({}, { cache: 10000 }), []);
+    });
+
+    it('matches uppercase converted relation keys without changing binary string matching or parent array order', async () => {
+        const first = 'ABCDEFABCDEFABCDEFABCDEF', second = 'FEDCBAFEDCBAFEDCBAFEDCBA';
+        for (const conversion of [false, { enabled: true, excludeFields: ['key'] }, { enabled: true, excludeFields: ['owner', 'key'] }]) {
+            MonSQLize.Model._clear();
+            MonSQLize.Model.define('parents', { schema: {}, options: { autoIndex: false }, relations: {
+                children: { from: 'children', localField: 'key', foreignField: 'owner' },
+            } });
+            const runtime = new MonSQLize({ type: 'mongodb', databaseName: 'repair_uppercase_relations', autoConvertObjectId: conversion, config: { uri } });
+            runtimes.add(runtime); await runtime.connect();
+            const parents = runtime.collection('parents').raw(), children = runtime.collection('children').raw();
+            await parents.deleteMany({}); await children.deleteMany({});
+            await parents.insertMany([{ _id: 1, key: [first, second] }, { _id: 2, key: new ObjectId(first) }]);
+            await children.insertMany([{ owner: new ObjectId(second), n: 2 }, { owner: new ObjectId(first), n: 1 }, { owner: first, n: 3 }]);
+            const rows = await runtime.model('parents').find({}, { sort: { _id: 1 } }).populate({ path: 'children', select: ['n'] });
+            const enabled = typeof conversion === 'object' && !conversion.excludeFields.includes('owner');
+            assert.deepEqual(rows[0].children.map((row: any) => row.n), enabled ? [1, 2] : [3]);
+            assert.deepEqual(rows[1].children.map((row: any) => row.n), [1]);
+            assert.ok(rows.every((row: any) => row.children.every((child: any) => !('owner' in child))));
+            await parents.insertMany([{ _id: 3, key: [first, first] }, { _id: 4, key: [first, first.toLowerCase()] }]);
+            const repeated = await runtime.model('parents').find({ _id: { $in: [3, 4] } }, { sort: { _id: 1 } }).populate('children');
+            assert.deepEqual(repeated.map((row: any) => row.children.map((child: any) => child.n)), enabled ? [[1], [1]] : [[3], [3]]);
+        }
+    });
+
     it('uses native collation equality for unsorted string relations in the selected database', async () => {
         const targetDb = 'repair_populate_collation_target';
         MonSQLize.Model.define('children', { schema: {}, connection: { database: targetDb }, options: { autoIndex: false } });
@@ -220,6 +296,27 @@ describe('review model mutation, population and extension contracts', () => {
 
     it('rejects different captured factories after block, catch, loop and class shadows end', async () => {
         const makers = [
+            (Load: string) => ({ functionLoad() { return { type: 'string', const: Load }; } }).functionLoad,
+            (get: string) => () => ({ type: 'string', const: get }),
+            (set: string) => () => ({ type: 'string', const: set }),
+            (of: string) => () => ({ type: 'string', const: of }),
+            (async: string) => () => ({ type: 'string', const: async }),
+            (value: string) => { const load = () => value; return ({ factory({ pattern = load() } = {}) { return { type: 'string', pattern }; } }).factory; },
+            (value: string) => { const load = () => value; return function factory({ pattern = load() } = {}) { return { type: 'string', pattern }; }; },
+            (value: string) => { const load = () => value; return () => { function factory({ pattern = load() } = {}) { return pattern; } return { type: 'string', pattern: factory() }; }; },
+            ...[
+                'return function factory({pattern=load()}={}) {const load=()=>"local";void load;return {type:"string",pattern};};',
+                'return ({pattern=load()}={}) => {const load=()=>"local";void load;return {type:"string",pattern};};',
+                'return ({factory({pattern=load()}={}) {const load=()=>"local";void load;return {type:"string",pattern};}}).factory;',
+                'return function factory({pattern=load()}={}) {var load=()=>"local";void load;return {type:"string",pattern};};',
+                'return function factory({pattern=load()}={}) {function load(){return "local";}void load;return {type:"string",pattern};};',
+                'return () => {function factory({pattern=load()}={}) {const load=()=>"local";void load;return pattern;}return {type:"string",pattern:factory()};};',
+                'return () => {const factory=({pattern=load()}={})=>{const load=()=>"local";void load;return pattern;};return {type:"string",pattern:factory()};};',
+                'return () => {const tools={factory({pattern=load()}={}) {const load=()=>"local";void load;return pattern;}};return {type:"string",pattern:tools.factory()};};',
+                'return () => {class Tools {factory({pattern=load()}={}) {const load=()=>"local";void load;return pattern;}}return {type:"string",pattern:new Tools().factory()};};',
+                'return function factory({pattern=`${load()}`}={}) {const load=()=>"local";void load;return {type:"string",pattern};};',
+                'return function factory(){ tag`${load()}`\n {}\n var text; function tag(strings,value){ text=value; } return {type:"string",pattern:text}; };',
+            ].map((source) => (value: string) => new Function('load', source)(() => value)),
             (factory: string) => ({ factory: () => ({ type: 'string', const: factory }) }).factory,
             (factory: string) => ({ factory() { return { type: 'string', const: factory }; } }).factory,
             (factory: string) => ({ factory() { const apply = () => factory; return { type: 'string', const: apply() }; } }).factory,
@@ -250,6 +347,16 @@ describe('review model mutation, population and extension contracts', () => {
 
     it('permits stable ASI and Unicode factories on a shared runtime without losing expression closures', async () => {
         const sources = [
+            'function factory(load = () => "stable", { pattern = load() } = {}) { return { type: "string", pattern }; }',
+            'function factory(a = 1, b = a) { return { type: "number", const: b }; }',
+            'function factory(a = factory) { void a; return { type: "string" }; }',
+            'function factory() { const pattern = "stable"; return { type: "string", pattern: `${pattern}` }; }',
+            'function factory() { { const pattern = "stable"; return { type: "string", pattern: `${pattern}` }; } }',
+            '() => { const pattern = "stable"; return { type: "string", pattern: `${(() => `${pattern}`)()}` }; }',
+            'function factory() { const pattern = `stable`\n function local() { return pattern; } return { type: "string", pattern: local() }; }',
+            '() => { const target = [0], index = 0; for (target[index] of [1]) {} return { type: "number", const: target[0] }; }',
+            'function factory({ pattern = (() => "^stable$")() } = {}) { return { type: "string", pattern }; }',
+            '() => { const tools = { get value() { return 1; }, set value(v) { void v; }, async run() { return 1; } }; for (const x of [1]) { void x; } void tools; return { type: "string" }; }',
             '({ factory: () => { const tools = { async*factory() { yield 1; } }; void tools; return { type: "string" }; } }).factory',
             '({ factory() { const apply = value => value; return { type: "string", const: apply("stable") }; } }).factory',
             'function factory() { const again = factory; void again; return { type: "string" }; }',

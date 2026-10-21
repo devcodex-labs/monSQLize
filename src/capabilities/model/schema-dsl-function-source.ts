@@ -7,15 +7,14 @@ import {
     isBoundByNestedFunctionScope,
     type FunctionScopeInfo,
 } from './schema-dsl-function-scopes';
-import { addFunctionDeclarationIdentifier } from './schema-dsl-function-declarations';
+import { addFunctionDeclarationIdentifier, readFunctionHeader } from './schema-dsl-function-declarations';
+import { contextualSyntaxPositions } from './schema-dsl-contextual-tokens';
+import { findClosingPair, functionIdentifierPattern, functionIdentifierPartPattern, nonWhitespaceIndex } from './schema-dsl-local-declarations';
 
-const functionIdentifierPattern = /[$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*/gu;
-const functionIdentifierPartPattern = /[$\u200c\u200d\p{ID_Continue}]/u;
 const trailingFunctionIdentifierPattern = /([$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*)$/u;
 const regexPrefixKeywords = new Set(['return', 'throw', 'case', 'yield', 'typeof', 'delete', 'void', 'new']);
 const functionReservedIdentifiers = new Set([
     'arguments',
-    'async',
     'await',
     'break',
     'case',
@@ -33,7 +32,6 @@ const functionReservedIdentifiers = new Set([
     'finally',
     'for',
     'function',
-    'get',
     'globalThis',
     'if',
     'import',
@@ -42,9 +40,7 @@ const functionReservedIdentifiers = new Set([
     'let',
     'new',
     'null',
-    'of',
     'return',
-    'set',
     'static',
     'super',
     'switch',
@@ -99,6 +95,23 @@ function readTemplateLiteralEnd(source: string, start: number): number {
     return end;
 }
 
+/** Shared lexical skipping; templates are handled by each caller's own traversal. */
+function readPlainTokenEnd(source: string, start: number): number | null {
+    const current = source[start], next = source[start + 1];
+    if (current === '\'' || current === '"') return readQuotedLiteralEnd(source, start);
+    if (current !== '/') return null;
+    if (next === '/') {
+        const end = source.indexOf('\n', start + 2);
+        return end < 0 ? source.length : end;
+    }
+    if (next === '*') {
+        const end = source.indexOf('*/', start + 2);
+        return end < 0 ? source.length : end + 2;
+    }
+    return next !== undefined && next !== '=' && canStartRegexLiteral(source, start)
+        ? readRegexLiteralEnd(source, start) : null;
+}
+
 function maskFunctionLiteralsAndComments(source: string, preserveValueTokens = false): string {
     let masked = '';
     const maskValue = (text: string) => preserveValueTokens
@@ -106,38 +119,36 @@ function maskFunctionLiteralsAndComments(source: string, preserveValueTokens = f
         : ' '.repeat(text.length);
     for (let index = 0; index < source.length;) {
         const current = source[index];
-        const next = source[index + 1];
-        if (current === '/' && next === '/') {
-            const end = source.indexOf('\n', index + 2);
-            const commentEnd = end === -1 ? source.length : end;
-            masked += preserveValueTokens ? source.slice(index, commentEnd).replace(/[^\r\n]/g, ' ') : ' '.repeat(commentEnd - index);
-            index = commentEnd;
-            continue;
-        }
-        if (current === '/' && next === '*') {
-            const end = source.indexOf('*/', index + 2);
-            const commentEnd = end === -1 ? source.length : end + 2;
-            masked += preserveValueTokens ? source.slice(index, commentEnd).replace(/[^\r\n]/g, ' ') : ' '.repeat(commentEnd - index);
-            index = commentEnd;
-            continue;
-        }
-        if (current === '/' && next !== undefined && next !== '=' && canStartRegexLiteral(source, index)) {
-            const regexEnd = readRegexLiteralEnd(source, index);
-            if (regexEnd !== null) {
-                masked += maskValue(source.slice(index, regexEnd));
-                index = regexEnd;
-                continue;
-            }
-        }
-        if (current === '\'' || current === '"') {
-            const end = readQuotedLiteralEnd(source, index);
-            masked += maskValue(source.slice(index, end));
+        const end = readPlainTokenEnd(source, index);
+        if (end !== null) {
+            const text = source.slice(index, end);
+            const comment = current === '/' && (source[index + 1] === '/' || source[index + 1] === '*');
+            masked += comment
+                ? (preserveValueTokens ? text.replace(/[^\r\n]/g, ' ') : ' '.repeat(text.length))
+                : maskValue(text);
             index = end;
             continue;
         }
         if (current === '`') {
             const end = readTemplateLiteralEnd(source, index);
-            masked += maskValue(source.slice(index, end));
+            const raw = (text: string) => preserveValueTokens ? text.replace(/[^\r\n]/g, ' ') : ' '.repeat(text.length);
+            let chunkStart = index + 1;
+            let cursor = chunkStart;
+            masked += '[';
+            while (cursor < end - 1) {
+                if (source[cursor] === '\\') {
+                    cursor += 2;
+                } else if (source[cursor] === '$' && source[cursor + 1] === '{') {
+                    const expressionStart = cursor + 2;
+                    const expressionEnd = readTemplateExpressionEnd(source, expressionStart);
+                    if (expressionEnd < 0) break;
+                    masked += raw(source.slice(chunkStart, cursor)) + ' ('
+                        + maskFunctionLiteralsAndComments(source.slice(expressionStart, expressionEnd), preserveValueTokens) + ')';
+                    chunkStart = expressionEnd + 1;
+                    cursor = chunkStart;
+                } else cursor += 1;
+            }
+            masked += raw(source.slice(chunkStart, end - 1)) + ']';
             index = end;
             continue;
         }
@@ -151,31 +162,14 @@ function readTemplateExpressionEnd(source: string, start: number): number {
     let depth = 1;
     for (let index = start; index < source.length;) {
         const current = source[index];
-        const next = source[index + 1];
-        if (current === '\'' || current === '"') {
-            index = readQuotedLiteralEnd(source, index);
+        const plainEnd = readPlainTokenEnd(source, index);
+        if (plainEnd !== null) {
+            index = plainEnd;
             continue;
         }
         if (current === '`') {
             index = readTemplateLiteralEnd(source, index);
             continue;
-        }
-        if (current === '/' && next === '/') {
-            const end = source.indexOf('\n', index + 2);
-            index = end === -1 ? source.length : end;
-            continue;
-        }
-        if (current === '/' && next === '*') {
-            const end = source.indexOf('*/', index + 2);
-            index = end === -1 ? source.length : end + 2;
-            continue;
-        }
-        if (current === '/' && next !== undefined && next !== '=' && canStartRegexLiteral(source, index)) {
-            const regexEnd = readRegexLiteralEnd(source, index);
-            if (regexEnd !== null) {
-                index = regexEnd;
-                continue;
-            }
         }
         if (current === '{') {
             depth += 1;
@@ -188,68 +182,6 @@ function readTemplateExpressionEnd(source: string, start: number): number {
         index += 1;
     }
     return -1;
-}
-
-function collectTemplateExpressionSource(source: string, expressions: string[]): void {
-    for (let index = 0; index < source.length;) {
-        const current = source[index];
-        const next = source[index + 1];
-        if (current === '/' && next === '/') {
-            const end = source.indexOf('\n', index + 2);
-            index = end === -1 ? source.length : end;
-            continue;
-        }
-        if (current === '/' && next === '*') {
-            const end = source.indexOf('*/', index + 2);
-            index = end === -1 ? source.length : end + 2;
-            continue;
-        }
-        if (current === '/' && next !== undefined && next !== '=' && canStartRegexLiteral(source, index)) {
-            const regexEnd = readRegexLiteralEnd(source, index);
-            if (regexEnd !== null) {
-                index = regexEnd;
-                continue;
-            }
-        }
-        if (current === '\'' || current === '"') {
-            index = readQuotedLiteralEnd(source, index);
-            continue;
-        }
-        if (current !== '`') {
-            index += 1;
-            continue;
-        }
-        index += 1;
-        while (index < source.length) {
-            if (source[index] === '\\') {
-                index += 2;
-                continue;
-            }
-            if (source[index] === '`') {
-                index += 1;
-                break;
-            }
-            if (source[index] === '$' && source[index + 1] === '{') {
-                const expressionStart = index + 2;
-                const expressionEnd = readTemplateExpressionEnd(source, expressionStart);
-                if (expressionEnd < 0) {
-                    return;
-                }
-                const expression = source.slice(expressionStart, expressionEnd);
-                expressions.push(expression);
-                collectTemplateExpressionSource(expression, expressions);
-                index = expressionEnd + 1;
-                continue;
-            }
-            index += 1;
-        }
-    }
-}
-
-function extractTemplateExpressionSource(source: string): string {
-    const expressions: string[] = [];
-    collectTemplateExpressionSource(source, expressions);
-    return expressions.join('\n');
 }
 
 function canStartRegexLiteral(source: string, index: number): boolean {
@@ -402,15 +334,15 @@ function findRootArrowIndex(source: string): number {
 
 function extractFunctionBoundIdentifiers(maskedSource: string, blockScopes: FunctionScopeInfo[], statementSource: string): Set<string> {
     const identifiers = new Set<string>();
-    const functionMatch = /^\s*(?:async\s+)?function(?:\s+([$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*))?\s*\(([^)]*)\)/u.exec(maskedSource);
+    const functionMatch = readFunctionHeader(maskedSource);
     const arrowIndex = findRootArrowIndex(maskedSource);
-    const methodMatch = /^\s*(?:async\s+)?(?:get\s+|set\s+)?([$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*)?\s*\(([^)]*)\)/u.exec(maskedSource);
-    const rootFunctionIndex = functionMatch ? maskedSource.indexOf('function', functionMatch.index ?? 0) : -1;
+    const methodMatch = readFunctionHeader(maskedSource, true);
+    const rootFunctionIndex = functionMatch?.functionIndex ?? -1;
     const nestedFunctionScopes = findNestedFunctionScopes(maskedSource, arrowIndex, rootFunctionIndex, statementSource);
 
     if (functionMatch) {
-        if (functionMatch[1]) identifiers.add(functionMatch[1]);
-        addParameterIdentifiers(functionMatch[2] ?? '', identifiers);
+        if (functionMatch.name) identifiers.add(functionMatch.name);
+        addParameterIdentifiers(functionMatch.parameters, identifiers);
     } else if (arrowIndex >= 0) {
         let params = maskedSource.slice(findArrowParameterStart(maskedSource, arrowIndex), arrowIndex).trim().replace(/^async\s+/, '').trim();
         if (params.startsWith('(')) {
@@ -418,37 +350,32 @@ function extractFunctionBoundIdentifiers(maskedSource: string, blockScopes: Func
         }
         addParameterIdentifiers(params, identifiers);
     } else if (methodMatch) {
-        addParameterIdentifiers(methodMatch[2] ?? '', identifiers);
+        addParameterIdentifiers(methodMatch.parameters, identifiers);
     }
 
-    addScopedLocalIdentifiers(maskedSource, 0, maskedSource.length - 1, identifiers, nestedFunctionScopes, blockScopes);
-    for (const nestedScope of nestedFunctionScopes) {
-        if (nestedScope.kind !== 'function' || !nestedScope.name) {
-            continue;
+    const bodyStart = functionMatch?.bodyStart ?? methodMatch?.bodyStart
+        ?? (arrowIndex >= 0 ? nonWhitespaceIndex(maskedSource, arrowIndex + 2) : -1);
+    if (bodyStart >= 0) {
+        const bodyEnd = maskedSource[bodyStart] === '{' ? findClosingPair(maskedSource, bodyStart, '{', '}') : maskedSource.length - 1;
+        const bodyIdentifiers = new Set<string>();
+        addScopedLocalIdentifiers(maskedSource, bodyStart, bodyEnd, bodyIdentifiers, nestedFunctionScopes, blockScopes);
+        for (const nestedScope of nestedFunctionScopes) {
+            if (nestedScope.kind === 'function' && nestedScope.name && nestedScope.start >= bodyStart && nestedScope.start <= bodyEnd
+                && !findParentFunctionScope(nestedScope, nestedFunctionScopes)) {
+                addFunctionDeclarationIdentifier(maskedSource, bodyStart, nestedScope, bodyIdentifiers, blockScopes, statementSource);
+            }
         }
-        if (!findParentFunctionScope(nestedScope, nestedFunctionScopes)) {
-            addFunctionDeclarationIdentifier(maskedSource, 0, nestedScope, identifiers, blockScopes, statementSource);
-        }
+        blockScopes.push({ start: bodyStart, end: bodyEnd, bodyStart, bodyEnd, kind: 'block', boundIdentifiers: bodyIdentifiers });
     }
     return identifiers;
 }
 
 function previousNonWhitespaceChar(source: string, start: number): string | undefined {
-    for (let index = start; index >= 0; index -= 1) {
-        if (!/\s/.test(source[index])) {
-            return source[index];
-        }
-    }
-    return undefined;
+    return source[nonWhitespaceIndex(source, start, -1)];
 }
 
 function nextNonWhitespaceChar(source: string, start: number): string | undefined {
-    for (let index = start; index < source.length; index += 1) {
-        if (!/\s/.test(source[index])) {
-            return source[index];
-        }
-    }
-    return undefined;
+    return source[nonWhitespaceIndex(source, start)];
 }
 
 function previousIdentifier(source: string, start: number): string | undefined {
@@ -496,22 +423,21 @@ function isBreakOrContinueLabelReference(source: string, start: number): boolean
 }
 
 export function isClosureSensitiveFunctionSource(source: string, _functionName?: string): boolean {
-    const templateExpressions = extractTemplateExpressionSource(source);
-    const sourceWithTemplateExpressions = templateExpressions ? `${source}\n${templateExpressions}` : source;
-    const maskedSource = maskNumericLiterals(maskFunctionLiteralsAndComments(sourceWithTemplateExpressions));
-    const statementSource = maskFunctionLiteralsAndComments(sourceWithTemplateExpressions, true);
+    const maskedSource = maskNumericLiterals(maskFunctionLiteralsAndComments(source));
+    const statementSource = maskFunctionLiteralsAndComments(source, true);
     const blockScopes: FunctionScopeInfo[] = [];
     const boundIdentifiers = extractFunctionBoundIdentifiers(maskedSource, blockScopes, statementSource);
-    const functionMatch = /^\s*(?:async\s+)?function(?:\s+([$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*))?\s*\(([^)]*)\)/u.exec(maskedSource);
-    const rootFunctionIndex = functionMatch ? maskedSource.indexOf('function', functionMatch.index ?? 0) : -1;
+    const functionMatch = readFunctionHeader(maskedSource);
+    const rootFunctionIndex = functionMatch?.functionIndex ?? -1;
     const nestedFunctionScopes = [...findNestedFunctionScopes(maskedSource, findRootArrowIndex(maskedSource), rootFunctionIndex, statementSource), ...blockScopes];
     // Display names and method names do not create lexical bindings in their bodies.
+    const syntaxPositions = contextualSyntaxPositions(maskedSource, statementSource);
 
     for (const match of maskedSource.matchAll(functionIdentifierPattern)) {
         const identifier = match[0];
         const start = match.index ?? 0;
         const end = start + identifier.length;
-        if (functionReservedIdentifiers.has(identifier) || boundIdentifiers.has(identifier)) {
+        if (functionReservedIdentifiers.has(identifier) || boundIdentifiers.has(identifier) || syntaxPositions.has(start)) {
             continue;
         }
         if (isBoundByNestedFunctionScope(identifier, start, nestedFunctionScopes)) {

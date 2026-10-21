@@ -61,7 +61,9 @@ For aggregate write pipelines (`$merge` / `$out`), descriptor invalidation is re
 
 For an aggregate descriptor, pass the same original pipeline and result-affecting options as the cached read, including supported `expr` values. Captured pipelines use the same ObjectId conversion and expression semantics for reading and invalidation; prepared literal values are not interpreted again. Invalid descriptors remain best effort and do not undo a successful write. Transaction intents retain the resolved key until commit; abort discards it.
 
-Aggregate caches start cold after this key-generation update, so entries that previously conflated literal strings and ObjectIds are not reused. Operation-wide invalidation still covers both generations. During a mixed-version rollout, prefer operation-wide or namespace-wide invalidation because exact descriptors from older processes cannot rebuild the new keys.
+For writes through a soft-delete Model, explicit aggregate descriptors also resolve the Model visibility stage using the descriptor's `withDeleted` / `onlyDeleted` options, while retaining invalidation of the corresponding Collection read key. This applies to ordinary updates as well as deletion and restoration. If an aggregate writes to a different namespace whose Model visibility cannot be established, that explicit descriptor invalidates aggregate caches for the actual target namespace. Default invalidation remains disabled; `false` and empty descriptor arrays retain their meaning. Aggregate keys use a new generation to avoid reusing entries affected by mutable options or the native `out` alias; operation-wide invalidation covers all generations.
+
+Aggregate caches start cold after this key-generation update, so entries that previously conflated literal strings and ObjectIds are not reused. Operation-wide invalidation still covers all generations. During a mixed-version rollout, prefer operation-wide or namespace-wide invalidation because exact descriptors from older processes cannot rebuild the new keys.
 
 | Descriptor shape | Effect |
 | --- | --- |

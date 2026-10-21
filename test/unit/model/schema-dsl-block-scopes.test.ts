@@ -4,6 +4,48 @@ import { isClosureSensitiveFunctionSource } from '../../../src/capabilities/mode
 
 describe('schema extension lexical block identity', () => {
     const cases: Array<[string, boolean]> = [
+        ['functionLoad() { return { type: "string", const: Load }; }', true],
+        ['function𐐀() { return { type: "string", const: 𐐀 }; }', true],
+        ['() => { const target = [0], index = 0; for (target[index] of [1]) {} return { type: "number", const: target[0] }; }', false],
+        ['() => { const target = [0]; for (target[of] of [1]) {} return { type: "number", const: target[0] }; }', true],
+        ...['get', 'set', 'of', 'async'].flatMap((name): Array<[string, boolean]> => [
+            [`() => ({ type: "string", const: ${name}() })`, true],
+            [`${name} => ({ type: "string", const: ${name}() })`, false],
+            [`() => { const ${name} = () => 1; return { type: "string", const: ${name}() }; }`, false],
+        ]),
+        ['factory({ pattern = load() } = {}) { return { type: "string", pattern }; }', true],
+        ['function factory({ pattern = load() } = {}) { return { type: "string", pattern }; }', true],
+        ['() => { function factory({ pattern = load() } = {}) { return pattern; } return { type: "string", pattern: factory() }; }', true],
+        ['function factory({ pattern = (() => "stable")() } = {}) { return { type: "string", pattern }; }', false],
+        ...['const load = () => "local";', 'let load = () => "local";', 'var load = () => "local";', 'function load() { return "local"; }', 'class load {}'].flatMap((declaration): Array<[string, boolean]> => [
+            [`function factory({ pattern = load() } = {}) { ${declaration} void load; return { type: "string", pattern }; }`, true],
+            [`({ pattern = load() } = {}) => { ${declaration} void load; return { type: "string", pattern }; }`, true],
+            [`factory({ pattern = load() } = {}) { ${declaration} void load; return { type: "string", pattern }; }`, true],
+            [`() => { function factory({ pattern = load() } = {}) { ${declaration} void load; return pattern; } return { type: "string", pattern: factory() }; }`, true],
+        ]),
+        ['function factory({ pattern = `${load()}` } = {}) { const load = () => "local"; void load; return { type: "string", pattern }; }', true],
+        ['function factory({ [load()]: pattern } = {}) { const load = () => "local"; void load; return { type: "string", pattern }; }', true],
+        ['function factory(a = function hidden() { return 1; }) { void a; return { type: "string", const: hidden }; }', true],
+        ['function factory(load = () => "stable", { pattern = load() } = {}) { return { type: "string", pattern }; }', false],
+        ['function factory(a = 1, b = a) { return { type: "number", const: b }; }', false],
+        ['function factory(a = factory) { void a; return { type: "string" }; }', false],
+        ['function factory() { return { type: "number", const: load() }; function load() { return 1; } }', false],
+        ['function factory() { const pattern = "stable"; return { type: "string", pattern: `${pattern}` }; }', false],
+        ['() => { const pattern = "stable"; return { type: "string", pattern: `${(() => `${pattern}`)()}` }; }', false],
+        ['() => ({ type: "string", pattern: `${(() => `${captured}`)()}` })', true],
+        ['() => ({ type: "string", const: `\\${captured}` })', false],
+        ['function factory() { tag`${captured}`\n {}\n var text; function tag(strings, value) { text = value; } return { type: "string", const: text }; }', true],
+        ['function factory() { const pattern = `stable`\n function local() { return pattern; } return { type: "string", pattern: local() }; }', false],
+        ['() => { const tools = { get value() { return get(); } }; return tools.value; }', true],
+        ['() => { const tools = { get [get]() { return 1; } }; return tools; }', true],
+        ['() => { const tools = { get value() { return 1; }, set value(v) { void v; }, async run() { return 1; } }; return tools; }', false],
+        ['() => { const values = [1]; for (const x of of) { void x; } return values; }', true],
+        ['() => { const values = [1]; for (const of of values) { void of; } return values; }', false],
+        ['() => { const obj = { for: value => value }; return obj.for(1 + of); }', true],
+        ['() => { async function helper() { return async; } return helper(); }', true],
+        ['() => { const helper = async () => async; return helper(); }', true],
+        ['() => { const helper = async () => 1; return helper(); }', false],
+        ['() => { void async/*\n*/\n function helper() {} return helper; }', true],
         ['() => { const tools = { async*factory() { yield 1; } }; void tools; return { type: "string" }; }', false],
         ['() => { const tools = { async*factory() { yield factory; } }; void tools; return { type: "string" }; }', true],
         ['factory() { return { type: "string", const: factory }; }', true],
@@ -43,9 +85,9 @@ describe('schema extension lexical block identity', () => {
         ['value => { try { throw value; } catch (pattern) { return !!pattern; } }', false],
         ['value => { for (const pattern of [value]) { if (pattern) return true; } return false; }', false],
         ['value => { { class Pattern {} return new Pattern(); } }', false],
-        // Unproven single-statement loop and relocated template ranges stay conservative.
+        // Unproven single-statement loop ranges stay conservative.
         ['value => { for (let pattern of [value]) if (pattern) return true; return false; }', true],
-        ['value => { { const pattern = value; return `${pattern}`; } }', true],
+        ['value => { { const pattern = value; return `${pattern}`; } }', false],
     ];
     for (const [source, expected] of cases) {
         it(`${expected ? 'retains reference identity' : 'permits stable source identity'}: ${source}`, () => {

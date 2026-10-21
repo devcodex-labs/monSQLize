@@ -1,5 +1,9 @@
 # Model API 文档
 
+默认参数不能使用函数体内声明的绑定；schema 工厂捕获分析中的模板插值保留其原始作用域。
+
+schema 工厂区分上下文语法 `get`、`set`、`of`、`async` 与同名捕获值，也检查解构参数默认调用中的外部引用。populate 对普通二进制匹配继续批读；大写十六进制父键可能转换为返回的 BSON ObjectId 时，仅歧义父项按原键逐项原生匹配，保留父数组顺序和投影。这些父项可能增加查询次数，不会把字符串比较全局改为忽略大小写。
+
 `deleteOne`、`deleteMany` 及其带关系保护的入口执行软删除时，在同次更新中推进配置的 `updatedAt` 字段和 version。创建时间不变，自定义或关闭时间戳的配置保持有效；重复删除不会推进已删除记录，force 删除仍为物理删除。
 
 根导出的 `ModelInstance` 可用于 `instanceof`，并保留泛型文档类型和写选项约束。实例请从 `runtime.model()` 获取，类型层构造函数仍为私有。同步分页 totals 的 `total`、`totalPages` 为数值类型。

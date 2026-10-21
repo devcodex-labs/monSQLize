@@ -22,7 +22,9 @@ import {
     buildFindOneCacheKey,
     buildFindPageCacheKey,
 } from '../queries/query-cache-keys';
-import { prepareAggregatePipeline } from '../queries/aggregate-pipeline';
+import { prepareAggregateExecution } from '../queries/aggregate-pipeline';
+import { snapshotPipelineValue } from '../queries/pipeline-snapshot';
+import { getModelAggregateInvalidationNormalizer } from '../../../capabilities/write-path-policy';
 
 type AggregateWriteTarget = {
     dbName?: string;
@@ -301,14 +303,28 @@ function entryToIntents<TSchema extends Document>(
         }
     } else if (operation === 'aggregate') {
         if (Array.isArray(entry.pipeline) || descriptorOptions !== undefined) {
-            let prepared: Document[];
+            let prepared: ReturnType<typeof prepareAggregateExecution>;
+            let capturedPipeline: unknown[];
             try {
-                prepared = prepareAggregatePipeline(entry.pipeline, defaults);
+                capturedPipeline = snapshotPipelineValue(entry.pipeline ?? []);
+                prepared = prepareAggregateExecution(capturedPipeline, descriptorOptions, defaults);
             } catch {
                 // A bad best-effort descriptor must not reject a write that already succeeded.
                 return [];
             }
-            return linkedQueryKeyIntents(buildPreparedAggregateCacheKey(collection, defaults, prepared, descriptorOptions), defaults);
+            const original = linkedQueryKeyIntents(buildPreparedAggregateCacheKey(collection, defaults, prepared.pipeline, prepared.options), defaults);
+            const normalize = getModelAggregateInvalidationNormalizer();
+            if (!normalize) return original;
+            try {
+                const scopes = defaults?.cacheScope?.split(':');
+                const poolName = scopes ? decodeURIComponent(scopes[scopes.length - 1]) : undefined;
+                const modelPipeline = normalize({ dbName, collectionName, poolName, pipeline: capturedPipeline, options: prepared.options });
+                if (modelPipeline !== 'broad') {
+                    const model = prepareAggregateExecution(modelPipeline, prepared.options, defaults);
+                    return [...original, ...linkedQueryKeyIntents(buildPreparedAggregateCacheKey(collection, defaults, model.pipeline, model.options), defaults)];
+                }
+            } catch { /* Model variants remain best-effort after a successful write. */ }
+            return patternsToIntents(buildReadCacheInvalidationPatterns(dbName, collectionName, defaults, 'aggregate'));
         }
     } else if (operation === 'findPage') {
         const findPageOptions = isRecord(entry.options)

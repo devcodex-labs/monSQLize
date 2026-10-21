@@ -134,6 +134,12 @@ export async function executeFindPage<TSchema extends Document = Document>(
     defaults: RuntimeDefaults = {},
     queryCache?: QueryCacheLike | null,
 ): Promise<FindPageResult<TSchema>> {
+    const { options: nativeOptions, ...pageOptions } = options;
+    const capturedNativeOptions = { ...(nativeOptions ?? {}) };
+    if (typeof (capturedNativeOptions as Record<string, unknown>).out === 'string') {
+        throw createError(ErrorCodes.INVALID_OPERATION, 'findPage does not support write aggregation options. Use aggregate instead.');
+    }
+    options = { ...pageOptions, options: capturedNativeOptions };
     // Read-only pagination must check the same captured structure used by every branch.
     if (options.pipeline !== undefined) {
         const pipeline = snapshotPipelineValue(options.pipeline);
@@ -609,14 +615,7 @@ export async function executeFindPage<TSchema extends Document = Document>(
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-/**
- * Cursor and offset dual-mode pagination query.
- * @param collection - MongoDB collection.
- * @param options - Pagination options (limit / page / after / before / sort / query, etc.).
- * @param defaults - Runtime-level defaults.
- * @returns `{ items, pageInfo, totals?, meta? }` — v1-compatible paginated result.
- * @since v1.0.0
- */
+/** Executes cursor or offset pagination with the legacy result contract. */
 async function executeFindPageDocuments<TSchema extends Document = Document>(
     collection: Collection<TSchema>,
     options: FindPageOptions<TSchema> = {},

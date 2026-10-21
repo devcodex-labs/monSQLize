@@ -61,7 +61,9 @@ await products.updateOne(
 
 aggregate descriptor 应传入与缓存读取相同的原始管道及影响结果的选项，包括受支持的 `expr` 值。读取与失效采用相同的 ObjectId 转换和表达式语义，已准备的 literal 值不会再次解释。无效 descriptor 仍按 best effort 处理，不撤销成功写入。事务保留登记时解析的 key，提交后失效，回滚则丢弃。
 
-本次 key 代次更新会让 aggregate 缓存冷启动，避免复用此前混淆 literal 字符串和 ObjectId 的条目；按操作失效仍覆盖新旧两代。混合版本部署期间优先按操作或命名空间失效，因为旧进程的精确 descriptor 无法重建新 key。
+通过软删除 Model 写入时，显式 aggregate descriptor 还会按 descriptor 的 `withDeleted` / `onlyDeleted` 选项补齐 Model 可见性阶段，同时保留对应 Collection 读 key 的失效。普通更新、删除和恢复都适用。聚合写往其他命名空间、无法确定目标 Model 可见性时，该显式 descriptor 回退为实际目标命名空间的 aggregate 缓存失效。默认仍不自动失效；`false` 和空 descriptor 数组保持原义。aggregate key 使用新代次，避免复用可变选项或原生 `out` 别名影响的旧条目；按操作失效覆盖所有代次。
+
+本次 key 代次更新会让 aggregate 缓存冷启动，避免复用此前混淆 literal 字符串和 ObjectId 的条目；按操作失效仍覆盖新旧各代。混合版本部署期间优先按操作或命名空间失效，因为旧进程的精确 descriptor 无法重建新 key。
 
 | Descriptor 形态 | 作用 |
 | --- | --- |

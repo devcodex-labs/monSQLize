@@ -1,9 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { BSON, ObjectId, Timestamp, Binary } from 'mongodb';
+import { BSON, ObjectId, Timestamp, Binary, ReadPreference, ReadConcern } from 'mongodb';
+import { snapshotResultOptions, buildResultCacheKeyOptions } from '../../../src/adapters/mongodb/queries/query-helpers';
 import { snapshotPipelineValue } from '../../../src/adapters/mongodb/queries/pipeline-snapshot';
 import { createAggregateChain } from '../../../src/adapters/mongodb/queries';
-import { prepareAggregatePipeline } from '../../../src/adapters/mongodb/queries/aggregate-pipeline';
+import { isStandardAggregateBsonMode, prepareAggregateExecution, prepareAggregatePipeline } from '../../../src/adapters/mongodb/queries/aggregate-pipeline';
 import { buildAggregateCacheKey, buildPreparedAggregateCacheKey } from '../../../src/adapters/mongodb/queries/query-cache-keys';
 
 function wire(pipeline: unknown): unknown {
@@ -11,6 +12,84 @@ function wire(pipeline: unknown): unknown {
 }
 
 describe('pipeline capture at the driver document boundary', () => {
+    it('captures native BSON decoding flags and preserves fieldsAsRaw prototype behavior', () => {
+        const fields: any = Object.create({ payload: false });
+        const captured = prepareAggregateExecution([], { fieldsAsRaw: fields });
+        assert.equal(isStandardAggregateBsonMode(captured.options), true);
+        fields.payload = true;
+        assert.equal((captured.options.fieldsAsRaw as any).payload, false);
+        assert.equal(isStandardAggregateBsonMode(prepareAggregateExecution([], { fieldsAsRaw: fields }).options), false);
+        for (const [name, value] of Object.entries({ raw: true, useBigInt64: true, promoteLongs: false,
+            promoteValues: false, promoteBuffers: true, ignoreUndefined: true, bsonRegExp: true,
+            serializeFunctions: true, enableUtf8Validation: false })) {
+            const result = prepareAggregateExecution([], {}, {}, { [name]: value });
+            assert.equal(result.options[name], value); assert.equal(isStandardAggregateBsonMode(result.options), false);
+        }
+        const baseline: any = prepareAggregateExecution([]).options.fieldsAsRaw;
+        assert.equal(baseline.constructor, true); assert.equal(baseline.toString, true);
+        const noPrototype: any = prepareAggregateExecution([], { fieldsAsRaw: Object.create(null) }).options.fieldsAsRaw;
+        assert.equal(noPrototype.constructor, undefined);
+        assert.equal(isStandardAggregateBsonMode(prepareAggregateExecution([], { fieldsAsRaw: Object.create(null) }).options), false);
+        const dynamic = new Proxy({}, { get: (_target, key) => key === 'payload' });
+        const native = prepareAggregateExecution([], { fieldsAsRaw: dynamic });
+        assert.equal(native.options.fieldsAsRaw, dynamic); assert.equal(isStandardAggregateBsonMode(native.options), false);
+    });
+    it('captures result options while preserving driver resource identities and native consistency types', async () => {
+        const controller = new AbortController(), session = { resource: true };
+        const preference = new ReadPreference('secondary', [{ region: 'east' }], { maxStalenessSeconds: 90, hedge: { enabled: true } });
+        const concern = new ReadConcern('majority');
+        const options: any = { let: { value: 1 }, hint: { score: 1 }, collation: { locale: 'en' },
+            readPreference: preference, readConcern: concern, session, signal: controller.signal };
+        const captured: any = snapshotResultOptions(options);
+        options.let.value = 2; options.hint.score = -1; options.collation.locale = 'fr';
+        preference.tags![0].region = 'west'; preference.hedge!.enabled = false;
+        assert.equal(captured.let.value, 1); assert.equal(captured.hint.score, 1); assert.equal(captured.collation.locale, 'en');
+        assert.ok(captured.readPreference instanceof ReadPreference); assert.ok(captured.readConcern instanceof ReadConcern);
+        assert.deepEqual(captured.readPreference.tags, [{ region: 'east' }]); assert.equal(captured.readPreference.hedge.enabled, true);
+        assert.equal(captured.readPreference.maxStalenessSeconds, 90); assert.equal(captured.readConcern.level, 'majority');
+        assert.equal(captured.session, session); assert.equal(captured.signal, controller.signal);
+        controller.abort(); assert.equal(captured.signal.aborted, true);
+        const ordinary = snapshotResultOptions({ readPreference: 'secondary', readPreferenceTags: [{ region: 'east' }], maxStalenessSeconds: 90, hedge: { enabled: true } });
+        assert.deepEqual(buildResultCacheKeyOptions(ordinary).readPreference, captured.readPreference);
+        const configured: any = snapshotResultOptions({ readConcern: { level: 'majority', toBSON() { throw new Error('Not BSON'); } } });
+        assert.equal(configured.readConcern.level, 'majority');
+        class Concern { get level() { return 'majority'; } }
+        class Preference { get mode() { return 'secondary'; } get tags() { return [{ region: 'east' }]; } }
+        const inherited: any = snapshotResultOptions({ readConcern: new Concern(), readPreference: new Preference() });
+        assert.equal(inherited.readConcern.level, 'majority'); assert.equal(inherited.readPreference.mode, 'secondary');
+        assert.deepEqual(inherited.readPreference.tags, [{ region: 'east' }]);
+        const original = new ReadPreference('secondary', [{ region: 'original' }]);
+        const transactionSession = { transaction: { options: { readPreference: original } } };
+        const tags = [{ region: 'captured' }];
+        const tagsOnly: any = snapshotResultOptions({ session: transactionSession, readPreferenceTags: tags });
+        tags[0].region = 'changed';
+        assert.equal(tagsOnly.session, transactionSession); assert.deepEqual(original.tags, [{ region: 'original' }]);
+        assert.deepEqual(tagsOnly.readPreferenceTags, [{ region: 'captured' }]);
+    });
+
+    it('uses one captured execution tuple across cache waits and later fluent changes', async () => {
+        let entered!: () => void, release!: () => void;
+        const waiting = new Promise<void>((resolve) => { entered = resolve; });
+        const gate = new Promise<void>((resolve) => { release = resolve; });
+        const values = new Map<string, unknown>(), calls: any[] = [];
+        let pause = true;
+        const cache: any = { get: async (key: string) => { if (pause && key.startsWith('aggregate:')) { pause = false; entered(); await gate; } return values.get(key); },
+            set: (key: string, value: unknown) => { values.set(key, value); } };
+        const collection: any = { namespace: 'db.snapshot', aggregate: (pipeline: unknown[], options: any) => {
+            calls.push({ pipeline, options }); return { toArray: async () => [{ value: options.let.value }] };
+        } };
+        const options = { let: { value: 1 }, hint: { score: 1 }, collation: { locale: 'en' }, cache: 10000 };
+        const chain = createAggregateChain(collection, [{ $project: { value: '$$value' } }], options, {}, cache);
+        const first = Promise.resolve(chain); await waiting;
+        options.let.value = 2; options.hint.score = -1; options.collation.locale = 'fr';
+        chain.hint({ score: -1 }).collation({ locale: 'fr' }); release();
+        assert.deepEqual(await first, [{ value: 1 }]);
+        assert.equal(calls[0].options.hint.score, 1); assert.equal(calls[0].options.collation.locale, 'en');
+        const sameOptions = { let: { value: 1 }, hint: { score: 1 }, collation: { locale: 'en' }, cache: 10000 };
+        const same = await createAggregateChain(collection, [{ $project: { value: '$$value' } }], sameOptions, {}, cache);
+        assert.deepEqual(same, [{ value: 1 }]);
+        assert.equal(calls.length, 1);
+    });
     it('uses identical raw descriptor and prepared read keys without repeating serialization', () => {
         const { expr } = require('../../../dist/cjs/index.cjs');
         const collection = { namespace: 'db.items', collectionName: 'items' } as never;

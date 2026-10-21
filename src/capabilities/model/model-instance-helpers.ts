@@ -5,6 +5,7 @@
  * relation utilities — decoupled from the ModelInstance class to simplify testing.
  */
 import { ErrorCodes, createError } from '../../core/errors';
+import { BSON } from 'mongodb';
 import { MODEL_COLLECTION_COLLATION } from '../../core/model-query-context';
 import type { Readable } from 'node:stream';
 import type {
@@ -316,8 +317,28 @@ export async function populateModelPath<TDocument>(
         }
         const hydrated = await hydrateRelated(rows);
         const grouped = groupBy(hydrated, (item) => getByPath(item, relation.foreignField));
+        const foreignObjectIds = new Set(rows.flatMap((row) => flattenComparableValues(getByPath(row, relation.foreignField)))
+            .filter((value) => value !== null && typeof value === 'object'
+                && (value as { _bsontype?: string })._bsontype === 'ObjectId')
+            .map((value) => String(value).toLowerCase()));
         for (const [index, doc] of docs.entries()) {
-            const matches = rebuildPopulateMatches(localValues[index], grouped);
+            const parentKeys = flattenComparableValues(localValues[index]);
+            const ambiguousHex = parentKeys.some((value) => typeof value === 'string'
+                && /^[0-9a-fA-F]{24}$/.test(value) && /[A-F]/.test(value)
+                && foreignObjectIds.has(value.toLowerCase()));
+            let matches: Array<Record<string, unknown>>;
+            if (ambiguousHex) {
+                const matchedRows: Array<Record<string, unknown>> = [];
+                for (const key of parentKeys) matchedRows.push(...await readForKeys([key]));
+                const seenIds = new Set<string>();
+                const distinctRows = dedupeDocuments(matchedRows).filter((row) => {
+                    if (row._id === undefined) return true;
+                    const id = Buffer.from(BSON.serialize({ value: row._id })).toString('hex');
+                    if (seenIds.has(id)) return false;
+                    seenIds.add(id); return true;
+                });
+                matches = await hydrateRelated(distinctRows);
+            } else matches = rebuildPopulateMatches(localValues[index], grouped);
             const projectedMatches = matches.map((item) => projectPopulatedDocument(item, effectiveSelect, nestedPaths));
             (doc as Record<string, unknown>)[config.path] = relation.single ? (projectedMatches[0] ?? null) : projectedMatches;
         }

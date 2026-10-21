@@ -105,7 +105,8 @@ describe('dataTasks job defensive branches', () => {
             },
             updateOne: async () => ({ matchedCount: 1 }),
             deleteOne: async () => { deletes += 1; return { deletedCount: 1 }; },
-        }), { ttlMs: 1_000, waitTimeoutMs: 200 });
+        // Exercise retry/release semantics without a scheduler-sensitive 200 ms deadline.
+        }), { ttlMs: 1_000, waitTimeoutMs: 5_000 });
         assert.equal(attempts, 2);
         assert.doesNotThrow(() => lease.assertHeld());
         await lease.release();

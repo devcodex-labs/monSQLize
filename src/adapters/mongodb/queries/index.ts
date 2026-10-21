@@ -1,20 +1,7 @@
-/**
- * MongoDB query adapter layer — barrel entry file.
- *
- * Scope:
- * - FindChain / AggregateChain: chainable query builders.
- * - findDocuments / findOneDocument / countDocuments / aggregateDocuments / distinctValues /
- *   streamDocuments / explainDocuments / watchDocuments: core query functions.
- *
- * Extracted into separate modules (re-exported for backwards compatibility):
- * - `find-page.ts`      — executeFindPage / findPageDocuments
- * - `find-by-id.ts`     — findOneByIdDocument / findByIdsDocuments
- * - `find-and-count.ts` — findAndCountDocuments
- * - `query-helpers.ts`  — cursor / ObjectId / sort / projection helpers
- */
+/** MongoDB query chains and adapter operations; extracted query modules remain re-exported. */
 
 import { readThroughCache } from '../../../core/cache-coordination';
-import { prepareAggregatePipeline } from './aggregate-pipeline';
+import { isStandardAggregateBsonMode, prepareAggregateExecution } from './aggregate-pipeline';
 import { ChangeStream, Collection, Document, FindOptions, Sort } from 'mongodb';
 
 import { createError, ErrorCodes } from '../../../core/errors';
@@ -35,6 +22,7 @@ import {
     isCollectionCacheBarrierActive,
     normalizeFindProjectionOptions,
     normalizeQueryFilter,
+    snapshotResultOptions,
 } from './query-helpers';
 import {
     buildPreparedAggregateCacheKey,
@@ -355,12 +343,12 @@ class AggregateChain<TResult = unknown, TSchema extends Document = Document> imp
     }
 
     hint(value: unknown): AggregateChain<TResult, TSchema> {
-        this.options.hint = value;
+        this.options.hint = snapshotResultOptions({ hint: value }).hint;
         return this;
     }
 
     collation(value: Record<string, unknown>): AggregateChain<TResult, TSchema> {
-        this.options.collation = value;
+        this.options.collation = snapshotResultOptions({ collation: value }).collation;
         return this;
     }
 
@@ -384,8 +372,8 @@ class AggregateChain<TResult = unknown, TSchema extends Document = Document> imp
         return this;
     }
 
-    private buildCacheKey(): string {
-        return buildPreparedAggregateCacheKey(this.collection, this.defaults, this.pipeline, this.buildExecuteOptions());
+    private buildCacheKey(executeOptions: Record<string, unknown>): string {
+        return buildPreparedAggregateCacheKey(this.collection, this.defaults, this.pipeline, executeOptions);
     }
 
     explain(verbosity: boolean | string = 'queryPlanner'): Promise<unknown> {
@@ -393,8 +381,9 @@ class AggregateChain<TResult = unknown, TSchema extends Document = Document> imp
     }
 
     stream(): NodeJS.ReadableStream {
-        if (this.writePipelineHooks) assertManagedTransactionWriteAllowed(this.buildExecuteOptions());
-        const stream = this.collection.aggregate(this.pipeline, buildAggregateDriverOptions<TSchema>(this.buildExecuteOptions())).stream();
+        const executeOptions = this.buildExecuteOptions();
+        if (this.writePipelineHooks) assertManagedTransactionWriteAllowed(executeOptions);
+        const stream = this.collection.aggregate(this.pipeline, buildAggregateDriverOptions<TSchema>(executeOptions)).stream();
         const onWriteComplete = this.writePipelineHooks?.onWriteComplete;
         if (onWriteComplete) {
             stream.once('end', () => {
@@ -408,13 +397,13 @@ class AggregateChain<TResult = unknown, TSchema extends Document = Document> imp
         return wrapQueryResultWithMeta(this.collection, this.defaults, op, this.options, startTs, result);
     }
 
-    private runToArray(): Promise<TResult[]> {
+    private runToArray(executeOptions: Record<string, unknown>): Promise<TResult[]> {
         if (this.executed) {
             throw createError(ErrorCodes.INVALID_OPERATION, 'Query already executed.');
         }
         this.executed = true;
-        if (this.writePipelineHooks) assertManagedTransactionWriteAllowed(this.buildExecuteOptions());
-        return this.collection.aggregate(this.pipeline, buildAggregateDriverOptions<TSchema>(this.buildExecuteOptions()))
+        if (this.writePipelineHooks) assertManagedTransactionWriteAllowed(executeOptions);
+        return this.collection.aggregate(this.pipeline, buildAggregateDriverOptions<TSchema>(executeOptions))
             .toArray()
             .then(async (result) => {
                 await this.writePipelineHooks?.onWriteComplete?.();
@@ -448,13 +437,14 @@ class AggregateChain<TResult = unknown, TSchema extends Document = Document> imp
             && this.queryCache
             && !hasSessionOption(executeOptions)
             && !this.writePipelineHooks?.onWriteComplete
+            && isStandardAggregateBsonMode(executeOptions)
             && !(await isCollectionCacheBarrierActive(this.queryCache, this.collection, this.defaults))
         ) {
-            const cacheKey = this.buildCacheKey();
-            const result = await readThroughCache(this.queryCache, cacheKey, cacheTTL, () => this.runToArray());
+            const cacheKey = this.buildCacheKey(executeOptions);
+            const result = await readThroughCache(this.queryCache, cacheKey, cacheTTL, () => this.runToArray(executeOptions));
             return this.wrapResult('aggregate', startTs, result) as TResult[] | ResultWithMeta<TResult[]>;
         }
-        return this.runToArray().then((result) => this.wrapResult('aggregate', startTs, result) as TResult[] | ResultWithMeta<TResult[]>);
+        return this.runToArray(executeOptions).then((result) => this.wrapResult('aggregate', startTs, result) as TResult[] | ResultWithMeta<TResult[]>);
     }
 
     then<TResult1 = TResult[], TResult2 = never>(
@@ -473,16 +463,7 @@ class AggregateChain<TResult = unknown, TSchema extends Document = Document> imp
     }
 }
 
-/**
- * Creates a {@link FindChain} for the given collection.
- * @param collection - Target MongoDB collection.
- * @param query - Filter predicate (default: `{}`).
- * @param options - Native driver `find` options.
- * @param defaults - Runtime-level defaults (e.g. `findLimit`, `maxTimeMS`).
- * @param queryCache - Optional query result cache.
- * @returns A chainable find builder implementing the v1 contract.
- * @since v1.0.0
- */
+/** Builds a find chain with runtime defaults and optional result caching. */
 export function createFindChain<TSchema extends Document = Document>(
     collection: Collection<TSchema>,
     query?: Parameters<Collection<TSchema>['find']>[0],
@@ -493,46 +474,33 @@ export function createFindChain<TSchema extends Document = Document>(
     return new FindChain(collection, query, (options ?? {}) as Record<string, unknown>, defaults ?? {}, queryCache);
 }
 
-/**
- * Creates an {@link AggregateChain} for the given collection.
- * @param collection - Target MongoDB collection.
- * @param pipeline - Aggregation pipeline stages.
- * @param options - Native driver `aggregate` options.
- * @param defaults - Runtime-level defaults.
- * @returns A chainable aggregate builder implementing the v1 contract.
- * @since v1.0.0
- */
+/** Captures an aggregate execution before target policy and cache classification. */
 export function createAggregateChain<TSchema extends Document = Document, TResult = Document>(
     collection: Collection<TSchema>,
     pipeline: Document[] = [],
     options?: Parameters<Collection<TSchema>['aggregate']>[1],
     defaults?: RuntimeDefaults,
     queryCache?: QueryCacheLike | null,
-    writePipelineHooks?: AggregateWritePipelineHooks | ((pipeline: Document[]) => AggregateWritePipelineHooks | undefined),
+    writePipelineHooks?: AggregateWritePipelineHooks | ((pipeline: Document[], options: Record<string, unknown>) => AggregateWritePipelineHooks | undefined),
 ): AggregateChainContract<TResult> {
-    const processedPipeline = prepareAggregatePipeline(pipeline, defaults);
+    const prepared = prepareAggregateExecution(pipeline, (options ?? {}) as Record<string, unknown>, defaults,
+        collection.bsonOptions as Record<string, unknown> | undefined);
     // Policy checks must see the exact compiled pipeline passed to the driver.
     const preparedHooks = typeof writePipelineHooks === 'function'
-        ? writePipelineHooks(processedPipeline)
+        ? writePipelineHooks(prepared.pipeline, prepared.options)
         : writePipelineHooks;
 
     return new AggregateChain<TResult, TSchema>(
         collection,
-        processedPipeline,
-        (options ?? {}) as Record<string, unknown>,
+        prepared.pipeline,
+        prepared.options,
         defaults ?? {},
         queryCache,
         preparedHooks,
     );
 }
 
-/**
- * Queries multiple documents and returns them as an array.
- * @param collection - The MongoDB collection to query.
- * @param args - Filter and options forwarded directly to `collection.find()`.
- * @returns Promise resolving to an array of matching documents.
- * @since v1.3.0
- */
+/** Forwards native find arguments and collects the cursor. */
 export async function findDocuments<TSchema extends Document = Document>(
     collection: Collection<TSchema>,
     ...args: Parameters<Collection<TSchema>['find']>
@@ -663,16 +631,7 @@ export function watchDocuments<TSchema extends Document = Document>(
 }
 
 
-/**
- * Opens a Node.js readable stream over the query results.
- * No `findLimit` is applied — all matching documents are streamed.
- * @param collection - Target MongoDB collection.
- * @param query - Filter predicate.
- * @param options - Native driver `find` options.
- * @param defaults - Runtime-level defaults.
- * @returns A readable object stream of matching documents.
- * @since v1.0.0
- */
+/** Streams all matches without applying the runtime findLimit. */
 export function streamDocuments<TSchema extends Document = Document>(
     collection: Collection<TSchema>,
     query?: Parameters<Collection<TSchema>['find']>[0],
@@ -684,15 +643,7 @@ export function streamDocuments<TSchema extends Document = Document>(
     return createFindChain(collection, query, options, streamDefaults).stream();
 }
 
-/**
- * Returns the query execution plan without fetching any documents.
- * @param collection - Target MongoDB collection.
- * @param query - Filter predicate.
- * @param options - Native driver `find` options; `explain` controls verbosity.
- * @param defaults - Runtime-level defaults.
- * @returns The explain plan object from MongoDB.
- * @since v1.0.0
- */
+/** Explains a find query using the requested verbosity and runtime defaults. */
 export function explainDocuments<TSchema extends Document = Document>(
     collection: Collection<TSchema>,
     query?: Parameters<Collection<TSchema>['find']>[0],

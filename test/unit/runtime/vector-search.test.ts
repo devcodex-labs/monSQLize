@@ -223,7 +223,11 @@ describe('vectorSearch()', () => {
         }]);
         assert.equal(calls.length, 1);
         assert.equal((calls[0].pipeline[0] as { $vectorSearch?: unknown }).$vectorSearch !== undefined, true);
-        assert.deepEqual(calls[0].options, { comment: 'unit-vector-search' });
+        const driverOptions = calls[0].options as Record<string, unknown>;
+        assert.equal(driverOptions.comment, 'unit-vector-search');
+        for (const key of ['index', 'path', 'queryVector', 'limit', 'numCandidates']) {
+            assert.equal(key in driverOptions, false);
+        }
     });
 
     it('keeps a driver failure intact while attaching vector-search context', async () => {

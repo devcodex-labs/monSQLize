@@ -83,6 +83,8 @@ import type {
 import {
     assertWritePathAllowed,
     getCurrentWritePathSource,
+    getModelAggregateInvalidationNormalizer,
+    runWithModelWriteSource,
     type WritePathOperationCategory,
     type WritePathSource,
 } from '../../../capabilities/write-path-policy';
@@ -356,7 +358,8 @@ export class MongoCollectionAccessor<TSchema extends Document = Document> {
             options,
             this.management.defaults,
             this.management.queryCache,
-            (preparedPipeline) => {
+            (preparedPipeline, preparedOptions) => {
+                const modelNormalizer = getModelAggregateInvalidationNormalizer();
                 const writeTarget = resolveAggregateWriteTarget(preparedPipeline);
                 if (!writeTarget) return undefined;
                 this.assertWritePath('aggregate', 'write', this.buildNamespaceView(
@@ -364,8 +367,9 @@ export class MongoCollectionAccessor<TSchema extends Document = Document> {
                     writeTarget.collectionName,
                 ));
                 return {
-                    onWriteComplete: async () => {
-                        recordTransactionWriteOperation(options);
+                    onWriteComplete: () => {
+                        const invalidate = async () => {
+                        recordTransactionWriteOperation(preparedOptions);
                         await invalidateAccessorReadCachesAfterWrite(
                             this.management.queryCache,
                             this.buildCacheCollectionView(
@@ -375,8 +379,10 @@ export class MongoCollectionAccessor<TSchema extends Document = Document> {
                             writeTarget.dbName ?? this.dbName,
                             writeTarget.collectionName,
                             this.management.defaults,
-                            options,
+                            preparedOptions,
                         );
+                        };
+                        return modelNormalizer ? runWithModelWriteSource(invalidate, modelNormalizer) : invalidate();
                     },
                 };
             },
