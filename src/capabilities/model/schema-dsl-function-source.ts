@@ -101,8 +101,9 @@ function readPlainTokenEnd(source: string, start: number): number | null {
     if (current === '\'' || current === '"') return readQuotedLiteralEnd(source, start);
     if (current !== '/') return null;
     if (next === '/') {
-        const end = source.indexOf('\n', start + 2);
-        return end < 0 ? source.length : end;
+        const end = /[\r\n\u2028\u2029]/g;
+        end.lastIndex = start + 2;
+        return end.exec(source)?.index ?? source.length;
     }
     if (next === '*') {
         const end = source.indexOf('*/', start + 2);
@@ -124,7 +125,7 @@ function maskFunctionLiteralsAndComments(source: string, preserveValueTokens = f
             const text = source.slice(index, end);
             const comment = current === '/' && (source[index + 1] === '/' || source[index + 1] === '*');
             masked += comment
-                ? (preserveValueTokens ? text.replace(/[^\r\n]/g, ' ') : ' '.repeat(text.length))
+                ? text.replace(/[^\r\n\u2028\u2029]/g, ' ')
                 : maskValue(text);
             index = end;
             continue;
@@ -407,9 +408,8 @@ function isStatementLabel(source: string, start: number, end: number): boolean {
     if (next !== ':') {
         return false;
     }
-    const lastLineFeed = source.lastIndexOf('\n', start - 1);
-    const lastCarriageReturn = source.lastIndexOf('\r', start - 1);
-    const lineStart = Math.max(lastLineFeed, lastCarriageReturn) + 1;
+    const lineStart = Math.max(source.lastIndexOf('\n', start - 1), source.lastIndexOf('\r', start - 1),
+        source.lastIndexOf('\u2028', start - 1), source.lastIndexOf('\u2029', start - 1)) + 1;
     if (source.slice(lineStart, start).trim() === '') {
         return true;
     }

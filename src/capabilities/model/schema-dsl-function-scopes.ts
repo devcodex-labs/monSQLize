@@ -220,7 +220,7 @@ function addClassFieldScopes(scopes: FunctionScopeInfo[], header: string, header
 
 function addSemicolonlessClassFieldScopes(scopes: FunctionScopeInfo[], header: string, headerStart: number, className?: string): void {
     let lineStart = 0;
-    for (const match of header.matchAll(/\r?\n/g)) {
+    for (const match of header.matchAll(/\r\n|[\r\n\u2028\u2029]/g)) {
         const lineEnd = match.index ?? 0;
         const line = header.slice(lineStart, lineEnd);
         if (line.trim()) {
@@ -280,7 +280,7 @@ function isClassMethodHeader(header: string): boolean {
 }
 
 function getTrailingClassMethodHeader(header: string): { header: string; offset: number } | null {
-    const lines = Array.from(header.matchAll(/\r?\n/g));
+    const lines = Array.from(header.matchAll(/\r\n|[\r\n\u2028\u2029]/g));
     for (let index = lines.length - 1; index >= 0; index -= 1) {
         const lineStart = (lines[index].index ?? 0) + lines[index][0].length;
         const candidate = header.slice(lineStart);

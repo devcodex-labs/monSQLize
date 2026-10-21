@@ -2,6 +2,8 @@
 
 ## Changes after v3.3.1
 
+- Respect every ECMAScript comment line terminator when comparing schema factories, preserving captured values and stable local factories through comments, templates and automatic semicolon insertion.
+
 - Classify native aggregate `out` before write checks and capture result options across cache waits while preserving sessions/signals. Start aggregate caches at a new generation. Align explicit soft-delete Model aggregate invalidation, retain native matching for uppercase converted relation keys, and distinguish contextual words, complete default-call parameters, separate parameter/body bindings and template scopes in schema factories. Default invalidation, checkpoint formats, dependency versions and package budgets remain unchanged.
 
 - Align supported DSL aggregate descriptor invalidation with captured execution pipelines without reinterpreting prepared literals. Preserve native relation equality for colliding BSON key types, distinguish factory display names from lexical bindings, and retain scalar-override and invalid-input compatibility in special-key MemoryCache batches. Regression coverage and bilingual boundaries accompany these fixes; dependency versions, public signatures, checkpoint formats and package budgets are unchanged.

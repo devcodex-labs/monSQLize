@@ -4,6 +4,26 @@ import { isClosureSensitiveFunctionSource } from '../../../src/capabilities/mode
 
 describe('schema extension lexical block identity', () => {
     const cases: Array<[string, boolean]> = [
+        ...['\r', '\n', '\u2028', '\u2029', '\r\n'].flatMap((lt): Array<[string, boolean]> => [
+            ['() => {// comment' + lt + 'return {type:"string",const:captured};}', true],
+            ['function factory(){const pattern="stable";// comment' + lt + 'return {type:"string",pattern};}', false],
+            ['() => {const result=async/*' + lt + '*/function local(){} return {type:"string",const:result};}', true],
+            ['function factory(async="stable"){const result=async/*' + lt + '*/function local(){} return {type:"string",const:result};}', false],
+            ['function factory(){const a="stable"/*' + lt + '*/const pattern=a;return {type:"string",pattern};}', false],
+            ['() => ({type:"string",pattern:`${(()=>{// comment' + lt + 'return captured;})()}`})', true],
+            ['function factory(){const local="stable";return {type:"string",pattern:`${(()=>{// comment' + lt + 'return local;})()}`};}', false],
+            ['function factory(){const pattern=`first' + lt + 'second`;return {type:"string",pattern};}', false],
+            ['function factory(){const local="stable";return {type:"string",pattern:`a' + lt + '${(()=>`${local}`)()}' + lt + 'b`};}', false],
+            ['function factory(){class Tools{value="stable"' + lt + 'read(){return this.value;}}return {type:"string",pattern:new Tools().read()};}', false],
+            ['function factory(){const n=1' + lt + 'label:{break label;}return {type:"number",const:n};}', false],
+            ['function factory(){const pattern=`stable`' + lt + 'function local(){return pattern;}return {type:"string",pattern:local()};}', false],
+        ]),
+        ...['\u2028', '\u2029'].flatMap((lt): Array<[string, boolean]> => [
+            ['function factory(){const pattern="a' + lt + 'b";return {type:"string",pattern};}', false],
+            ['function factory(pattern="a' + lt + 'b"){return {type:"string",pattern};}', false],
+        ]),
+        ['() => {const helper=async/*\u00a0*/function local(){return 1;};void helper;return {type:"string"};}', false],
+        ['function factory(){const local="stable";return {type:"string",pattern:`${(/[}]/.test("}")?local:local)}`};}', false],
         ['functionLoad() { return { type: "string", const: Load }; }', true],
         ['function𐐀() { return { type: "string", const: 𐐀 }; }', true],
         ['() => { const target = [0], index = 0; for (target[index] of [1]) {} return { type: "number", const: target[0] }; }', false],

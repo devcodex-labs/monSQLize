@@ -296,6 +296,11 @@ describe('review model mutation, population and extension contracts', () => {
 
     it('rejects different captured factories after block, catch, loop and class shadows end', async () => {
         const makers = [
+            ...['\r', '\n', '\u2028', '\u2029', '\r\n'].flatMap((lt) => [
+                (value: string) => new Function('captured', 'return () => {// comment' + lt + 'return {type:"string",pattern:captured};}')(value),
+                (value: string) => new Function('async', 'return () => {const result=async/*' + lt + '*/function local(){} return {type:"string",pattern:result};}')(value),
+                (value: string) => new Function('captured', 'return () => ({type:"string",pattern:`${(()=>{// comment' + lt + 'return captured;})()}`})')(value),
+            ]),
             (Load: string) => ({ functionLoad() { return { type: 'string', const: Load }; } }).functionLoad,
             (get: string) => () => ({ type: 'string', const: get }),
             (set: string) => () => ({ type: 'string', const: set }),
@@ -347,6 +352,17 @@ describe('review model mutation, population and extension contracts', () => {
 
     it('permits stable ASI and Unicode factories on a shared runtime without losing expression closures', async () => {
         const sources = [
+            ...['\r', '\n', '\u2028', '\u2029', '\r\n'].flatMap((lt) => [
+                'function factory(){const pattern="stable";// comment' + lt + 'return {type:"string",pattern};}',
+                'function factory(){const a="stable"/*' + lt + '*/const pattern=a;return {type:"string",pattern};}',
+                'function factory(){const pattern=`first' + lt + 'second`;return {type:"string",pattern};}',
+                'function factory(){const local="stable";return {type:"string",pattern:`a' + lt + '${(()=>`${local}`)()}' + lt + 'b`};}',
+                'function factory(){const pattern=`stable`' + lt + 'function local(){return pattern;}return {type:"string",pattern:local()};}',
+            ]),
+            ...['\u2028', '\u2029'].flatMap((lt) => [
+                'function factory(){const pattern="a' + lt + 'b";return {type:"string",pattern};}',
+                'function factory(pattern="a' + lt + 'b"){return {type:"string",pattern};}',
+            ]),
             'function factory(load = () => "stable", { pattern = load() } = {}) { return { type: "string", pattern }; }',
             'function factory(a = 1, b = a) { return { type: "number", const: b }; }',
             'function factory(a = factory) { void a; return { type: "string" }; }',

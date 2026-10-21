@@ -2,6 +2,8 @@
 
 Default parameters cannot use bindings declared inside the function body; template substitutions retain their original scope during schema-factory capture analysis.
 
+Factory identity respects JavaScript comment and line-break boundaries; string and template contents retain their literal meaning.
+
 Schema factories distinguish contextual `get`, `set`, `of` and `async` syntax from same-named captured values, including calls in destructured parameter defaults. Population keeps ordinary binary reads batched; when uppercase hexadecimal parent keys may have been converted to returned BSON ObjectIds, only ambiguous parents use native per-key matching, retaining parent-array order and projection. This can add queries for those parents without making string comparisons globally case-insensitive.
 
 Soft deletion through `deleteOne`, `deleteMany` and their relation-aware variants updates the configured `updatedAt` field and version using the same mutation as the deletion marker. Creation timestamps remain unchanged; disabled/custom timestamp fields retain their configuration. Repeating a delete does not advance an already-deleted record, and forced deletion remains physical.

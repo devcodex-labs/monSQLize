@@ -108,7 +108,7 @@ export function findLocalDeclarationEnd(source: string, start: number): number {
             depth = Math.max(0, depth - 1);
         } else if (char === ';' && depth === 0) {
             return index;
-        } else if ((char === '\n' || char === '\r') && depth === 0 && shouldEndLocalDeclarationAtLineBreak(source, start, index)) {
+        } else if (/[\r\n\u2028\u2029]/.test(char) && depth === 0 && shouldEndLocalDeclarationAtLineBreak(source, start, index)) {
             return index;
         }
     }
