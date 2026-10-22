@@ -4,7 +4,7 @@
 
 This document explains how monSQLize handles version differences in the MongoDB Node.js driver and how to ensure compatibility for future driver upgrades.
 
-**Current baseline**: monSQLize uses `mongodb@6.21.0` as the runtime dependency baseline; Driver 7.5.0 has passed extended compatibility verification. Driver 4.x / 5.x belongs to the historical compatibility background and is no longer part of the current support matrix.
+**Current baseline**: monSQLize uses `mongodb@6.21.0` as the runtime dependency baseline; Driver 7.7.0 has passed extended compatibility verification. Driver 4.x / 5.x belongs to the historical compatibility background and is no longer part of the current support matrix.
 
 ---
 
@@ -16,7 +16,7 @@ This document explains how monSQLize handles version differences in the MongoDB 
 | MongoDB driver version | Support status | Test status | Description |
 |-----------------|---------|---------|------|
 | **6.x** (6.21.0) | Runtime Baseline | Default Verification | Package Exact Dependencies, Out of the Box |
-| **7.x** (7.5.0) | Extension compatible | Matrix verification | Used to detect upstream breaking changes in advance |
+| **7.x** (7.7.0) | Extension compatible | Matrix verification | Used to detect upstream breaking changes in advance |
 | **4.x / 5.x** | Historical compatibility reference | Not in the current matrix | Old version migration background; new projects should stay on the current package dependency baseline |
 | **8.x+** | To be evaluated | ⏸️ Not included in the current matrix | You need to confirm according to the verification process in this article before upgrading |
 
@@ -34,7 +34,7 @@ Statement in `package.json`:
 
 **Description**:
 - Users will get `mongodb@6.21.0` by default after installing monSQLize, and there is no need to install additional MongoDB driver.
-- Driver 7.5.0 passed compatibility verification, but is not the default runtime dependency of the current package.
+- Driver 7.7.0 passed compatibility verification, but is not the default runtime dependency of the current package.
 - If the driver is unavailable due to package manager trimming, overwriting dependencies, or workspace resolution, restore the complete installation first, and then execute the verification command in this article.
 
 ---
@@ -44,7 +44,7 @@ Statement in `package.json`:
 
 ## 1. Return value of findOneAnd* method
 
-This is the most important difference. Currently monSQLize runs on MongoDB Driver 6.21.0 by default and verifies public API behavior through the Driver 7.5.0 extension matrix.
+This is the most important difference. Currently monSQLize runs on MongoDB Driver 6.21.0 by default and verifies public API behavior through the Driver 7.7.0 extension matrix.
 
 
 ### MongoDB driver version differences
@@ -104,7 +104,7 @@ console.log(user);  // { _id: ..., name: "Alice", age: 31 }
 **Implementation Boundary**:
 
 - monSQLize provides out-of-the-box behavior with `mongodb@6.21.0` exact dependency.
-- Driver 7.5.0 passed `test:compatibility` and server matrix verification.
+- Driver 7.7.0 passed `test:compatibility` and server matrix verification.
 - If the application is forced to overwrite the historical Driver 4.x / 5.x, you need to verify the return value difference by yourself. This is not recommended for new projects.
 
 **Applicable methods**:
@@ -150,7 +150,7 @@ console.log(result);
 
 ## Other affected methods
 
-| Methods | Driver 5.x Historical Defaults | Driver 6.21.0 / 7.5.0 Defaults | Current Recommendations |
+| Methods | Driver 5.x Historical Defaults | Driver 6.21.0 / 7.7.0 Defaults | Current Recommendations |
 |------|---------|---------|---------|
 | **findOneAndUpdate** | `{ value, ok, lastErrorObject }` | Document object or `null` | Use the current dependency baseline; no need to extract `value` |
 | **findOneAndReplace** | `{ value, ok, lastErrorObject }` | Document object or `null` | Use the current dependency baseline; no need to extract `value` |
@@ -174,7 +174,7 @@ monSQLize does not require users to manually install or select a MongoDB Driver.
 
 - `package.json` declares exactly `mongodb@6.21.0` and is ready to use after installation.
 - The writing and querying API maintains thin encapsulation and transparently transmits the stable behavior of the current driver by default.
-- `test:compatibility` with server matrix covers the current baseline and Driver 7.5.0 extended validation.
+- `test:compatibility` with server matrix covers the current baseline and Driver 7.7.0 extended validation.
 - Historical Driver 4.x / 5.x is only used as a migration reference, not as a current user path commitment.
 
 
@@ -352,7 +352,7 @@ function handleFindOneAndResult(result, options = {}, logger = null) {
 |---------|-----------|------|
 | **Compatibility Matrix** | `npm run test:compatibility` | Covers current baseline and extended driver combinations |
 | **Service Matrix** | `npm run test:server-matrix` | Covering real MongoDB / memory server scenarios |
-| **Verification Progress** | `test/validation/VERIFICATION-PROGRESS.md` | Record Driver 7.5.0 Extended Verification Status |
+| **Historical Verification Progress** | `test/validation/VERIFICATION-PROGRESS.md` | Earlier Driver 7.5.0 records; the current sample is in `test/compatibility/matrix.json` |
 | **Real service results** | `test/validation/REAL-SERVER-MATRIX.md` | Record real service matrix acceptance |
 | **Matrix Configuration** | `test/compatibility/matrix.json` | Maintain version combinations to be verified |
 

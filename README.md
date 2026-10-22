@@ -14,7 +14,7 @@ Upgrade and security: [Migration Guide](./MIGRATION.md) · [Private Vulnerabilit
 
 The npm `latest` dist-tag and GitHub Pages are the stable channel; `main` may contain the next release. Pages deployment accepts only a versioned Git tag whose package version is already present on npm, so unpublished APIs are not promoted as stable documentation. The Google site ownership verification file is copied separately from the workflow commit, with its source commit and content hash recorded in the deployment summary.
 
-Upcoming cache/pagination changes on `main`, including `cursorValueNormalizerVersion` and cold-cache upgrade behavior, are described in the [unreleased changelog](https://github.com/devcodex-labs/monSQLize/blob/main/changelogs/unreleased.md) and [migration guide](./MIGRATION.md); they are not yet part of a published release.
+This source tree targets **3.3.2**. Its cache, Model, pagination and sync fixes, including cold-cache upgrades and checkpoint rollback limits, are described in the [3.3.2 notes](./changelogs/v3.3.2.md) and [migration guide](./MIGRATION.md). Read the upgrade guide in [English](https://github.com/devcodex-labs/monSQLize/blob/main/docs/en/upgrade-3.3.2.md) or [简体中文](https://github.com/devcodex-labs/monSQLize/blob/main/docs/zh/upgrade-3.3.2.md). Untagged checkouts remain release candidates; verify the immutable tag and requested registry version before deployment. Candidate preparation does not publish npm or update stable Pages.
 
 This development source is pinned to verified registry `schema-dsl@3.0.4`. The v3 package remains subject to the full release gate before an immutable tag and npm publication.
 
@@ -540,7 +540,7 @@ The v3 line has been validated against the workspace consumers `chat`, `payment`
 | Surface | Current Support |
 |---|---|
 | Node.js | `>=18.0.0`; CI covers Node 18 / 20 / 22. |
-| MongoDB driver | `mongodb@6.21.0` runtime baseline; driver 7.5.0 has additional compatibility coverage. |
+| MongoDB driver | `mongodb@6.21.0` runtime baseline; driver 7.7.0 has additional compatibility coverage. |
 | MongoDB server | Memory-server based 7.x / 8.x validation is covered by the strict project test matrix. |
 | Module systems | CommonJS and ESM are both validated. |
 | TypeScript | Public declarations are published from `dist/types/index.d.ts`. |

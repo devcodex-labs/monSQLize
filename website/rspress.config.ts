@@ -47,7 +47,10 @@ type NavMenuSource = {
 
 type NavSource = NavLinkSource | NavMenuSource;
 
-const docsReleaseVersion = process.env.DOCS_RELEASE_VERSION ?? '3.0.0';
+const packageVersion: string = JSON.parse(
+  fs.readFileSync(path.join(import.meta.dirname, '..', 'package.json'), 'utf8')
+).version;
+const docsReleaseVersion = process.env.DOCS_RELEASE_VERSION ?? packageVersion;
 const docsReleaseChannel = process.env.DOCS_RELEASE_CHANNEL === 'stable' ? 'stable' : 'next';
 const docsReleaseLabel = docsReleaseChannel === 'stable' ? 'Current' : 'Next';
 const docsReleaseLabelZh = docsReleaseChannel === 'stable' ? '当前稳定版' : '下一版本';
@@ -365,6 +368,7 @@ const sidebarSource: SidebarGroupSource[] = [
     en: 'Compatibility and Migration',
     zh: '兼容与迁移',
     items: [
+      { en: 'Upgrade to 3.3.2', zh: '升级到 3.3.2', link: '/upgrade-3.3.2' },
       { en: 'MongoDB Driver Compatibility', zh: 'MongoDB Driver 兼容性', link: '/mongodb-driver-compatibility' },
       { en: 'MongoDB Native vs Extensions', zh: 'MongoDB 原生 vs 扩展', link: '/mongodb-native-vs-extensions' },
       { en: 'findOneAnd Return Value', zh: 'findOneAnd 返回值统一', link: '/findOneAnd-return-value-unified' },

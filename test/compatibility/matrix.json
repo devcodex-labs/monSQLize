@@ -1,32 +1,32 @@
 {
-  "generatedAt": "2026-09-23",
-  "packageVersion": "3.3.1",
+  "generatedAt": "2026-10-22",
+  "packageVersion": "3.3.2",
   "support": {
     "node": {
       "declared": ">=18.0.0",
       "currentRuntime": {
-        "verifiedMajor": 20,
-        "sampleVersion": "20.20.2",
+        "verifiedMajor": 22,
+        "sampleVersion": "22.23.3",
         "evidence": [
           "node -p \"process.version\"",
-          "npm run verify",
+          "npm run verify:fast",
           "npm run test:server-matrix"
         ]
       },
       "additionalVerifiedRuntimes": [
         {
-          "verifiedMajor": 22,
-          "sampleVersion": "22.23.2",
-          "runner": "volta run --node 22",
+          "verifiedMajor": 20,
+          "sampleVersion": "20.20.2",
+          "runner": "volta run --node 20",
           "evidence": [
-            "volta run --node 22 node -p \"process.version\"",
+            "volta run --node 20 node -p \"process.version\"",
             "npm run test:server-matrix"
           ]
         }
       ],
       "verified": [
-        "Node 20.x current environment + npm run verify + npm run test:server-matrix",
-        "Node 22.x（Volta） + npm run test:server-matrix"
+        "Node 22.x current environment + npm run verify:fast + npm run test:server-matrix",
+        "Node 20.x (Volta) + npm run test:server-matrix"
       ],
       "pending": []
     },
@@ -34,7 +34,7 @@
       "declaredDependency": "6.21.0",
       "additionalVerifiedDrivers": [
         {
-          "sampleVersion": "7.5.0",
+          "sampleVersion": "7.7.0",
           "status": "verified",
           "runner": "npm install mongodb@7 --no-save --package-lock=false",
           "runtime": "Node 20.x / 22.x",
@@ -47,7 +47,7 @@
       ],
       "verified": [
         "6.x baseline from the current dependency tree (Node 20.x / 22.x)",
-        "Driver 7.x (temporary 7.5.0 install + memory-matrix regression)"
+        "Driver 7.x (temporary 7.7.0 install + memory-matrix regression)"
       ],
       "statusVocabulary": [
         "verified",
@@ -82,7 +82,7 @@
         "command": "npm run test:server-matrix",
         "matrix": [
           "Node 20.x / 22.x",
-          "Driver 6.21.0 / 7.5.0",
+          "Driver 6.21.0 / 7.7.0",
           "MongoDB 7.0.37 / 8.0.26"
         ]
       },

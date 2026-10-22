@@ -1,6 +1,12 @@
 # Unreleased
 
-## Changes after v3.3.1
+## Changes after v3.3.2
+
+The audited changes below are assigned to the [3.3.2 versioned notes](./v3.3.2.md). No additional changes have been staged after that candidate. Publication is established by the npm registry and immutable tag, not this file.
+
+## Archived preparation notes for the 3.3.2 candidate
+
+The entries below preserve the implementation sequence after 3.3.1. Intermediate key generations, byte budgets and validation status are historical; the final contracts and approved 820,000/50,000-byte budgets are consolidated in the versioned 3.3.2 notes.
 
 - Preserve native repeated Code scope access and disabled DBRef function handling in cache keys. Isolate malformed explicit invalidation descriptors so valid siblings still run and successful aggregate writes retain their result. Add regression controls for these RF13–RF15 review follow-ups; the approved root bundle budget is 820,000 bytes and the independent CLI budget stays 50,000 bytes.
 

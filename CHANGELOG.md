@@ -1,18 +1,19 @@
 # CHANGELOG
 
-> Summary index — the newest versioned release details are in [changelogs/v3.3.1.md](./changelogs/v3.3.1.md); the earlier RC note remains an unpublished rehearsal archive.
-> **Last updated**: 2026-10-10
+> Summary index — the 3.3.2 versioned details are in [changelogs/v3.3.2.md](./changelogs/v3.3.2.md). A versioned note does not establish npm publication; check the registry and immutable tag before deployment.
+> **Last updated**: 2026-10-22
 
 ---
 
 ## Unreleased
 
-Cache isolation and write coordination, versioned cursor strategies, query/projection and lifecycle fixes, and corrected Model/metadata/Logger contracts. See [Unreleased details](https://github.com/devcodex-labs/monSQLize/blob/main/changelogs/unreleased.md).
+The audited cache, query, Model, transaction, sync and lifecycle repairs are assigned to **3.3.2**. See its [versioned notes](./changelogs/v3.3.2.md) and the [next-change staging log](https://github.com/devcodex-labs/monSQLize/blob/main/changelogs/unreleased.md). Untagged checkouts remain release candidates.
 
 ## Version Overview
 
 | Version | Date | Summary | Details |
 |---------|------|---------|---------|
+| [v3.3.2](./changelogs/v3.3.2.md) | 2026-10-22 | Patch: BSON/cache identity, Model invalidation, pagination, transaction/sync lifecycle and upgrade safeguards; availability requires registry/tag verification | [View](./changelogs/v3.3.2.md) |
 | [v3.3.1](./changelogs/v3.3.1.md) | 2026-09-23 | Patch: audited Model, count, transaction, cache, sync, pool, Data Task and SSH corrections | [View](./changelogs/v3.3.1.md) |
 | [v3.3.0](./changelogs/v3.3.0.md) | 2026-08-11 | Minor: static Model schema type inference, schema-dsl 3.0.4, and silent-by-default Pool logging | [View](./changelogs/v3.3.0.md) |
 | [v3.2.0](./changelogs/v3.2.0.md) | 2026-08-07 | Minor: Vector Search APIs, relation-safe Model deletion, and relation projection improvements | [View](./changelogs/v3.2.0.md) |

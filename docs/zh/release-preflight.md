@@ -66,12 +66,23 @@ npm view "monsqlize@${VERSION}" version dist.integrity dist.tarball --registry=h
 npm view monsqlize dist-tags --json --registry=https://registry.npmjs.org/
 
 TEMP_DIR=$(mktemp -d)
-npm --prefix "${TEMP_DIR}" init -y
-npm --prefix "${TEMP_DIR}" install "monsqlize@${VERSION}" --registry=https://registry.npmjs.org/
-node -e "const M=require('${TEMP_DIR}/node_modules/monsqlize'); if (!M) process.exit(1)"
-node --input-type=module -e "import M from '${TEMP_DIR}/node_modules/monsqlize/dist/esm/index.mjs'; if (!M) process.exit(1)"
-"${TEMP_DIR}/node_modules/.bin/monsqlize" --version
+SOURCE_DIR=$(pwd -P)
+(
+  set -eu
+  trap 'cd "${SOURCE_DIR}" && rm -rf -- "${TEMP_DIR}"' EXIT
+  cd "${TEMP_DIR}"
+  test "$(pwd -P)" != "${SOURCE_DIR}"
+  npm init -y
+  test -f package.json
+  npm install "monsqlize@${VERSION}" --registry=https://registry.npmjs.org/
+  test "$(node -p "require('monsqlize/package.json').version")" = "${VERSION}"
+  node -e "const M=require('monsqlize'); if (!M) process.exit(1)"
+  node --input-type=module -e "import M from 'monsqlize'; if (!M) process.exit(1)"
+  ./node_modules/.bin/monsqlize --version
+)
 ```
+
+初始化、安装和按包名导入必须在独立目录内执行。`npm --prefix <目录> init -y` 不能建立消费者工作目录，可能写入源码目录。上面的子 shell 遇错立即停止，并清理临时消费者目录；其退出码就是本次验收结果。
 
 验收要求：目标版本、integrity 与 tarball 元数据存在；`latest` 指向预期稳定版；CJS、ESM 与 CLI 均可加载；Git tag 指向发布提交；GitHub Release 与 Pages 也引用同一个 tag。
 
@@ -81,7 +92,7 @@ node --input-type=module -e "import M from '${TEMP_DIR}/node_modules/monsqlize/d
 
 ```bash
 VERSION=$(node -p "require('./package.json').version")
-PREVIOUS_STABLE=2.0.6
+PREVIOUS_STABLE=3.3.1 # 恢复前先从 npm 核实上一稳定版本。
 RELEASE_COMMIT=$(git rev-parse HEAD)
 npm view "monsqlize@${VERSION}" version dist.integrity --json --registry=https://registry.npmjs.org/ || true
 npm view monsqlize dist-tags --json --registry=https://registry.npmjs.org/

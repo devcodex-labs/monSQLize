@@ -4,7 +4,7 @@
 
 本文档说明 monSQLize 如何处理 MongoDB Node.js 驱动的版本差异，以及如何确保未来驱动升级时的兼容性。
 
-**当前基线**: monSQLize 以 `mongodb@6.21.0` 作为运行时依赖基线；Driver 7.5.0 已通过扩展兼容性验证。Driver 4.x / 5.x 属于历史兼容背景，不再作为当前支持矩阵。
+**当前基线**: monSQLize 以 `mongodb@6.21.0` 作为运行时依赖基线；Driver 7.7.0 已通过扩展兼容性验证。Driver 4.x / 5.x 属于历史兼容背景，不再作为当前支持矩阵。
 
 ---
 
@@ -15,7 +15,7 @@
 | MongoDB 驱动版本 | 支持状态 | 测试状态 | 说明 |
 |-----------------|---------|---------|------|
 | **6.x** (6.21.0) | 运行时基线 | 默认验证 | package 精确依赖，开箱即用 |
-| **7.x** (7.5.0) | 扩展兼容 | 矩阵验证 | 用于提前发现上游 breaking change |
+| **7.x** (7.7.0) | 扩展兼容 | 矩阵验证 | 用于提前发现上游 breaking change |
 | **4.x / 5.x** | 历史兼容参考 | 不在当前矩阵 | 旧版本迁移背景；新项目建议使用当前包依赖基线 |
 | **8.x+** | 待评估 | ⏸️ 未纳入当前矩阵 | 升级前需按本文验证流程确认 |
 
@@ -32,7 +32,7 @@
 
 **说明**: 
 - 用户安装 monSQLize 后会通过当前包依赖基线获得 `mongodb@6.21.0`，无需额外安装 MongoDB driver。
-- Driver 7.5.0 通过兼容性验证，但不是当前 package 的运行时依赖基线。
+- Driver 7.7.0 通过兼容性验证，但不是当前 package 的运行时依赖基线。
 - 如包管理器裁剪、覆盖依赖或 workspace 解析导致 driver 不可用，优先恢复完整安装，再执行本文验证命令。
 
 ---
@@ -41,7 +41,7 @@
 
 ### 1. findOneAnd* 方法的返回值
 
-这是最重要的差异。当前 monSQLize 运行时依赖基线是 MongoDB Driver 6.21.0，并通过 Driver 7.5.0 扩展矩阵验证公共 API 行为。
+这是最重要的差异。当前 monSQLize 运行时依赖基线是 MongoDB Driver 6.21.0，并通过 Driver 7.7.0 扩展矩阵验证公共 API 行为。
 
 #### MongoDB 驱动版本差异
 
@@ -99,7 +99,7 @@ console.log(user);  // { _id: ..., name: "Alice", age: 31 }
 **实现边界**:
 
 - monSQLize 以 `mongodb@6.21.0` 精确依赖提供开箱即用行为。
-- Driver 7.5.0 通过 `test:compatibility` 与 server matrix 验证。
+- Driver 7.7.0 通过 `test:compatibility` 与 server matrix 验证。
 - 如果应用强制覆盖为历史 Driver 4.x / 5.x，需要自行验证返回值差异，不建议新项目这样做。
 
 **适用的方法**：
@@ -143,7 +143,7 @@ console.log(result);
 
 ### 其他受影响的方法
 
-| 方法 | Driver 5.x 历史默认 | Driver 6.21.0 / 7.5.0 默认 | 当前建议 |
+| 方法 | Driver 5.x 历史默认 | Driver 6.21.0 / 7.7.0 默认 | 当前建议 |
 |------|---------|---------|---------|
 | **findOneAndUpdate** | `{ value, ok, lastErrorObject }` | 文档对象或 `null` | 使用当前依赖基线，无需提取 `value` |
 | **findOneAndReplace** | `{ value, ok, lastErrorObject }` | 文档对象或 `null` | 使用当前依赖基线，无需提取 `value` |
@@ -166,7 +166,7 @@ monSQLize 不要求用户手动安装或选择 MongoDB Driver。当前包通过�
 
 - `package.json` 精确声明 `mongodb@6.21.0`，安装后即可使用。
 - 写入与查询 API 保持薄封装，默认透传当前 Driver 的稳定行为。
-- `test:compatibility` 与 server matrix 覆盖当前基线和 Driver 7.5.0 扩展验证。
+- `test:compatibility` 与 server matrix 覆盖当前基线和 Driver 7.7.0 扩展验证。
 - 历史 Driver 4.x / 5.x 只作为迁移参考，不作为当前用户路径承诺。
 
 ### 关键实现位置
@@ -333,7 +333,7 @@ function handleFindOneAndResult(result, options = {}, logger = null) {
 |---------|-----------|------|
 | **兼容性矩阵** | `npm run test:compatibility` | 覆盖当前基线与扩展 driver 组合 |
 | **服务矩阵** | `npm run test:server-matrix` | 覆盖真实 MongoDB / memory server 场景 |
-| **验证进度** | `test/validation/VERIFICATION-PROGRESS.md` | 记录 Driver 7.5.0 扩展验证状态 |
+| **历史验证进度** | `test/validation/VERIFICATION-PROGRESS.md` | 较早的 Driver 7.5.0 记录；当前样本以 `test/compatibility/matrix.json` 为准 |
 | **真实服务结果** | `test/validation/REAL-SERVER-MATRIX.md` | 记录真实服务矩阵验收 |
 | **矩阵配置** | `test/compatibility/matrix.json` | 维护待验证的版本组合 |
 

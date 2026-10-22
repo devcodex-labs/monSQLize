@@ -710,6 +710,13 @@
       "status": "covered"
     },
     {
+      "doc": "upgrade-3.3.2",
+      "kind": "doc-check",
+      "target": "docs/en/upgrade-3.3.2.md",
+      "runner": "check:docs-examples",
+      "status": "covered"
+    },
+    {
       "doc": "upsert-one",
       "kind": "example",
       "target": "examples/docs/upsert-one.ts",

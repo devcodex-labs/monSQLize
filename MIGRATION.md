@@ -1,12 +1,14 @@
-# Migration Guide: monSQLize v1/v2 → v3
+# Migration Guide: monSQLize
 
-This guide starts with the v2.0.6 to v3.0.0 upgrade path, then retains the
-v1-to-v2 compatibility notes for older applications. Review every tightened
-contract that intersects your application before changing the installed major.
+Start with the 3.3.1 to 3.3.2 upgrade notes for this candidate, then consult the
+older v3 and v1/v2 paths if needed. Review the operational boundaries that
+intersect your application before changing its installed version.
 
-## Upcoming changes after v3.3.1 (unreleased)
+## Upgrade from v3.3.1 to v3.3.2
 
-These changes are currently on `main`; they are not yet published as an npm release.
+An untagged checkout is a release candidate; verify the immutable tag and npm
+registry before deployment. The upgrade guide is also available in [English](https://github.com/devcodex-labs/monSQLize/blob/main/docs/en/upgrade-3.3.2.md) and
+[简体中文](https://github.com/devcodex-labs/monSQLize/blob/main/docs/zh/upgrade-3.3.2.md).
 
 - Query, page, totals and bookmark caches now include source/authentication and
   pool identities. Upgrade all application instances sharing a backend together;
@@ -34,7 +36,34 @@ These changes are currently on `main`; they are not yet published as an npm rele
   routes invalidate together when registered on that cache object; host aliases
   need consistent endpoints or explicit related-route invalidation.
 
-See the [unreleased changelog](https://github.com/devcodex-labs/monSQLize/blob/main/changelogs/unreleased.md) for the complete fixes.
+- Shared BSON query-key encoding uses generation `v4`, including effective BSON
+  input/decoding options and native per-occurrence function serialization.
+  Query, aggregate, totals and bookmark entries start cold. The public `bm:v4`
+  prefix is retained, but its hash changes. Use broad invalidation or isolate
+  cache backends during mixed-version operation; exact descriptors use the
+  current generation. JSON-incompatible result modes bypass result caching.
+- Pipeline-based `findPage()` rejects find-only projections such as `$slice`,
+  `$elemMatch` and positional projection with `INVALID_OPERATION`. Ordered
+  `findByIds()` retains one-query native identity for supported projections and
+  rejects combinations that cannot preserve it; `preserveOrder: false` retains
+  native execution. Check the query guides before relying on special `_id`
+  transformations or dynamic BSON decoding maps.
+- Before enabling Change Stream sync on an empty checkpoint store, confirm that
+  a custom store can round-trip the opaque initial operation-time envelope and
+  its canonical EJSON Timestamp. Existing raw resume tokens remain supported.
+  Before downgrade, pause sync and preserve the checkpoint; an older reader
+  cannot treat the initial envelope as a raw token. A persisted event token
+  restores format compatibility only subject to history retention and the
+  older reader's behavior. Never clear the envelope to restart from now.
+- Sync idempotency markers use v2 JSON tuple keys. Stop writers and drain work
+  before upgrade or rollback; preserve the checkpoint, both marker generations
+  and a recovery snapshot. Do not run mixed key-format writers or blindly trust
+  ambiguous legacy concatenated keys. Use target-owned business idempotence for
+  replay unless a finite mapping is provable. Rollback also needs a compatible
+  raw token and a verified target recovery point; do not clear either store.
+
+See the [3.3.2 notes](./changelogs/v3.3.2.md), [cache guide](https://github.com/devcodex-labs/monSQLize/blob/main/docs/en/cache.md)
+and [sync upgrade/rollback guide](https://github.com/devcodex-labs/monSQLize/blob/main/docs/en/sync-backup.md) for details.
 
 ## Upgrade from v3.0.0 to v3.1.0
 
