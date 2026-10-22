@@ -2,7 +2,7 @@
 
 Every core API in the documentation site should map, as much as possible, to an example that can run directly inside the current repository.
 
-> See the [official examples index](https://github.com/devcodex-labs/monSQLize/blob/main/examples/README.md) for the full source list. `npm run test:examples` compiles and executes the current **57** TypeScript examples. [`examples/helpers/bootstrap.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/helpers/bootstrap.ts) is a helper module and is not executed on its own.
+> See the [official examples index](https://github.com/devcodex-labs/monSQLize/blob/main/examples/README.md) for the full source list. `npm run test:examples` compiles and executes the current **58** TypeScript examples. [`examples/helpers/bootstrap.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/helpers/bootstrap.ts) is a helper module and is not executed on its own.
 
 ## How to Run
 

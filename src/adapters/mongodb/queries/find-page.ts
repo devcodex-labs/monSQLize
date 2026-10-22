@@ -1,7 +1,7 @@
 /** findPage execution layer: pagination, totals calculation, and meta tracking. */
 
 import { withCacheReads } from '../../../core/cache-coordination';
-import { snapshotPipelineValue } from './pipeline-snapshot';
+import { canCacheBsonResult, hasStableBsonFields } from './bson-read-options';
 import { cacheNamespace } from '../../../core/cache-scope';
 import { Collection, Document } from 'mongodb';
 
@@ -25,7 +25,6 @@ import {
     buildAggregateDriverOptions,
     buildCursorFilter,
     buildEffectiveProjection,
-    buildResultCacheKeyOptions,
     decodeCursor,
     encodeCursor,
     getSortValues,
@@ -35,6 +34,7 @@ import {
     normalizeSortShape,
     reverseSort,
     resolveProjectionOption,
+    snapshotFindPageOptions,
 } from './query-helpers';
 import {
     DEFAULT_FIND_PAGE_LIMIT,
@@ -135,16 +135,14 @@ export async function executeFindPage<TSchema extends Document = Document>(
     defaults: RuntimeDefaults = {},
     queryCache?: QueryCacheLike | null,
 ): Promise<FindPageResult<TSchema>> {
-    const { options: nativeOptions, ...pageOptions } = options;
-    const capturedNativeOptions = { ...(nativeOptions ?? {}) };
-    capturedNativeOptions.ignoreUndefined = buildResultCacheKeyOptions(capturedNativeOptions, collection.bsonOptions).ignoreUndefined;
+    options = snapshotFindPageOptions(options, collection.bsonOptions);
+    const capturedNativeOptions = options.options as Record<string, unknown>;
     if (typeof (capturedNativeOptions as Record<string, unknown>).out === 'string') {
         throw createError(ErrorCodes.INVALID_OPERATION, 'findPage does not support write aggregation options. Use aggregate instead.');
     }
-    options = { ...pageOptions, options: capturedNativeOptions };
     // Read-only pagination must check the same captured structure used by every branch.
     if (options.pipeline !== undefined) {
-        const pipeline = snapshotPipelineValue(options.pipeline);
+        const pipeline = options.pipeline;
         if (pipeline.some((stage) => stage !== null && typeof stage === 'object'
             && (Object.prototype.hasOwnProperty.call(stage, '$out')
                 || Object.prototype.hasOwnProperty.call(stage, '$merge')))) {
@@ -251,6 +249,7 @@ export async function executeFindPage<TSchema extends Document = Document>(
         : false;
     const pageResultCache = cacheTTL > 0
         && strategy.cacheable
+        && canCacheBsonResult(driverOpts)
         && queryCache
         && options.stream !== true
         && (options.explain === undefined || options.explain === false)
@@ -327,6 +326,7 @@ export async function executeFindPage<TSchema extends Document = Document>(
 
     bookmarkResume = page > 1
         && strategy.cacheable
+        && hasStableBsonFields(driverOpts)
         && queryCache
         && !hasSessionOption(driverOpts)
         && !options.after

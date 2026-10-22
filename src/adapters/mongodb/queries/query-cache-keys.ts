@@ -8,7 +8,6 @@ import type {
 import type { FindPageOptions } from '../../../../types/collection';
 import { resolveCursorStrategy } from './cursor-strategy';
 import { DEFAULT_FIND_PAGE_LIMIT, hashPayload } from './find-page-cache-helpers';
-import { snapshotPipelineValue } from './pipeline-snapshot';
 import { prepareAggregateExecution } from './aggregate-pipeline';
 import {
     buildCollectionCacheNamespace,
@@ -18,13 +17,17 @@ import {
     normalizeSortShape,
     parseRequiredObjectId,
     stableCacheKeyString,
+    snapshotResultOptions,
+    snapshotFindPageOptions,
+    snapshotReadInputs,
 } from './query-helpers';
 
 function normalizeQueryForCache(value: unknown, defaults: RuntimeDefaults = {}): unknown {
     const query = (value ?? {}) as Record<string, unknown>;
-    return defaults.autoConvertObjectId
+    const normalized = defaults.autoConvertObjectId
         ? normalizeQueryFilter(query, defaults.autoConvertObjectId)
         : query;
+    return normalized;
 }
 
 function normalizeFindPageLimit(limit: number | undefined, defaults: RuntimeDefaults): number {
@@ -35,18 +38,28 @@ function normalizeFindPageLimit(limit: number | undefined, defaults: RuntimeDefa
     return rawLimit;
 }
 
+function documentReadKey<TSchema extends Document>(
+    operation: string, collection: Collection<TSchema>, defaults: RuntimeDefaults,
+    query: unknown, options?: Record<string, unknown>, field?: string,
+): string {
+    const captured = snapshotReadInputs(normalizeQueryForCache(query, defaults), options, collection.bsonOptions);
+    const keyOptions = buildResultCacheKeyOptions(captured.options, collection.bsonOptions);
+    if (operation === 'count') delete keyOptions.fieldsAsRaw;
+    const body = field === undefined ? stableCacheKeyString(captured.query, 'document')
+        : stableCacheKeyString({ key: field, query: captured.query });
+    return `${operation}:${buildCollectionCacheNamespace(collection, defaults)}:${body}:${stableCacheKeyString(keyOptions)}`;
+}
+
 export function buildFindCacheKey<TSchema extends Document = Document>(
     collection: Collection<TSchema>,
     defaults: RuntimeDefaults = {},
     query?: unknown,
     options?: Record<string, unknown>,
 ): string {
-    const executeOptions = normalizeFindProjectionOptions({
+    return documentReadKey('find', collection, defaults, query, normalizeFindProjectionOptions({
         limit: defaults.findLimit,
         ...(options ?? {}),
-    });
-    const namespace = buildCollectionCacheNamespace(collection, defaults);
-    return `find:${namespace}:${stableCacheKeyString(normalizeQueryForCache(query, defaults), 'document')}:${stableCacheKeyString(buildResultCacheKeyOptions(executeOptions, collection.bsonOptions))}`;
+    }));
 }
 
 export function buildFindOneCacheKey<TSchema extends Document = Document>(
@@ -55,9 +68,7 @@ export function buildFindOneCacheKey<TSchema extends Document = Document>(
     query?: unknown,
     options?: Record<string, unknown>,
 ): string {
-    const executeOptions = normalizeFindProjectionOptions(options);
-    const namespace = buildCollectionCacheNamespace(collection, defaults);
-    return `findOne:${namespace}:${stableCacheKeyString(normalizeQueryForCache(query, defaults), 'document')}:${stableCacheKeyString(buildResultCacheKeyOptions(executeOptions, collection.bsonOptions))}`;
+    return documentReadKey('findOne', collection, defaults, query, normalizeFindProjectionOptions(options));
 }
 
 export function buildCountCacheKey<TSchema extends Document = Document>(
@@ -66,8 +77,7 @@ export function buildCountCacheKey<TSchema extends Document = Document>(
     query?: unknown,
     options?: Record<string, unknown>,
 ): string {
-    const namespace = buildCollectionCacheNamespace(collection, defaults);
-    return `count:${namespace}:${stableCacheKeyString(normalizeQueryForCache(query, defaults), 'document')}:${stableCacheKeyString(buildResultCacheKeyOptions(options, collection.bsonOptions))}`;
+    return documentReadKey('count', collection, defaults, query, options);
 }
 
 export function buildDistinctCacheKey<TSchema extends Document = Document>(
@@ -77,8 +87,7 @@ export function buildDistinctCacheKey<TSchema extends Document = Document>(
     query?: unknown,
     options?: Record<string, unknown>,
 ): string {
-    const namespace = buildCollectionCacheNamespace(collection, defaults);
-    return `distinct:${namespace}:${stableCacheKeyString({ key: field, query: normalizeQueryForCache(query, defaults) })}:${stableCacheKeyString(buildResultCacheKeyOptions(options, collection.bsonOptions))}`;
+    return documentReadKey('distinct', collection, defaults, query, options, field);
 }
 
 export function buildAggregateCacheKey<TSchema extends Document = Document>(
@@ -110,7 +119,8 @@ export function buildFindOneByIdCacheKey<TSchema extends Document = Document>(
 ): string {
     const objectId = parseRequiredObjectId(id);
     const namespace = buildCollectionCacheNamespace(collection, defaults);
-    return `findOneById:${namespace}:${objectId.toString()}:${stableCacheKeyString(buildResultCacheKeyOptions(options, collection.bsonOptions))}`;
+    const captured = snapshotResultOptions(options, collection.bsonOptions);
+    return `findOneById:${namespace}:${objectId.toString()}:${stableCacheKeyString(buildResultCacheKeyOptions(captured, collection.bsonOptions))}`;
 }
 
 export function buildFindByIdsCacheKey<TSchema extends Document = Document>(
@@ -121,22 +131,8 @@ export function buildFindByIdsCacheKey<TSchema extends Document = Document>(
 ): string {
     const uniqueIds = Array.from(new Set(ids.map((id) => parseRequiredObjectId(id).toString())));
     const namespace = buildCollectionCacheNamespace(collection, defaults);
-    const capturedOptions = normalizeFindProjectionOptions(options);
-    capturedOptions.projection = snapshotPipelineValue(capturedOptions.projection);
-    // Native BSON result modes must never share entries (including inherited options).
-    // This dimension also separates entries created before decoding options were keyed.
-    const bson: Record<string, unknown> = {};
-    for (const field of ['raw', 'useBigInt64', 'promoteLongs', 'promoteValues', 'promoteBuffers',
-        'bsonRegExp', 'serializeFunctions', 'enableUtf8Validation']) {
-        bson[field] = options?.[field] ?? (collection.bsonOptions as unknown as Record<string, unknown> | undefined)?.[field];
-    }
-    const fieldsAsRaw = (options?.fieldsAsRaw ?? collection.bsonOptions?.fieldsAsRaw ?? {}) as Record<string, unknown>;
-    const rawFieldNames = new Set<string>();
-    for (let level = fieldsAsRaw; level; level = Object.getPrototypeOf(level)) {
-        for (const field of Object.getOwnPropertyNames(level)) rawFieldNames.add(field);
-    }
-    bson.fieldsAsRaw = [...rawFieldNames].sort().map((field) => [field, Boolean(fieldsAsRaw[field])]);
-    const key = `findByIds:${namespace}:${hashPayload({ ids: uniqueIds, options: buildResultCacheKeyOptions(capturedOptions, collection.bsonOptions), bson })}`;
+    const capturedOptions = snapshotResultOptions(normalizeFindProjectionOptions(options), collection.bsonOptions);
+    const key = `findByIds:${namespace}:${hashPayload({ ids: uniqueIds, options: buildResultCacheKeyOptions(capturedOptions, collection.bsonOptions) })}`;
     const visibility = getModelQueryFilter(options);
     return visibility && Object.keys(visibility).length > 0
         ? `${key}:model:${hashPayload(stableCacheKeyString(visibility))}`
@@ -148,6 +144,7 @@ export function buildFindPageCacheKey<TSchema extends Document = Document>(
     defaults: RuntimeDefaults = {},
     options: FindPageOptions<TSchema> = {},
 ): { key: string; keyHash: string } {
+    options = snapshotFindPageOptions(options, collection.bsonOptions);
     const ext = options as Record<string, unknown>;
     const cursorTypes = ext.cursorTypes && typeof ext.cursorTypes === 'object' && !Array.isArray(ext.cursorTypes)
         ? ext.cursorTypes as Record<string, unknown>
@@ -179,8 +176,7 @@ export function buildFindPageCacheKey<TSchema extends Document = Document>(
         collation: ext.collation,
         batchSize: ext.batchSize,
         let: effectiveLet,
-        options: { ...nestedOptions,
-            ignoreUndefined: buildResultCacheKeyOptions(nestedOptions, collection.bsonOptions).ignoreUndefined },
+        options: nestedOptions,
     };
     const keyHash = hashPayload(stableCacheKeyString(payload));
     const namespace = buildCollectionCacheNamespace(collection, defaults);

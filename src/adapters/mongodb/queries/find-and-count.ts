@@ -13,7 +13,7 @@ import { Collection, Document } from 'mongodb';
 
 import type { RuntimeDefaults } from '../../../types/internal/query';
 import type { FindAndCountResult } from '../../../../types/collection';
-import { buildCountDriverOptions, buildFindDriverOptions, normalizeFindProjectionOptions } from './query-helpers';
+import { buildCountDriverOptions, buildFindDriverOptions, normalizeFindProjectionOptions, snapshotReadInputs } from './query-helpers';
 
 /**
  * Queries all matching documents and fetches the total count concurrently.
@@ -32,14 +32,13 @@ export async function findAndCountDocuments<TSchema extends Document = Document>
     defaults?: RuntimeDefaults,
 ): Promise<FindAndCountResult<TSchema>> {
     // v1 compat: null query is treated as {} (match all)
-    const normalizedQuery = (query == null ? {} : query) as Parameters<Collection<TSchema>['find']>[0];
 
     // Build driver options (limit/skip/sort/projection apply to data; total uses query only)
     const rawOptions = (options ?? {}) as Record<string, unknown>;
-    const baseOptions = normalizeFindProjectionOptions({
+    const { query: normalizedQuery, options: baseOptions } = snapshotReadInputs(query ?? {}, normalizeFindProjectionOptions({
         ...(defaults?.maxTimeMS !== undefined ? { maxTimeMS: defaults.maxTimeMS } : {}),
         ...rawOptions,
-    });
+    }), collection.bsonOptions);
     const driverOptions = buildFindDriverOptions(baseOptions);
     const countOptions = buildCountDriverOptions(baseOptions);
     // v1 compat: limit/skip apply to data only, not to total.

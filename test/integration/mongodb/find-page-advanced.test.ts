@@ -1,6 +1,6 @@
 import { after, before, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ObjectId } from 'mongodb';
+import { BSON, ObjectId } from 'mongodb';
 import { createMemoryServerBootstrap } from '../../bootstrap/memory-server';
 import { buildFindPageCacheKey } from '../../../src/adapters/mongodb/queries/query-cache-keys';
 
@@ -40,6 +40,66 @@ describe('findPage() — advanced modes coverage', () => {
         }
         await db.collection('items').insertMany(docs);
         await col.invalidate('all');
+    });
+
+    it('retains asynchronous totals with dynamic decoding while refusing unstable bookmark dimensions', async () => {
+        await col.raw().updateMany({}, { $set: { payload: [{ n: 1 }] } });
+        let unusedGets = 0;
+        const fields = Object.create(null, {
+            payload: { enumerable: true, get: () => true },
+            neverReturned: { enumerable: true, get() { unusedGets++; throw new Error('Unused field'); } },
+        });
+        const options = { query: { val: { $gt: 0 } }, sort: { val: 1 }, limit: 1,
+            options: { fieldsAsRaw: fields }, cache: 10000, meta: true, totals: { mode: 'async', ttlMs: 10000 } };
+        let result = await col.findPage(options), attempts = 0;
+        while (result.totals.total === null && attempts++ < 50) { await delay(10); result = await col.findPage(options); }
+        assert.equal(result.totals.total, 30); assert.equal(result.meta.cacheHit, false);
+        assert.ok(Buffer.isBuffer(result.items[0].payload[0])); assert.equal(unusedGets, 0);
+        await assert.rejects(async () => col.prewarmBookmarks(options, [1, 2]), { code: 'INVALID_ARGUMENT' });
+        await assert.rejects(async () => col.listBookmarks(options), { code: 'INVALID_ARGUMENT' });
+        await assert.rejects(async () => col.clearBookmarks(options), { code: 'INVALID_ARGUMENT' });
+        assert.equal((await col.listBookmarks()).count, 0);
+        await col.clearBookmarks();
+        const proxy = new Proxy({}, { get: (_target, key) => key === 'payload' });
+        const native = await col.raw().countDocuments({ val: { $gt: 0 } }, { fieldsAsRaw: proxy });
+        assert.equal(await col.count({ val: { $gt: 0 } }, { fieldsAsRaw: proxy, cache: 10000 }), native);
+    });
+
+    it('uses one function capture for page hops, native project aliases and asynchronous totals', async () => {
+        const native = col.raw(); await native.deleteMany({});
+        const fn = function captured() { return 1; }; let calls = 0;
+        const source = Function.prototype.toString.call(fn); fn.toString = () => { calls++; return source; };
+        await native.insertMany([{ val: 1, payload: new BSON.Code(source) }, { val: 2, payload: new BSON.Code(source) }, { val: 3, payload: new BSON.Code(source) }]);
+        const options = { query: { payload: fn }, sort: { val: 1 }, limit: 1, page: 3,
+            options: { serializeFunctions: true }, totals: { mode: 'async', ttlMs: 10000 }, cache: 10000 };
+        const result = await col.findPage(options);
+        assert.equal(result.items[0].val, 3); assert.equal(calls, 1);
+        let completed = result, attempts = 0;
+        while (completed.totals.total === null && attempts++ < 50) { await delay(10); completed = await col.findPage(options); }
+        assert.equal(completed.totals.total, 3);
+        assert.equal(calls, attempts + 1);
+        const a = function first() { return 1; }, b = function second() { return 2; };
+        for (const value of [a, b]) {
+            const page = await col.findPage({ sort: { val: 1 }, limit: 1, totals: false, cache: 10000,
+                options: { serializeFunctions: true, project: { val: 1, value: { $literal: value } } } });
+            assert.equal(page.items[0].value.code, Function.prototype.toString.call(value));
+        }
+    });
+
+    it('separates inherited decoder modes across instances sharing a cache and namespace', async () => {
+        await col.raw().updateMany({}, { $set: { payload: new BSON.Binary(Uint8Array.of(1, 2)) } });
+        const other = new MonSQLize({ type: 'mongodb', databaseName: 'test_findpage_adv', cache: runtime.getCache(),
+            config: { uri, options: { promoteBuffers: true } } });
+        try {
+            await other.connect();
+            const page = { sort: { val: 1 }, limit: 1, totals: false, cache: 10000 };
+            assert.equal(Buffer.isBuffer((await col.findPage(page)).items[0].payload), false);
+            const inherited = await other.collection('items').findPage(page);
+            assert.equal(Buffer.isBuffer(inherited.items[0].payload), true);
+            const bookmark = { query: {}, sort: { val: 1 }, limit: 1 };
+            await col.prewarmBookmarks(bookmark, [1, 2]);
+            assert.equal((await other.collection('items').listBookmarks(bookmark)).count, 0);
+        } finally { await other.close(); }
     });
 
     it('AR01 isolates bookmarks by effective let and collation across management and reads', async () => {

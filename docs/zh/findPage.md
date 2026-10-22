@@ -3,7 +3,9 @@
 totals 缓存键区分 BSON/RegExp 查询和实际 count 选项，包括继承的 `let`、collation、hint。参数化 `$expr` 筛选在数据读取与计数时都接收 `let`，保留 BSON 文档字段顺序。已定义的顶层选项覆盖嵌套 `options`；totals 专属 hint/collation/maxTimeMS 覆盖仍优先。带 session 的读取绕过 totals 缓存。书签保留复合排序顺序，并与维护 API 共用生效查询选项。totals 与书签 `v4` 键冷启动，旧条目通过 TTL 或已有集合失效机制退出。
 
 
-共享 `v3` 编码也区分文档 undefined 成员、负零和原生二进制值。原生输入选项使用 `options.ignoreUndefined`，其空值继承规则在分页读取、同步/异步 totals、书签预热/列表/续读/清理之间保持一致。分页管线键保留实际执行的字面值，即使筛选自动转换开启，也区分管线中的字符串与 ObjectId。升级后分页、totals、书签的哈希变化，需要冷预热；见[缓存迁移](./cache.md#bson-查询身份与缓存迁移)。
+共享 `v4` 编码区分文档 undefined 成员、`Code.scope`、负零、原生二进制值和捕获的函数源码。原生 BSON 标志放在 `options` 中，操作/集合/默认值的继承规则在分页读取、totals 和书签维护中保持一致。函数出现位置在一次逻辑分页调用中捕获一次，并在跳转和 totals 间复用；独立调用重新捕获。分页管线键保留执行的字面值，筛选自动转换开启时也区分字符串与 ObjectId。升级后分页、totals、书签的哈希变化，需要冷预热；见[缓存迁移](./cache.md#bson-查询身份与缓存迁移)。
+
+非标准 BSON 结果模式旁路分页结果缓存。静态 `fieldsAsRaw` 映射连同原型数据属性一起捕获；动态 Proxy/访问器映射保留原生惰性查表，旁路分页结果和书签复用，建键不会求值未使用的 getter。`prewarmBookmarks` 及带维度的 `listBookmarks`/`clearBookmarks` 对动态映射报 `INVALID_ARGUMENT`，不带维度的广泛列表/清理仍可使用。totals 指纹排除此解码映射，并保留完成 token 和异步轮询语义。
 
 ## 概述
 

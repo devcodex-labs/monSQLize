@@ -1,5 +1,6 @@
 import { DEFAULT_FIND_PAGE_LIMIT } from '../queries/find-page-cache-helpers';
-import { buildResultCacheKeyOptions } from '../queries/query-helpers';
+import { snapshotFindPageOptions } from '../queries/query-helpers';
+import { hasStableBsonFields } from '../queries/bson-read-options';
 /**
  * Management operation helper functions for the collection accessor.
  *
@@ -98,10 +99,12 @@ function normalizeAccessorBookmarkDims<TSchema extends Document>(
     if (!Number.isInteger(requested) || requested <= 0) throw createError(ErrorCodes.INVALID_PAGINATION, 'limit must be a positive integer.');
     const limit = context.defaults?.findPageMaxLimit !== undefined
         ? Math.min(requested, context.defaults.findPageMaxLimit) : requested;
-    const options = { ...(keyDims.options ?? {}) };
-    options.ignoreUndefined = buildResultCacheKeyOptions(options, context.bsonOptions).ignoreUndefined;
-    return { ...keyDims, limit, query: context.cvFilter?.(keyDims.query ?? {}) ?? keyDims.query ?? {},
-        options };
+    const captured = snapshotFindPageOptions({ ...keyDims, limit,
+        query: context.cvFilter?.(keyDims.query ?? {}) ?? keyDims.query ?? {} }, context.bsonOptions);
+    if (!hasStableBsonFields(captured.options as Record<string, unknown>)) {
+        throw createError(ErrorCodes.INVALID_ARGUMENT, 'Bookmark dimensions require a static fieldsAsRaw mapping.');
+    }
+    return captured;
 }
 
 export function prewarmBookmarksForAccessor<TSchema extends Document>(

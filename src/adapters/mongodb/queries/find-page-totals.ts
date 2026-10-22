@@ -1,5 +1,5 @@
 import { withCacheReads } from '../../../core/cache-coordination';
-import { Collection, Document } from 'mongodb';
+import { BSON, Collection, Document } from 'mongodb';
 
 import { MemoryCache } from '../../../capabilities/cache';
 import type { QueryCacheLike, RuntimeDefaults } from '../../../types/internal/query';
@@ -43,6 +43,20 @@ const _asyncTotalsCache = new MemoryCache({
     enableStats: false,
 });
 const _totalsInflight = new Map<string, Promise<void>>();
+
+// Keep async completion readable through JSON-backed L2 without changing native count types.
+function encodeTotal(payload: TotalsInfo): TotalsInfo {
+    const total = payload.total as unknown;
+    if (typeof total === 'bigint') return { ...payload, total: { bigint: String(total) } as never };
+    if (total !== null && typeof total === 'object') return { ...payload, total: { bson: BSON.EJSON.serialize(total, { relaxed: false }) } as never };
+    return payload;
+}
+function decodeTotal(payload: TotalsInfo | undefined): TotalsInfo | undefined {
+    const total = payload?.total as unknown as { bigint?: string; bson?: unknown } | null;
+    if (total && typeof total === 'object') return { ...payload!, total: (total.bigint !== undefined
+        ? BigInt(total.bigint) : BSON.EJSON.deserialize(total.bson as Document, { relaxed: false })) as never };
+    return payload;
+}
 
 function runTotalsOnce(key: string, task: () => Promise<void>): void {
     if (_totalsInflight.has(key)) {
@@ -91,8 +105,8 @@ async function executeComputeTotals<TSchema extends Document = Document>(
     };
 
     const countOpts = buildCountOptions(2000);
-    const { session: _session, signal: _signal, ...keyCountOptions } = countOpts;
-    void _session; void _signal;
+    const { session: _session, signal: _signal, fieldsAsRaw: _fields, ...keyCountOptions } = countOpts;
+    void _session; void _signal; void _fields;
     const { key: cacheKey, token } = buildTotalsCacheKey(coll, defaults, query, limit, totals, keyCountOptions);
 
     const countWithOptions = async (): Promise<number> => {
@@ -107,7 +121,7 @@ async function executeComputeTotals<TSchema extends Document = Document>(
     const buildPayload = (total: number, approx = false): TotalsInfo => ({
         mode,
         total,
-        totalPages: total > 0 ? Math.ceil(total / limit) : 0,
+        totalPages: total > 0 ? Math.ceil(Number(total) / limit) : 0,
         ts: Date.now(),
         ...(approx ? { approx: true } as Record<string, unknown> : {}),
     });
@@ -122,14 +136,14 @@ async function executeComputeTotals<TSchema extends Document = Document>(
 
     if (mode === 'sync') {
         if (cache) {
-            const cached = await Promise.resolve(cache.get(cacheKey)) as TotalsInfo | undefined;
+            const cached = decodeTotal(await Promise.resolve(cache.get(cacheKey)) as TotalsInfo | undefined);
             if (cached !== undefined) {
                 return { ...cached, mode: 'sync' };
             }
         }
         try {
             const payload = buildPayload(await countWithOptions());
-            await Promise.resolve(cache?.set(cacheKey, payload, ttlMs));
+            await Promise.resolve(cache?.set(cacheKey, encodeTotal(payload), ttlMs));
             return { ...payload, mode: 'sync' };
         } catch {
             const payload = buildFailurePayload('count_failed');
@@ -142,7 +156,7 @@ async function executeComputeTotals<TSchema extends Document = Document>(
         if (!cache) {
             return { mode: 'async', total: null, token };
         }
-        const cached = await Promise.resolve(cache.get(cacheKey)) as TotalsInfo | undefined;
+        const cached = decodeTotal(await Promise.resolve(cache.get(cacheKey)) as TotalsInfo | undefined);
         if (cached !== undefined) {
             return { ...cached, mode: 'async', token };
         }
@@ -151,7 +165,7 @@ async function executeComputeTotals<TSchema extends Document = Document>(
                 await cache.get(cacheKey);
                 try {
                     const payload = buildPayload(await countWithOptions());
-                    await Promise.resolve(cache.set(cacheKey, payload, ttlMs));
+                    await Promise.resolve(cache.set(cacheKey, encodeTotal(payload), ttlMs));
                 } catch {
                     await Promise.resolve(cache.set(cacheKey, buildFailurePayload('count_failed'), ttlMs));
                 }
@@ -162,7 +176,7 @@ async function executeComputeTotals<TSchema extends Document = Document>(
 
     if (mode === 'approx') {
         if (cache) {
-            const cached = await Promise.resolve(cache.get(cacheKey)) as TotalsInfo | undefined;
+            const cached = decodeTotal(await Promise.resolve(cache.get(cacheKey)) as TotalsInfo | undefined);
             if (cached !== undefined) {
                 return { ...cached, mode: 'approx' };
             }
@@ -174,7 +188,7 @@ async function executeComputeTotals<TSchema extends Document = Document>(
                     maxTimeMS: totals.maxTimeMS ?? 1000,
                 } as Parameters<Collection<TSchema>['estimatedDocumentCount']>[0]);
             const payload = buildPayload(total, true);
-            await Promise.resolve(cache?.set(cacheKey, payload, ttlMs));
+            await Promise.resolve(cache?.set(cacheKey, encodeTotal(payload), ttlMs));
             return { ...payload, mode: 'approx' };
         } catch {
             const payload = buildFailurePayload('approx_failed');

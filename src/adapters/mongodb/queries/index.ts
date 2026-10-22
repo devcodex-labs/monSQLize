@@ -2,6 +2,7 @@
 
 import { readThroughCache } from '../../../core/cache-coordination';
 import { isStandardAggregateBsonMode, prepareAggregateExecution } from './aggregate-pipeline';
+import { canCacheBsonResult } from './bson-read-options';
 import { ChangeStream, Collection, Document, FindOptions, Sort } from 'mongodb';
 
 import { createError, ErrorCodes } from '../../../core/errors';
@@ -23,6 +24,7 @@ import {
     normalizeFindProjectionOptions,
     normalizeQueryFilter,
     snapshotResultOptions,
+    snapshotReadInputs,
 } from './query-helpers';
 import {
     buildPreparedAggregateCacheKey,
@@ -245,8 +247,8 @@ export class FindChain<TSchema extends Document = Document> implements FindChain
         return this;
     }
 
-    private buildCacheKey(): string {
-        return buildFindCacheKey(this.collection, this.defaults, this.normalizedQuery, this.buildExecuteOptions());
+    private prepareRead() {
+        return snapshotReadInputs(this.normalizedQuery, this.buildExecuteOptions(), this.collection.bsonOptions);
     }
 
     private wrapResult<TResult>(op: string, startTs: number, result: TResult): TResult | ResultWithMeta<TResult> {
@@ -254,19 +256,21 @@ export class FindChain<TSchema extends Document = Document> implements FindChain
     }
 
     explain(verbosity: boolean | string = 'queryPlanner'): Promise<unknown> {
-        return this.collection.find(this.normalizedQuery, buildFindDriverOptions<TSchema>(this.buildExecuteOptions())).explain(verbosity === true ? 'queryPlanner' : verbosity);
+        const { query, options } = this.prepareRead();
+        return this.collection.find(query, buildFindDriverOptions<TSchema>(options)).explain(verbosity === true ? 'queryPlanner' : verbosity);
     }
 
     stream(): NodeJS.ReadableStream {
-        return this.collection.find(this.normalizedQuery, buildFindDriverOptions<TSchema>(this.buildExecuteOptions())).stream();
+        const { query, options } = this.prepareRead();
+        return this.collection.find(query, buildFindDriverOptions<TSchema>(options)).stream();
     }
 
-    private runToArray(): Promise<TSchema[]> {
+    private runToArray(prepared: ReturnType<FindChain<TSchema>['prepareRead']>): Promise<TSchema[]> {
         if (this.executed) {
             throw createError(ErrorCodes.INVALID_OPERATION, 'Query already executed.');
         }
         this.executed = true;
-        return this.collection.find(this.normalizedQuery, buildFindDriverOptions<TSchema>(this.buildExecuteOptions())).toArray() as Promise<TSchema[]>;
+        return this.collection.find(prepared.query, buildFindDriverOptions<TSchema>(prepared.options)).toArray() as Promise<TSchema[]>;
     }
 
     toArray(): Promise<TSchema[]> {
@@ -278,28 +282,31 @@ export class FindChain<TSchema extends Document = Document> implements FindChain
 
     private async executeResult(): Promise<TSchema[] | ResultWithMeta<TSchema[]>> {
         const startTs = Date.now();
+        const prepared = this.prepareRead();
 
         // v1 compat: explain option routes to .explain() instead of toArray()
         if (this.options.explain !== undefined && this.options.explain !== false) {
             const verbosity = typeof this.options.explain === 'string' ? this.options.explain : 'queryPlanner';
-            return this.explain(verbosity).then((result) => this.wrapResult('find', startTs, result as TSchema[]) as TSchema[] | ResultWithMeta<TSchema[]>);
+            return this.collection.find(prepared.query, buildFindDriverOptions<TSchema>(prepared.options)).explain(verbosity)
+                .then((result) => this.wrapResult('find', startTs, result as TSchema[]) as TSchema[] | ResultWithMeta<TSchema[]>);
         }
 
         // v1 compat: cache option (TTL in ms) — read-through cache
         const cacheTTL = typeof this.options.cache === 'number' ? this.options.cache : 0;
-        const executeOptions = this.buildExecuteOptions();
+        const executeOptions = prepared.options;
         if (
             cacheTTL > 0
             && this.queryCache
+            && canCacheBsonResult(executeOptions)
             && !hasSessionOption(executeOptions)
             && !(await isCollectionCacheBarrierActive(this.queryCache, this.collection, this.defaults))
         ) {
-            const cacheKey = this.buildCacheKey();
-            const result = await readThroughCache(this.queryCache, cacheKey, cacheTTL, () => this.runToArray());
+            const cacheKey = buildFindCacheKey(this.collection, this.defaults, prepared.query, executeOptions);
+            const result = await readThroughCache(this.queryCache, cacheKey, cacheTTL, () => this.runToArray(prepared));
             return this.wrapResult('find', startTs, result) as TSchema[] | ResultWithMeta<TSchema[]>;
         }
 
-        return this.runToArray().then((result) => this.wrapResult('find', startTs, result) as TSchema[] | ResultWithMeta<TSchema[]>);
+        return this.runToArray(prepared).then((result) => this.wrapResult('find', startTs, result) as TSchema[] | ResultWithMeta<TSchema[]>);
     }
 
     then<TResult1 = TSchema[], TResult2 = never>(

@@ -245,6 +245,10 @@ export class ModelInstance<TDocument = Record<string, unknown>> {
             if (dbName !== this.dbName || collectionName !== this.collectionName
                 || (poolName ?? 'default') !== (this.poolName ?? 'default')) return 'broad';
             return applySoftDeleteAggregatePipeline(pipeline, options, this._softDeleteConfig);
+        }, ({ dbName, collectionName, poolName, options }) => {
+            if (dbName !== this.dbName || collectionName !== this.collectionName
+                || (poolName ?? 'default') !== (this.poolName ?? 'default')) return 'broad';
+            return applySoftDeleteFindPageOptions(options, this._softDeleteConfig) as Record<string, unknown>;
         });
     }
 

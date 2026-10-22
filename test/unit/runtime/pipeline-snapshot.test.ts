@@ -2,9 +2,12 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { runInNewContext } from 'node:vm';
 import { BSON, ObjectId, Timestamp, Binary, ReadPreference, ReadConcern } from 'mongodb';
-import { snapshotResultOptions, buildResultCacheKeyOptions, stableCacheKeyString } from '../../../src/adapters/mongodb/queries/query-helpers';
+import { snapshotResultOptions, snapshotReadInputs, snapshotFindPageOptions, buildResultCacheKeyOptions, stableCacheKeyString } from '../../../src/adapters/mongodb/queries/query-helpers';
+import { captureBsonOptions, canCacheBsonResult, hasStableBsonFields } from '../../../src/adapters/mongodb/queries/bson-read-options';
+import { computeTotals } from '../../../src/adapters/mongodb/queries/find-page-totals';
+import { findByIdsDocuments } from '../../../src/adapters/mongodb/queries/find-by-id';
 import { snapshotPipelineValue } from '../../../src/adapters/mongodb/queries/pipeline-snapshot';
-import { createAggregateChain } from '../../../src/adapters/mongodb/queries';
+import { createAggregateChain, createFindChain } from '../../../src/adapters/mongodb/queries';
 import { isStandardAggregateBsonMode, prepareAggregateExecution, prepareAggregatePipeline } from '../../../src/adapters/mongodb/queries/aggregate-pipeline';
 import { buildAggregateCacheKey, buildPreparedAggregateCacheKey } from '../../../src/adapters/mongodb/queries/query-cache-keys';
 
@@ -13,9 +16,180 @@ function wire(pipeline: unknown): unknown {
 }
 
 describe('pipeline capture at the driver document boundary', () => {
+    it('preserves Code scope undefined and separates it from null in document keys', () => {
+        const a = new BSON.Code('return x;', { x: undefined, nested: { y: undefined } });
+        const b = new BSON.Code('return x;', { x: null, nested: { y: undefined } });
+        assert.notEqual(stableCacheKeyString(a), stableCacheKeyString(b));
+        const captured = snapshotPipelineValue({ value: a });
+        for (const ignoreUndefined of [false, true]) {
+            assert.deepEqual(BSON.serialize(captured, { ignoreUndefined }), BSON.serialize({ value: a }, { ignoreUndefined }));
+        }
+        a.scope!.nested.y = 1;
+        assert.equal((captured.value.scope as any).nested.y, undefined);
+    });
+
+    it('matches Code document conversion without redispatching its returned type', () => {
+        for (const result of [new Map([['map', 1]]), Object.assign([1], { extra: 2 }), new Date(1), 42]) {
+            const make = () => new BSON.Code('return x;', { toBSON() { return result as any; } });
+            if (result === 42) {
+                assert.throws(() => BSON.serialize({ value: make() }), BSON.BSONError);
+                assert.throws(() => snapshotPipelineValue({ value: make() }), BSON.BSONError);
+            } else assert.deepEqual(BSON.serialize(snapshotPipelineValue({ value: make() })), BSON.serialize({ value: make() }));
+        }
+        for (const scope of [Object.assign(new Map([['x', 1]]), { toBSON() { throw new Error('Unused Map converter'); } }),
+            Object.assign([1], { toBSON() { throw new Error('Unused array converter'); } })]) {
+            const code = new BSON.Code('return x;', scope);
+            assert.deepEqual(BSON.serialize(snapshotPipelineValue({ value: code })), BSON.serialize({ value: code }));
+        }
+    });
+
+    it('retains native document-converter errors and dispatch after a value conversion', () => {
+        for (const result of [42, new Map([['x', 1]]), Object.assign([1], { extra: 2 }), new Date(1)]) {
+            const make = () => ({ value: { toBSON() { return { toBSON() { return result; } }; } } });
+            if (result === 42) {
+                assert.throws(() => BSON.serialize(make()), BSON.BSONError);
+                assert.throws(() => snapshotPipelineValue(make()), BSON.BSONError);
+            } else assert.deepEqual(BSON.serialize(snapshotPipelineValue(make())), BSON.serialize(make()));
+        }
+    });
+
+    it('preserves repeated converter lookup and DBRef merged-document serialization', () => {
+        const make = () => { let reads = 0; return { value: { get toBSON() { return ++reads === 1 ? () => 99 : () => 42; } } }; };
+        assert.deepEqual(BSON.serialize(snapshotPipelineValue(make())), BSON.serialize(make()));
+        for (const serializeFunctions of [false, true]) for (const ignoreUndefined of [false, true]) {
+            const makeRef = () => {
+                const fn = function () {}; fn.toString = () => 'function stable(){return 1;}';
+                return { value: new BSON.DBRef('items', new ObjectId('000000000000000000000001'), 'db', {
+                    missing: undefined, fn, code: new BSON.Code('return x;', { x: undefined }),
+                    toBSON() { return { receiver: this.$ref, missing: this.missing, fn: this.fn, code: this.code }; },
+                }) };
+            };
+            assert.deepEqual(BSON.serialize(snapshotPipelineValue(makeRef(), undefined, serializeFunctions), { serializeFunctions, ignoreUndefined }),
+                BSON.serialize(makeRef(), { serializeFunctions, ignoreUndefined }));
+        }
+        for (const marker of ['Code', 42, false, {}, null, undefined]) {
+          const doc = { _bsontype: marker, code: 'data' };
+          for (const value of [new BSON.DBRef('items', new ObjectId(), undefined, { $ref: undefined, ...doc }),
+            new Map(Object.entries(doc)), new BSON.Code('x', doc),
+            new BSON.DBRef('items', new ObjectId(), undefined, { $ref: 'a.b' })]) {
+            const input = { value }, captured = snapshotPipelineValue(input);
+            assert.deepEqual(BSON.serialize(captured), BSON.serialize(input));
+            assert.deepEqual(BSON.serialize(snapshotPipelineValue(captured)), BSON.serialize(input));
+            assert.equal(stableCacheKeyString(captured, 'document'), stableCacheKeyString(snapshotPipelineValue(captured), 'document'));
+          }
+        }
+    });
+
+    it('materializes each function occurrence with the native byte and error contract', () => {
+        for (const factory of [() => 'function stable(){return 1;}', () => new String('x'),
+            () => ({ length: 1, charCodeAt: () => 65, toString: () => 'B' }), () => 7,
+            () => { throw new Error('source failure'); }]) {
+            const make = () => { const fn = function () {}; fn.toString = factory as any; return { value: fn }; };
+            let native: Uint8Array;
+            try { native = BSON.serialize(make(), { serializeFunctions: true }); }
+            catch (error) {
+                assert.throws(() => snapshotPipelineValue(make(), undefined, true), (actual: any) => actual.name === (error as Error).name);
+                continue;
+            }
+            assert.deepEqual(BSON.serialize(snapshotPipelineValue(make(), undefined, true), { serializeFunctions: true }), native);
+        }
+        let calls = 0;
+        const fn = function () {}; fn.toString = () => `function sequence(){return ${++calls};}`;
+        const shared = { value: fn }, captured = snapshotPipelineValue({ a: shared, b: shared }, undefined, true);
+        assert.equal(calls, 2);
+        assert.notEqual((captured.a.value as any).code, (captured.b.value as any).code);
+        const cycle: any = {}; cycle.self = cycle;
+        assert.throws(() => snapshotPipelineValue(cycle), BSON.BSONError);
+    });
+
+    it('interleaves getters with function materialization and ignores function BSON markers', () => {
+        const make = () => {
+            let state = 0;
+            const fn = function () {}; fn.toString = () => String(state);
+            Object.defineProperty(fn, '_bsontype', { get() { throw new Error('Unused function marker'); } });
+            return { get a() { state = 1; return fn; }, get b() { state = 2; return fn; } };
+        };
+        for (const serializeFunctions of [false, true]) assert.deepEqual(
+            BSON.serialize(snapshotPipelineValue(make(), undefined, serializeFunctions), { serializeFunctions }),
+            BSON.serialize(make(), { serializeFunctions }),
+        );
+        const self = { toBSON() { return this; } };
+        assert.deepEqual(BSON.serialize(snapshotPipelineValue({ self }, undefined, true), { serializeFunctions: true }),
+            BSON.serialize({ self }, { serializeFunctions: true }));
+        const shrinking = () => { const fn = function () {}; const array = [fn, 2]; fn.toString = () => { array.length = 1; return 'x'; }; return { array }; };
+        assert.deepEqual(BSON.serialize(snapshotPipelineValue(shrinking(), undefined, true), { serializeFunctions: true }),
+            BSON.serialize(shrinking(), { serializeFunctions: true }));
+    });
+
+    it('captures filter functions before option documents and resolves page project aliases', () => {
+        let calls = 0;
+        const fn = function () {}; fn.toString = () => String(++calls);
+        const captured = snapshotReadInputs({ payload: fn }, { projection: { v: { $literal: fn } }, serializeFunctions: true });
+        assert.equal((captured.query.payload as any).code, '1');
+        assert.equal((captured.options.projection as any).v.$literal.code, '2');
+        const page: any = snapshotFindPageOptions({ query: { payload: fn }, options: {
+            serializeFunctions: true, project: { v: { $literal: fn } },
+        } });
+        assert.equal(page.options.project, undefined);
+        assert.equal(page.query.payload.code, '3');
+        assert.equal(page.options.projection.v.$literal.code, '4');
+        assert.equal(calls, 4);
+    });
+
+    it('captures only BSON count overrides inside pagination controls', () => {
+        const unused = () => { throw new Error('Control container is not a BSON document'); };
+        const sort = Object.defineProperty({ x: 1 }, 'toBSON', { value: unused });
+        const totals = Object.defineProperty({ mode: 'sync', hint: { toBSON: () => ({ x: 1 }) } }, 'toBSON', { value: unused });
+        const callback = () => Promise.resolve(null);
+        const page: any = snapshotFindPageOptions({ sort, totals, jump: { step: 10, maxHops: 20, getBookmark: callback } });
+        assert.deepEqual(page.sort, { x: 1, _id: 1 }); assert.deepEqual(page.totals.hint, { x: 1 });
+        assert.equal(page.totals.mode, 'sync'); assert.equal(page.jump.getBookmark, callback);
+        assert.equal(Array.isArray(snapshotFindPageOptions({ cursorTypes: Object.assign([], { n: 'number' }) }).cursorTypes), true);
+    });
+
+    it('captures data-only raw fields and leaves dynamic accessors lazy', () => {
+        const fields = Object.create({ payload: false });
+        const captured = captureBsonOptions({ fieldsAsRaw: fields }); fields.payload = true;
+        assert.equal((captured.fieldsAsRaw as any).payload, false);
+        assert.equal(canCacheBsonResult(captured), true);
+        let calls = 0;
+        const dynamic = Object.create(null, { neverReturned: { enumerable: true, get() { calls++; throw new Error('Unused getter'); } } });
+        const options = captureBsonOptions({ fieldsAsRaw: dynamic });
+        assert.equal(options.fieldsAsRaw, dynamic); assert.equal(calls, 0);
+        assert.equal(canCacheBsonResult(options), false); assert.equal(hasStableBsonFields(options), false); assert.equal(calls, 0);
+        assert.equal(hasStableBsonFields(captureBsonOptions()), true);
+    });
+
+    it('rejects dynamic raw maps before rewriting a computed ordered identity', async () => {
+        let calls = 0;
+        const collection: any = { bsonOptions: {}, find() { throw new Error('Must reject before the driver'); } };
+        const fields = [new Proxy({}, { getPrototypeOf() { calls++; throw new Error('Unused trap'); } }),
+            Object.create(null, { unused: { get() { calls++; throw new Error('Unused getter'); } } })];
+        for (const fieldsAsRaw of fields) await assert.rejects(() => findByIdsDocuments(collection, [new ObjectId()], {
+            preserveOrder: true, projection: { _id: { $literal: 'x' } }, fieldsAsRaw,
+        } as any), { code: 'INVALID_OPERATION' });
+        assert.equal(calls, 0);
+    });
+
+    it('preserves native totals through JSON-backed completion storage', async () => {
+        for (const total of [BSON.Long.fromNumber(2), BSON.Long.fromString('9007199254740993'), new BSON.Double(2), new BSON.Int32(2), 2n]) {
+            const values = new Map<string, unknown>();
+            const cache: any = { get: (key: string) => values.get(key), set: (key: string, value: unknown) => values.set(key, JSON.parse(JSON.stringify(value))) };
+            const coll: any = { namespace: 'totals.types', collectionName: 'types', countDocuments: async () => total };
+            const first = await computeTotals(coll, { x: 1 }, 1, { mode: 'sync' }, {}, cache);
+            const second = await computeTotals(coll, { x: 1 }, 1, { mode: 'sync' }, {}, cache);
+            assert.equal(typeof second.total, typeof first.total);
+            if (typeof total === 'bigint') assert.equal(second.total as any, total);
+            else {
+                assert.equal((second.total as any)._bsontype, total._bsontype);
+                assert.deepEqual(BSON.EJSON.serialize(second.total, { relaxed: false }), BSON.EJSON.serialize(total, { relaxed: false }));
+            }
+        }
+    });
+
     it('preserves BSON input identity across stable key generations', () => {
         const key = (value: unknown) => stableCacheKeyString(value, 'document');
-        assert.ok(key({}).startsWith('v3:'));
+        assert.ok(key({}).startsWith('v4:'));
         assert.notEqual(key({ x: undefined }), key({}));
         assert.notEqual(key(-0), key(0));
         assert.notEqual(key({ a: 1, b: 2 }), key({ b: 2, a: 1 }));
@@ -136,6 +310,28 @@ describe('pipeline capture at the driver document boundary', () => {
         assert.deepEqual(same, [{ value: 1 }]);
         assert.equal(calls.length, 1);
     });
+    it('freezes ordinary filter and projection functions across a cache wait', async () => {
+        let entered!: () => void, release!: () => void;
+        const waiting = new Promise<void>(resolve => { entered = resolve; });
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        let source = 'first', count = 0, paused = false;
+        const fn = function () {}; fn.toString = () => { count++; return source; };
+        const values = new Map<string, unknown>(), calls: any[] = [];
+        const cache: any = { get: async (key: string) => { if (!paused && key.startsWith('find:')) { paused = true; entered(); await gate; } return values.get(key); },
+            set: (key: string, value: unknown) => values.set(key, value) };
+        const collection: any = { namespace: 'db.snapshot', bsonOptions: {}, find(query: any, options: any) {
+            calls.push({ query, options }); return { toArray: async () => [{ source: query.payload.code, projected: options.projection.v.$literal.code }] };
+        } };
+        const options = { serializeFunctions: true, projection: { v: { $literal: fn } }, cache: 10000 };
+        const result = Promise.resolve(createFindChain(collection, { payload: fn }, options, {}, cache));
+        await waiting; source = 'changed'; options.projection.v.$literal = (() => {}) as any; release();
+        assert.deepEqual(await result, [{ source: 'first', projected: 'first' }]); assert.equal(count, 2);
+        source = 'first';
+        assert.deepEqual(await createFindChain(collection, { payload: fn }, { ...options, projection: { v: { $literal: fn } } }, {}, cache),
+            [{ source: 'first', projected: 'first' }]);
+        assert.equal(calls.length, 1, 'the captured tuple also identifies the cache hit');
+    });
+
     it('uses identical raw descriptor and prepared read keys without repeating serialization', () => {
         const { expr } = require('../../../dist/cjs/index.cjs');
         const collection = { namespace: 'db.items', collectionName: 'items' } as never;

@@ -62,8 +62,12 @@ const ALLOWED_VIOLATION_ACTIONS = new Set<WritePathPolicyViolationAction>(['thro
 type AggregateInvalidationNormalizer = (input: {
     dbName: string; collectionName: string; poolName?: string; pipeline: unknown[] | undefined; options?: Record<string, unknown>;
 }) => unknown[] | 'broad';
+type FindPageInvalidationNormalizer = (input: {
+    dbName: string; collectionName: string; poolName?: string; options: Record<string, unknown>;
+}) => Record<string, unknown> | 'broad';
 const modelWriteSourceStorage = new AsyncLocalStorage<{
     source: WritePathSource; normalizeAggregateInvalidation?: AggregateInvalidationNormalizer;
+    normalizeFindPageInvalidation?: FindPageInvalidationNormalizer;
 }>();
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -391,8 +395,9 @@ export function assertClientLevelWritePathAllowed(config: {
     throw createError(ErrorCodes.INVALID_OPERATION, message, [details]);
 }
 
-export function runWithModelWriteSource<T>(fn: () => T, normalizeAggregateInvalidation?: AggregateInvalidationNormalizer): T {
-    return modelWriteSourceStorage.run({ source: 'model', normalizeAggregateInvalidation }, fn);
+export function runWithModelWriteSource<T>(fn: () => T, normalizeAggregateInvalidation?: AggregateInvalidationNormalizer,
+    normalizeFindPageInvalidation?: FindPageInvalidationNormalizer): T {
+    return modelWriteSourceStorage.run({ source: 'model', normalizeAggregateInvalidation, normalizeFindPageInvalidation }, fn);
 }
 
 export function getCurrentWritePathSource(): WritePathSource | undefined {
@@ -401,4 +406,8 @@ export function getCurrentWritePathSource(): WritePathSource | undefined {
 
 export function getModelAggregateInvalidationNormalizer(): AggregateInvalidationNormalizer | undefined {
     return modelWriteSourceStorage.getStore()?.normalizeAggregateInvalidation;
+}
+
+export function getModelFindPageInvalidationNormalizer(): FindPageInvalidationNormalizer | undefined {
+    return modelWriteSourceStorage.getStore()?.normalizeFindPageInvalidation;
 }

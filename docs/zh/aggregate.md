@@ -4,6 +4,8 @@
 
 原生字符串 `options.out` 在管道准备后追加为字面 `$out` 阶段，接受相同写目标检查并跳过结果缓存；`findPage` 拒绝此写入选项。`let`、`hint`、`collation` 等影响结果的选项会被捕获；每次 terminal 开始时固定同一组选项用于缓存 key 和驱动执行。session 与 abort signal 保留资源身份。后续链式修改只影响之后的 terminal，不改变已经开始的执行。原生 BSON 解码选项按集合默认值一起捕获；非标准解码模式（包括生效的 `fieldsAsRaw`）旁路结果缓存，保留原生返回形状。动态 `fieldsAsRaw` Proxy 保留原生查表行为，并始终旁路此缓存。
 
+`Code.scope` 按原生文档入口捕获，undefined 成员保留到有效 `ignoreUndefined` 生效。开启 `serializeFunctions: true` 时，函数按每个 BSON 出现位置物化，保留原生源码和错误语义；重复引用仍是不同出现位置。动态 `fieldsAsRaw` 自定义访问器与 Proxy 映射一样保留惰性查表，并旁路结果缓存。
+
 写路径检查和目标缓存失效使用支持表达式编译后的同一份管道，其中包括 `$merge.into` 中的 DSL 值；失效仍遵从既有 `autoInvalidate` / `cache.invalidate` 控制。Model 聚合保留 Model 来源标记；检查拒绝时不会访问驱动或缓存。
 
 开启 `meta: true` 时，等待链和调用 `toArray()` 都返回 `ResultWithMeta` 信封，结果数组位于 `data` 字段。

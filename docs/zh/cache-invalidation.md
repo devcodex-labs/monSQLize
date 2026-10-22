@@ -65,6 +65,8 @@ aggregate descriptor 应传入与缓存读取相同的原始管道及影响结�
 
 本次 key 代次更新会让 aggregate 缓存冷启动，避免复用此前混淆 literal 字符串和 ObjectId 的条目；按操作失效仍覆盖新旧各代。混合版本部署期间优先按操作或命名空间失效，因为旧进程的精确 descriptor 无法重建新 key。
 
+软删除 Model 的显式 `findPage` descriptor 同时失效原始 Collection 分页及 Model 可见性变体，支持自定义标记和 `withDeleted`/`onlyDeleted`。删除、恢复、更新、延迟聚合写及提交事务均适用。目标 Model 范围未知，或根查询转换无法安全重建可见性时，回退为目标命名空间的 `findPage` 操作族失效，包含 totals 和书签。事务在登记时固定 descriptor key，回滚则丢弃。精确分页 descriptor 只覆盖分页结果，需要一并清理 totals 或书签时应使用更广泛失效；默认自动失效仍关闭。
+
 | Descriptor 形态 | 作用 |
 | --- | --- |
 | `{ operation, query, options }` 或 `{ op, query, options }` | 重建 `find`、`findOne` 或 `count` 的精确读缓存 key。 |

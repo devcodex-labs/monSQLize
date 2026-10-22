@@ -65,6 +65,8 @@ For writes through a soft-delete Model, explicit aggregate descriptors also reso
 
 Aggregate caches start cold after this key-generation update, so entries that previously conflated literal strings and ObjectIds are not reused. Operation-wide invalidation still covers all generations. During a mixed-version rollout, prefer operation-wide or namespace-wide invalidation because exact descriptors from older processes cannot rebuild the new keys.
 
+Explicit `findPage` descriptors on a soft-delete Model invalidate both the raw Collection page and its Model visibility variant, including custom markers and `withDeleted`/`onlyDeleted`. Deletion, restoration, updates, delayed aggregate writes and committed transactions use this rule. Unknown target Model scope, or root query conversions whose visibility cannot be safely reconstructed, falls back to the target namespace's `findPage` family, including totals and bookmarks. Descriptor keys are fixed at transaction registration and discarded on abort. An exact page descriptor covers page results only; use broader invalidation when totals or bookmarks must also be cleared. Default automatic invalidation remains off.
+
 | Descriptor shape | Effect |
 | --- | --- |
 | `{ operation, query, options }` or `{ op, query, options }` | Rebuilds the exact read cache key for `find`, `findOne`, or `count`. |

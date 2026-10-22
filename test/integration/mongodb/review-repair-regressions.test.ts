@@ -121,17 +121,21 @@ describe('review repair query contracts against native MongoDB', () => {
         }
     });
 
-    it('keeps v2 entries cold and precisely invalidates only the requested v3 BSON query', async () => {
+    it('keeps legacy entries cold and precisely invalidates only the requested v4 BSON query', async () => {
         const query = { payload: { x: undefined } }, other = { payload: {} }, options = { sort: { score: 1 }, limit: 10 };
         await raw.updateOne({ _id: ids[0] }, { $set: { payload: { x: null } } });
         await raw.updateOne({ _id: ids[1] }, { $set: { payload: {} } });
         const key = buildFindCacheKey(raw, collection.management.defaults, query, options);
         const otherKey = buildFindCacheKey(raw, collection.management.defaults, other, options);
         // Frozen baseline-v2 fixture: undefined was omitted and input flags were absent.
-        const legacy = key.slice(0, key.indexOf(':v3:'))
+        const legacy = key.slice(0, key.indexOf(':v4:'))
             + ':v2:["object",[["payload",["object",[]]]]]'
             + ':v2:["object",[["limit",["number","10"]],["sort",["object",[["score",["number","1"]]]]]]]';
         await runtime.getCache().set(legacy, [{ name: 'poison' }], 10000);
+        const legacyV3 = key.slice(0, key.indexOf(':v4:'))
+            + ':v3:["object",[["payload",["object",[["x",["undefined"]]]]]]]'
+            + ':v3:["object",[["ignoreUndefined",["boolean",false]],["limit",["number","10"]],["sort",["object",[["score",["number","1"]]]]]]]';
+        await runtime.getCache().set(legacyV3, [{ name: 'v3-poison' }], 10000);
         assert.equal((await collection.find(query, { ...options, cache: 10000 }))[0].name, 'a');
         await collection.find(other, { ...options, cache: 10000 });
         await collection.updateOne({ _id: ids[0] }, { $set: { name: 'new' } }, {
@@ -316,6 +320,27 @@ describe('review repair query contracts against native MongoDB', () => {
         assert.equal(await runtime.getCache().get(key), undefined);
     });
 
+    it('captures aggregate descriptor inputs in the same pipeline-before-options order as reads', async () => {
+        const make = () => {
+            let calls = 0;
+            const value = () => ({ toBSON: () => ({ sequence: ++calls }) });
+            return { pipeline: [{ $match: { _id: ids[0] } }, { $project: { _id: 0, name: 1, literal: { $literal: value() } } }],
+                options: { let: { unused: value() }, cache: 10000 }, calls: () => calls };
+        };
+        const first = make();
+        assert.equal((await collection.aggregate(first.pipeline, first.options))[0].literal.sequence, 1);
+        assert.equal(first.calls(), 2);
+        const warmed = commands.filter(event => event.commandName === 'aggregate').length;
+        const hit = make(); await collection.aggregate(hit.pipeline, hit.options);
+        assert.equal(commands.filter(event => event.commandName === 'aggregate').length, warmed);
+        const descriptor = make();
+        await collection.updateOne({ _id: ids[0] }, { $set: { name: 'fresh-order' } }, {
+            cache: { invalidate: [{ operation: 'aggregate', pipeline: descriptor.pipeline, options: descriptor.options }] },
+        });
+        assert.equal(descriptor.calls(), 2);
+        const after = make(); assert.equal((await collection.aggregate(after.pipeline, after.options))[0].name, 'fresh-order');
+    });
+
     it('keeps successful aggregate writes and valid descriptors when another descriptor cannot compile', async () => {
         const target = runtime.collection('descriptor_output');
         await nativeDb.collection('descriptor_output').deleteMany({}); await runtime.getCache().clear();
@@ -420,7 +445,7 @@ describe('review repair query contracts against native MongoDB', () => {
             { returnKey: true, hint: '_id_', sort: { score: 1 }, projection: { _id: { $meta: 'sortKey' } } },
             { raw: true }, { fieldsAsRaw: { _id: true }, projection: { _id: { $literal: { shown: true } } } },
             { fieldsAsRaw: { value: true }, projection: { _id: { $literal: [{ shown: true }] } } },
-            { fieldsAsRaw: Object.create({ other: true }), projection: { _id: { $literal: 'display' } } },
+            { fieldsAsRaw: Object.create({ _id: true }), projection: { _id: { $literal: 'display' } } },
         ]) {
             await assert.rejects(() => findByIdsDocuments(fakeCollection, ids, { ...options, preserveOrder: true, cache: 10000 } as any, {}, cache), { code: 'INVALID_OPERATION' });
         }
@@ -446,6 +471,12 @@ describe('review repair query contracts against native MongoDB', () => {
         }
         const rawRows = await findByIdsDocuments(nativeDb.collection('items', { raw: true }), ids);
         assert.ok(rawRows.every(Buffer.isBuffer));
+        await raw.updateOne({ _id: ids[0] }, { $set: { constructor: [{ x: 1 }] } });
+        for (const fieldsAsRaw of [Object.create(null), Object.create({ unrelated: true })]) {
+            const options = { projection: { name: 1, constructor: 1, _id: { $literal: 'display' } }, fieldsAsRaw };
+            assert.deepEqual(await findByIdsDocuments(raw, [ids[0]], { ...options, preserveOrder: true } as any),
+                await raw.find({ _id: ids[0] }, options as any).toArray());
+        }
     });
 
     it('isolates cached native BSON result modes from ordered documents', async () => {
@@ -460,7 +491,7 @@ describe('review repair query contracts against native MongoDB', () => {
             if (warmRawFirst) assert.ok((await readRaw()).every(Buffer.isBuffer));
             assert.deepEqual((await readOrdered()).map((row: any) => row.name), ['b', 'a', 'deleted']);
             assert.ok((await readRaw()).every(Buffer.isBuffer));
-            assert.equal(entries.size, 2);
+            assert.equal(entries.size, 1, 'raw results bypass JSON-backed result caching');
         }
         await raw.updateOne({ _id: ids[0] }, { $set: { payload: [{ shown: true }] } });
         entries.clear();
@@ -469,7 +500,7 @@ describe('review repair query contracts against native MongoDB', () => {
         const rawFields = Object.defineProperty({}, 'payload', { value: true });
         const encoded = await findByIdsDocuments(raw, [ids[0]], { projection, fieldsAsRaw: rawFields, cache: 10000 } as any, {}, cache);
         assert.deepEqual(decoded[0].payload, [{ shown: true }]);
-        assert.ok(Buffer.isBuffer(encoded[0].payload[0])); assert.equal(entries.size, 2);
+        assert.ok(Buffer.isBuffer(encoded[0].payload[0])); assert.equal(entries.size, 1, 'raw array decoding bypasses result caching');
     });
 
     it('shares captured projection keys with exact write invalidation', async () => {
@@ -533,5 +564,121 @@ describe('review repair query contracts against native MongoDB', () => {
         assert.deepEqual(root.map((doc: any) => doc.name), ['b', 'deleted']);
         assert.deepEqual(nested.map((doc: any) => doc.name), ['b', 'deleted']);
         assert.throws(() => collection.aggregate([{ $match: { score: MonSQLize.expr('score > 1') } }]), { code: 'INVALID_EXPRESSION' });
+    });
+
+    it('invalidates the exact soft-delete Model page with the same visibility as its read', async () => {
+        for (const extra of [{}, { withDeleted: true }, { onlyDeleted: true }, { pipeline: [{ $match: {} }] }]) {
+            await runtime.getCache().clear();
+            const page = { query: {}, sort: { score: 1 }, limit: 10, totals: false, ...extra };
+            const first = await model.findPage({ ...page, cache: 10000 });
+            const reads = () => commands.filter(event => ['find', 'aggregate'].includes(event.commandName)).length;
+            const warmed = reads(); await model.findPage({ ...page, cache: 10000 }); assert.equal(reads(), warmed, 'a real page cache hit');
+            const unrelated = { query: { name: 'unrelated' }, sort: { score: 1 }, limit: 10, totals: false, cache: 10000 };
+            await model.findPage(unrelated);
+            const id = (extra as any).onlyDeleted ? ids[2] : ids[0];
+            await model.updateOne({ _id: id }, { $inc: { score: 10 } }, { ...extra,
+                cache: { invalidate: [{ operation: 'findPage', options: page }] } });
+            const hot = await model.findPage({ ...page, cache: 10000 });
+            const cold = await model.findPage({ ...page, cache: 0 });
+            assert.notDeepEqual(plain(first.items), plain(cold.items));
+            assert.deepEqual(plain(hot.items), plain(cold.items));
+            const afterReads = reads(); await model.findPage(unrelated); assert.equal(reads(), afterReads, 'exact invalidation retains an unrelated page');
+        }
+    });
+
+    it('broadly invalidates Model pages whose root conversion precedes visibility capture', async () => {
+        await raw.updateOne({ _id: ids[0] }, { $set: { tag: 'A' } });
+        class Query { tag = 'A'; toBSON() { return { tag: 'B' }; } }
+        for (const query of [new Query(), new Map([['tag', 'A']]),
+            { toBSON(this: any) { return { name: this.deletedAt === null ? 'a' : 'b' }; } }]) {
+            await runtime.getCache().clear();
+            const page = { query, sort: { score: 1 }, limit: 10, totals: false };
+            const first = await model.findPage({ ...page, cache: 10000 });
+            assert.ok(first.items.some((item: any) => item._id.equals(ids[0])));
+            await model.updateOne({ _id: ids[0] }, { $inc: { score: 1 } }, {
+                cache: { invalidate: [{ operation: 'findPage', options: page }] } });
+            assert.deepEqual(plain((await model.findPage({ ...page, cache: 10000 })).items),
+                plain((await model.findPage({ ...page, cache: 0 })).items));
+        }
+    });
+
+    it('preserves Model page invalidation context through aggregate write completion', async () => {
+        const page = { query: {}, sort: { score: 1 }, limit: 10, totals: false };
+        await model.findPage({ ...page, cache: 10000 });
+        await model.aggregate([{ $match: { _id: ids[0] } }, { $set: { score: 77 } },
+            { $merge: { into: 'items', whenMatched: 'merge', whenNotMatched: 'discard' } }], {
+            cache: { invalidate: [{ operation: 'findPage', options: page }] },
+        });
+        assert.equal((await model.findPage({ ...page, cache: 10000 })).items.find((item: any) => item._id.equals(ids[0])).score, 77);
+        assert.deepEqual(plain((await model.findPage({ ...page, cache: 10000 })).items),
+            plain((await model.findPage({ ...page, cache: 0 })).items));
+        MonSQLize.Model.define('page_target', { schema: {}, options: { softDelete: true, autoIndex: false } });
+        const target = runtime.collection('page_target'), targetModel = runtime.model('page_target');
+        await target.raw().deleteMany({}); await target.raw().insertOne({ _id: ids[0], score: 1, deletedAt: null });
+        await targetModel.findPage({ ...page, cache: 10000 });
+        await model.aggregate([{ $match: { _id: ids[0] } }, { $set: { score: 88 } },
+            { $merge: { into: 'page_target', whenMatched: 'merge', whenNotMatched: 'discard' } }], {
+            cache: { invalidate: [{ operation: 'findPage', options: page }] },
+        });
+        assert.equal((await targetModel.findPage({ ...page, cache: 10000 })).items[0].score, 88);
+    });
+
+    it('preserves Code scopes in cold aggregate execution and separates undefined/null hot queries', async () => {
+        const col = runtime.collection('code_scope_repair'), native = col.raw(); await native.deleteMany({});
+        const a = new BSON.Code('return x;', { x: undefined }), b = new BSON.Code('return x;', { x: null });
+        await native.insertMany([{ score: 1, value: a }, { score: 2, value: b }], { ignoreUndefined: true });
+        for (const ignoreUndefined of [false, true]) {
+            const pipeline = [{ $limit: 1 }, { $project: { _id: 0, value: { $literal: a } } }];
+            assert.deepEqual(await col.aggregate(pipeline, { ignoreUndefined, cache: 0 }), await native.aggregate(pipeline, { ignoreUndefined }).toArray());
+        }
+        await col.find({ value: a }, { ignoreUndefined: true, cache: 10000 });
+        const hot = await col.find({ value: b }, { ignoreUndefined: true, cache: 10000 });
+        assert.deepEqual(hot, await native.find({ value: b }, { ignoreUndefined: true }).toArray());
+        const projection = { _id: 0, value: { $literal: a } };
+        assert.deepEqual(await col.findOneById((await native.findOne({ score: 1 }))._id, { projection, ignoreUndefined: false, cache: 10000 }),
+            await native.findOne({ score: 1 }, { projection, ignoreUndefined: false }));
+    });
+
+    it('keys function source and forwards serializeFunctions to all count and read consumers', async () => {
+        const col = runtime.collection('function_repair'), native = col.raw(); await native.deleteMany({});
+        const a = function first() { return 1; }, b = function second() { return 2; };
+        await native.insertMany([{ name: 'a1', payload: a }, { name: 'a2', payload: a }, { name: 'b', payload: b }], { serializeFunctions: true });
+        const commandCount = () => commands.filter(event => ['find', 'aggregate', 'distinct'].includes(event.commandName)).length;
+        for (const operation of ['find', 'findOne', 'count', 'distinct', 'findPage', 'findAndCount']) {
+            const call = async (payload: Function, serializeFunctions = true) => {
+                const query = { payload }, options = { serializeFunctions, cache: 10000, sort: { name: 1 } };
+                if (operation === 'find') return (await col.find(query, options)).map((row: any) => row.name);
+                if (operation === 'findOne') return (await col.findOne(query, options))?.name;
+                if (operation === 'count') return col.count(query, options);
+                if (operation === 'distinct') return col.distinct('name', query, options);
+                if (operation === 'findAndCount') { const result = await col.findAndCount(query, options); return { names: result.data.map((row: any) => row.name), total: result.total }; }
+                const result = await col.findPage({ query, sort: { name: 1 }, limit: 10, options: { serializeFunctions },
+                    totals: { mode: 'sync', ttlMs: 10000 }, cache: 10000 });
+                return { names: result.items.map((row: any) => row.name), total: result.totals.total };
+            };
+            await call(a);
+            const actual = await call(b), count = commandCount();
+            assert.deepEqual(await call(b), actual);
+            if (operation !== 'findAndCount') assert.equal(commandCount(), count, `${operation} must actually hit the cache`);
+            if (operation === 'findOne') assert.equal(actual, 'b');
+            else if (operation === 'count') { assert.equal(actual, 1); assert.equal(await call(b, false), 3); assert.equal(await col.count({ payload: b }, { serializeFunctions: true, cache: 0 }), 1); }
+            else if (operation === 'findPage' || operation === 'findAndCount') assert.deepEqual(actual, { names: ['b'], total: 1 });
+            else assert.deepEqual(actual, ['b']);
+        }
+    });
+
+    it('bypasses result caches that cannot preserve nonstandard native BSON types', async () => {
+        const col = runtime.collection('decoding_repair'), native = col.raw(); await native.deleteMany({});
+        await native.insertOne({ payload: new BSON.Binary(Uint8Array.of(1, 2)), long: BSON.Long.fromNumber(7), array: [{ n: 1 }], regex: /x/i });
+        const shape = (value: any): any => Buffer.isBuffer(value) ? ['buffer', value.toString('hex')]
+            : typeof value === 'bigint' ? ['bigint', String(value)] : Array.isArray(value) ? value.map(shape)
+                : value?._bsontype ? [value._bsontype, BSON.EJSON.serialize(value, { relaxed: false })]
+                    : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([key, item]) => [key, shape(item)])) : value;
+        await col.findOne({}, { cache: 10000 });
+        for (const options of [{ promoteBuffers: true }, { promoteLongs: false }, { promoteValues: false },
+            { useBigInt64: true }, { bsonRegExp: true }, { fieldsAsRaw: { array: true } }, { raw: true }]) {
+            assert.deepEqual(shape(await col.findOne({}, { ...options, cache: 10000 })), shape(await native.findOne({}, options)));
+            assert.deepEqual(shape((await col.find({}, { ...options, cache: 10000 }))[0]), shape((await native.find({}, options).toArray())[0]));
+        }
     });
 });

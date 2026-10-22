@@ -6,7 +6,7 @@
 
 `findByIds(ids, { preserveOrder: true })` 对 ObjectId 去重，以单次原生查询取得记录，再按输入顺序返回。MongoDB 先应用全局 `sort`/`skip`/`limit` 选择子集。普通 `_id` 排除及支持的计算 `_id` 表达式（含 `$$REMOVE`）仍保留该顺序；内部身份路径旁路结果缓存。Model 查询保留软删除可见性和最终 hook 选项。
 
-保留输入顺序时，find 专用 `_id` 投影（`$slice`、`$elemMatch`、`$meta`）、嵌套或点路径 `_id` 改写、显式 `_id: undefined`、`returnKey: true` 和有效 `raw: true` 会报 `INVALID_OPERATION`。计算 `_id` 还拒绝真值的 `fieldsAsRaw._id`/`value` 及非普通映射。BSON 配置继承 Collection 设置，调用级 `raw: false` 和 `fieldsAsRaw: {}` 可覆盖。其他字段仍保留支持的原生特殊投影；需要原生投影路径时使用 `preserveOrder: false`。原生结果缓存区分有效 BSON 解码模式，精确失效使用相同缓存键。
+保留输入顺序时，find 专用 `_id` 投影（`$slice`、`$elemMatch`、`$meta`）、嵌套或点路径 `_id` 改写、显式 `_id: undefined`、`returnKey: true` 和有效 `raw: true` 会报 `INVALID_OPERATION`。计算 `_id` 还在查表前拒绝真值的 `fieldsAsRaw._id`/`value` 及动态 Proxy/访问器映射；纯数据映射连同继承属性一起捕获。BSON 配置继承 Collection 设置，调用级 `raw: false` 和 `fieldsAsRaw: {}` 可覆盖。其他字段仍保留支持的原生特殊投影；需要原生投影和惰性解码路径时使用 `preserveOrder: false`。基于 JSON 的结果缓存旁路非标准 BSON 结果模式，精确失效使用相同的有效键维度。
 
 ## 概述
 

@@ -1,4 +1,5 @@
 import type { Collection, Document } from 'mongodb';
+import { types as utilTypes } from 'node:util';
 import { relatedCacheNamespaces } from '../../../core/cache-scope';
 import { coordinateInvalidation } from '../../../core/cache-coordination';
 import {
@@ -24,7 +25,9 @@ import {
 } from '../queries/query-cache-keys';
 import { prepareAggregateExecution } from '../queries/aggregate-pipeline';
 import { snapshotPipelineValue } from '../queries/pipeline-snapshot';
-import { getModelAggregateInvalidationNormalizer } from '../../../capabilities/write-path-policy';
+import { snapshotFindPageOptions } from '../queries/query-helpers';
+import { captureBsonOptions, hasStableBsonFields } from '../queries/bson-read-options';
+import { getModelAggregateInvalidationNormalizer, getModelFindPageInvalidationNormalizer } from '../../../capabilities/write-path-policy';
 
 type AggregateWriteTarget = {
     dbName?: string;
@@ -306,8 +309,9 @@ function entryToIntents<TSchema extends Document>(
             let prepared: ReturnType<typeof prepareAggregateExecution>;
             let capturedPipeline: unknown[];
             try {
-                capturedPipeline = snapshotPipelineValue(entry.pipeline ?? []);
-                prepared = prepareAggregateExecution(capturedPipeline, descriptorOptions, defaults);
+                const capturedOptions = captureBsonOptions(descriptorOptions, collection.bsonOptions);
+                capturedPipeline = snapshotPipelineValue(entry.pipeline ?? [], undefined, capturedOptions.serializeFunctions === true);
+                prepared = prepareAggregateExecution(capturedPipeline, capturedOptions, defaults, collection.bsonOptions);
             } catch {
                 // A bad best-effort descriptor must not reject a write that already succeeded.
                 return [];
@@ -327,13 +331,35 @@ function entryToIntents<TSchema extends Document>(
             return patternsToIntents(buildReadCacheInvalidationPatterns(dbName, collectionName, defaults, 'aggregate'));
         }
     } else if (operation === 'findPage') {
-        const findPageOptions = isRecord(entry.options)
+        let findPageOptions = isRecord(entry.options)
             ? { ...entry.options }
             : {};
         if (entry.query !== undefined && findPageOptions.query === undefined) {
             findPageOptions.query = entry.query;
         }
-        return linkedQueryKeyIntents(buildFindPageCacheKey(collection, defaults, findPageOptions as never).key, defaults);
+        const normalize = getModelFindPageInvalidationNormalizer();
+        const query = findPageOptions.query;
+        // Model visibility spreads the original root before BSON conversion; a raw snapshot
+        // cannot reconstruct receiver/prototype-sensitive roots without evaluating them twice.
+        if (normalize && query && typeof query === 'object' && (utilTypes.isProxy(query) || utilTypes.isMap(query)
+            || 'toBSON' in query || Object.values(Object.getOwnPropertyDescriptors(query))
+                .some(descriptor => descriptor.enumerable && !('value' in descriptor)))) {
+            return patternsToIntents(buildReadCacheInvalidationPatterns(dbName, collectionName, defaults, 'findPage'));
+        }
+        findPageOptions = snapshotFindPageOptions(findPageOptions, collection.bsonOptions);
+        if (!hasStableBsonFields(findPageOptions.options as Record<string, unknown>)) {
+            return patternsToIntents(buildReadCacheInvalidationPatterns(dbName, collectionName, defaults, 'findPage'));
+        }
+        const original = linkedQueryKeyIntents(buildFindPageCacheKey(collection, defaults, findPageOptions as never).key, defaults);
+        if (!normalize) return original;
+        try {
+            const scopes = defaults?.cacheScope?.split(':');
+            const poolName = scopes ? decodeURIComponent(scopes[scopes.length - 1]) : undefined;
+            const modelOptions = normalize({ dbName, collectionName, poolName, options: findPageOptions });
+            if (modelOptions !== 'broad') return [...original,
+                ...linkedQueryKeyIntents(buildFindPageCacheKey(collection, defaults, modelOptions as never).key, defaults)];
+        } catch { /* Unknown Model variants require family invalidation after a successful write. */ }
+        return patternsToIntents(buildReadCacheInvalidationPatterns(dbName, collectionName, defaults, 'findPage'));
     } else if (operation === 'findOneById') {
         if (entry.id !== undefined) {
             return linkedQueryKeyIntents(buildFindOneByIdCacheKey(collection, defaults, entry.id, descriptorOptions), defaults);

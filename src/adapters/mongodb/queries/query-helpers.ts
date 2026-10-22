@@ -5,6 +5,7 @@ import { cacheNamespace, relatedCacheNamespaces } from '../../../core/cache-scop
 
 import { BSON, Collection, Document, ObjectId, ReadConcern, ReadPreference, Sort } from 'mongodb';
 import { snapshotPipelineValue } from './pipeline-snapshot';
+import { captureBsonOptions, bsonKeyOptions } from './bson-read-options';
 
 import { createError, ErrorCodes } from '../../../core/errors';
 import {
@@ -350,8 +351,8 @@ const RESULT_CACHE_KEY_OPTION_FIELDS = [
 ];
 
 /** Capture result data without cloning sessions, signals or other live driver resources. */
-export function snapshotResultOptions(options: Record<string, unknown> = {}): Record<string, unknown> {
-    const captured = { ...options };
+export function snapshotResultOptions(options: Record<string, unknown> = {}, inherited: object = {}): Record<string, unknown> {
+    const captured = captureBsonOptions(options, inherited);
     for (const field of RESULT_CACHE_KEY_OPTION_FIELDS) {
         const value = captured[field];
         if (value instanceof ReadPreference) {
@@ -372,7 +373,7 @@ export function snapshotResultOptions(options: Record<string, unknown> = {}): Re
                 tags: snapshotPipelineValue(config.tags), maxStalenessSeconds: config.maxStalenessSeconds,
             } : value;
         } else if (value !== undefined) {
-            captured[field] = snapshotPipelineValue(value);
+            captured[field] = snapshotPipelineValue(value, undefined, captured.serializeFunctions === true);
         }
     }
     for (const field of ['readPreferenceTags', 'hedge']) {
@@ -383,6 +384,43 @@ export function snapshotResultOptions(options: Record<string, unknown> = {}): Re
         delete captured.readPreferenceTags;
     }
     return captured;
+}
+
+/** Capture filter occurrences before option documents, matching native command order. */
+export function snapshotReadInputs<T>(query: T, options: Record<string, unknown> = {}, inherited: object = {}) {
+    const native = captureBsonOptions(options, inherited);
+    const captured = snapshotPipelineValue(query, undefined, native.serializeFunctions === true);
+    return { query: captured, options: snapshotResultOptions(native) };
+}
+
+/** A logical page, its hops and totals share one captured set of BSON inputs. */
+export function snapshotFindPageOptions<T>(options: T, inherited: object = {}): T {
+    const { options: native, ...page } = options as Record<string, unknown>;
+    const captured = captureBsonOptions(normalizeFindProjectionOptions((native ?? {}) as Record<string, unknown>), inherited);
+    for (const field of ['query', 'pipeline']) {
+        if (page[field] !== undefined) page[field] = snapshotPipelineValue(page[field], undefined, captured.serializeFunctions === true);
+    }
+    const sharedFields = ['let', 'hint', 'collation', 'projection', 'readConcern', 'readPreference', 'allowDiskUse'];
+    for (const field of sharedFields) {
+        if (page[field] !== undefined) captured[field] = page[field];
+    }
+    if (page.project !== undefined && page.projection === undefined) captured.projection = normalizeProjection(page.project as Record<string, unknown>);
+    const data = snapshotResultOptions(captured);
+    for (const field of sharedFields) {
+        if (page[field] !== undefined) page[field] = data[field];
+    }
+    if (page.project !== undefined && page.projection === undefined) page.project = data.projection;
+    if (page.sort !== undefined) page.sort = normalizeSortShape(page.sort as Sort);
+    // Pagination controls are not BSON documents; their converters/callbacks stay unused.
+    for (const [field, keys] of Object.entries({ totals: ['mode', 'maxTimeMS', 'ttlMs', 'hint', 'collation'],
+        jump: ['step', 'maxHops', 'keyDims', 'getBookmark', 'saveBookmark'], offsetJump: ['enable', 'maxSkip'] })) {
+        const control = page[field] as Record<string, unknown> | undefined;
+        if (control && typeof control === 'object') page[field] = Object.fromEntries(keys.map(key => [key,
+            field === 'totals' && ['hint', 'collation'].includes(key)
+                ? snapshotPipelineValue(control[key], undefined, captured.serializeFunctions === true) : control[key]]));
+    }
+    if (page.cursorTypes && typeof page.cursorTypes === 'object' && !Array.isArray(page.cursorTypes)) page.cursorTypes = { ...page.cursorTypes };
+    return { ...page, options: data } as T;
 }
 
 function stripControlOptions(options: Record<string, unknown> = {}): Record<string, unknown> {
@@ -469,6 +507,11 @@ function normalizeCacheKeyValue(value: unknown, mode: CacheKeyMode): unknown {
     if (Array.isArray(value)) return ['array', value.map((item) => normalizeCacheKeyValue(item, mode))];
     const bsonType = (value as { _bsontype?: unknown })._bsontype;
     if (typeof bsonType === 'string') {
+        if (bsonType === 'DBRef') return ['bson', 'DBRef', Buffer.from(BSON.serialize({ value }, { serializeFunctions: true })).toString('base64')];
+        if (bsonType === 'Code') {
+            const code = value as BSON.Code;
+            return ['bson', 'Code', code.code, normalizeCacheKeyValue(code.scope, 'document')];
+        }
         const binary = value as BSON.Binary;
         const leaf = bsonType === 'Binary'
             ? new BSON.Binary(binary.buffer.subarray(0, binary.position), binary.sub_type) : value;
@@ -485,16 +528,14 @@ function normalizeCacheKeyValue(value: unknown, mode: CacheKeyMode): unknown {
 }
 
 export function stableCacheKeyString(value: unknown, mode: CacheKeyMode = 'options'): string {
-    return `v3:${JSON.stringify(normalizeCacheKeyValue(value, mode))}`;
+    return `v4:${JSON.stringify(normalizeCacheKeyValue(value, mode))}`;
 }
 
 export function buildResultCacheKeyOptions(
     options: Record<string, unknown> = {},
-    inheritedBsonOptions: { ignoreUndefined?: unknown } = {},
+    inheritedBsonOptions: object = {},
 ): Record<string, unknown> & { ignoreUndefined: boolean } {
-    const keyOptions: Record<string, unknown> & { ignoreUndefined: boolean } = {
-        ignoreUndefined: (options.ignoreUndefined ?? inheritedBsonOptions.ignoreUndefined ?? false) as boolean,
-    };
+    const keyOptions = bsonKeyOptions(options, inheritedBsonOptions) as Record<string, unknown> & { ignoreUndefined: boolean };
     for (const field of RESULT_CACHE_KEY_OPTION_FIELDS) {
         if (options[field] !== undefined) {
             keyOptions[field] = options[field];
@@ -539,6 +580,8 @@ export function buildCountDriverOptions<TSchema extends Document = Document>(
         'signal',
         'let',
         'ignoreUndefined',
+        'serializeFunctions',
+        'raw', 'useBigInt64', 'promoteLongs', 'promoteValues', 'promoteBuffers', 'bsonRegExp', 'enableUtf8Validation', 'fieldsAsRaw',
     ]);
     for (const key of Object.keys(driverOptions)) {
         if (!allowed.has(key)) {

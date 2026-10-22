@@ -450,10 +450,12 @@ describe('P6 runtime compat mock path', () => {
 
         assert.deepEqual(result, [{ name: 'Ada' }]);
         assert.deepEqual(capturedQuery, { active: true });
-        assert.deepEqual(capturedOptions, {
+        assert.deepEqual({ limit: capturedOptions?.limit, projection: capturedOptions?.projection }, {
             limit: 2,
             projection: { name: 1, email: 1 },
         });
+        assert.equal(capturedOptions?.serializeFunctions, false);
+        assert.equal(capturedOptions?.ignoreUndefined, false);
     });
 
     it('awaits async query-cache get/set across read helpers', async () => {

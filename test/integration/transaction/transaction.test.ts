@@ -1,6 +1,7 @@
 import { after, before, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createReplSetBootstrap } from '../../bootstrap/replset-server';
+import { buildFindPageCacheKey } from '../../../src/adapters/mongodb/queries/query-cache-keys';
 
 const MonSQLize = require('../../../dist/cjs/index.cjs');
 
@@ -105,6 +106,32 @@ describe('P4-A transaction integration', () => {
                 });
                 if (commit) await operation; else await assert.rejects(operation, /model descriptor abort/);
                 assert.equal((await model.aggregate(read, { cache: 10000 }))[0].balance, commit ? 10 : 2);
+            }
+        } finally { await runtime.close(); MonSQLize.Model._clear(); }
+    });
+
+    it('freezes Model page invalidation at registration and discards it on rollback', async () => {
+        MonSQLize.Model.define('visibility_pages', { schema: {}, options: { softDelete: true, autoIndex: false } });
+        const runtime = new MonSQLize({ type: 'mongodb', databaseName: 'repair_tx_page', config: { uri }, autoConvertObjectId: false });
+        try {
+            await runtime.connect();
+            const col = runtime.collection('visibility_pages'), model = runtime.model('visibility_pages'), raw = col.raw();
+            const read = { query: { _id: 'A' }, sort: { balance: 1 as const }, limit: 1 };
+            const key = buildFindPageCacheKey(raw, col.management.defaults, { ...read, query: { _id: 'A', deletedAt: null } }).key;
+            for (const commit of [true, false]) {
+                await raw.deleteMany({}); await runtime.getCache().clear(); await raw.insertOne({ _id: 'A', balance: 1, deletedAt: null });
+                assert.equal((await model.findPage({ ...read, cache: 10000 })).items[0].balance, 1);
+                const descriptor = { ...read, query: { _id: 'A' } };
+                const operation = runtime.withTransaction(async (tx: any) => {
+                    await model.updateOne({ _id: 'A' }, { $set: { balance: 9 } }, { session: tx.session,
+                        cache: { invalidate: [{ operation: 'findPage', options: descriptor }] } });
+                    descriptor.query._id = 'B';
+                    assert.ok(await runtime.getCache().get(key));
+                    if (!commit) throw new Error('page descriptor abort');
+                });
+                if (commit) await operation; else await assert.rejects(operation, /page descriptor abort/);
+                assert.equal((await runtime.getCache().get(key)) === undefined, commit);
+                assert.equal((await model.findPage({ ...read, cache: 10000 })).items[0].balance, commit ? 9 : 1);
             }
         } finally { await runtime.close(); MonSQLize.Model._clear(); }
     });

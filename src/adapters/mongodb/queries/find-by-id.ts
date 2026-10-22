@@ -13,7 +13,7 @@
 import { readThroughCache } from '../../../core/cache-coordination';
 import { getModelQueryFilter, MODEL_QUERY_FILTER } from '../../../core/model-query-context';
 import { Collection, Document, FindOptions, ObjectId } from 'mongodb';
-import { snapshotPipelineValue } from './pipeline-snapshot';
+import { canCacheBsonResult, hasStableBsonFields } from './bson-read-options';
 
 import { createError, ErrorCodes } from '../../../core/errors';
 import type { QueryCacheLike, RuntimeDefaults } from '../../../types/internal/query';
@@ -24,6 +24,8 @@ import {
     isHexObjectIdString,
     normalizeFindProjectionOptions,
     parseRequiredObjectId,
+    snapshotResultOptions,
+    snapshotReadInputs,
 } from './query-helpers';
 import {
     buildFindByIdsCacheKey,
@@ -73,13 +75,8 @@ function prepareOrderedIdentity(
         if (keys.length === 0 || keys.some((key) => !key.startsWith('$'))
             || keys.some((key) => ['$slice', '$elemMatch', '$meta', '$'].includes(key))) throw unsupported();
     }
-    const fieldsAsRaw = (options.fieldsAsRaw ?? inherited?.fieldsAsRaw ?? {}) as Record<string, unknown>;
-    const prototype = Object.getPrototypeOf(fieldsAsRaw);
-    if (prototype !== Object.prototype && prototype !== null) throw unsupported();
-    const capturedRawFields: Record<string, unknown> = Object.create(prototype);
-    for (const key of Object.getOwnPropertyNames(fieldsAsRaw)) {
-        Object.defineProperty(capturedRawFields, key, { value: fieldsAsRaw[key], enumerable: true, writable: true, configurable: true });
-    }
+    if (!hasStableBsonFields(options)) throw unsupported();
+    const capturedRawFields = Object.assign(Object.create(null), options.fieldsAsRaw) as Record<string, unknown>;
     // BSON applies these names at every nesting depth, including envelope.value arrays.
     if (capturedRawFields._id || capturedRawFields.value) throw unsupported();
     capturedRawFields._id = false;
@@ -107,16 +104,17 @@ export async function findOneByIdDocument<TSchema extends Document = Document>(
 ): Promise<TSchema | null> {
     const objectId = parseRequiredObjectId(id);
     const rawOptions = (options ?? {}) as Record<string, unknown>;
-    const baseOptions = normalizeFindProjectionOptions({
+    const baseOptions = snapshotResultOptions(normalizeFindProjectionOptions({
         ...(defaults.maxTimeMS !== undefined ? { maxTimeMS: defaults.maxTimeMS } : {}),
         ...rawOptions,
-    });
+    }), collection.bsonOptions);
     const findOptions = buildFindDriverOptions(baseOptions) as FindOptions;
 
     const cacheTTL = getCacheTtl(rawOptions);
     if (
         cacheTTL > 0
         && queryCache
+        && canCacheBsonResult(baseOptions)
         && !hasSessionOption(baseOptions)
         && !(await isCollectionCacheBarrierActive(queryCache, collection, defaults))
     ) {
@@ -201,16 +199,14 @@ export async function findByIdsDocuments<TSchema extends Document = Document>(
 
     const uniqueIds = [...new Set(objectIds.map((item) => item.toString()))].map((item) => new ObjectId(item));
     const rawOptions = (options ?? {}) as Record<string, unknown>;
-    const baseOptions = normalizeFindProjectionOptions({
+    const { query: visibility, options: baseOptions } = snapshotReadInputs(getModelQueryFilter(rawOptions), normalizeFindProjectionOptions({
         ...(defaults.maxTimeMS !== undefined ? { maxTimeMS: defaults.maxTimeMS } : {}),
         ...rawOptions,
-    });
+    }), collection.bsonOptions);
     const preserveOrder = baseOptions.preserveOrder === true;
-    baseOptions.projection = snapshotPipelineValue(baseOptions.projection);
     const identityMode = preserveOrder ? prepareOrderedIdentity(baseOptions, collection.bsonOptions) : 'native';
     const driverOptions = buildFindDriverOptions(baseOptions);
     delete (driverOptions as Record<symbol, unknown>)[MODEL_QUERY_FILTER];
-    const visibility = getModelQueryFilter(rawOptions);
     const idFilter = { _id: { $in: uniqueIds } };
     const filter = visibility && Object.keys(visibility).length > 0
         ? { $and: [idFilter, visibility] }
@@ -219,6 +215,7 @@ export async function findByIdsDocuments<TSchema extends Document = Document>(
     const cacheTTL = getCacheTtl(rawOptions);
     const cacheKey = identityMode === 'native' && cacheTTL > 0
         && queryCache
+        && canCacheBsonResult(baseOptions)
         && (!visibility || Object.keys(visibility).length === 0 || typeof queryCache.delPattern === 'function')
         && !hasSessionOption(baseOptions)
         && !(await isCollectionCacheBarrierActive(queryCache, collection, defaults))

@@ -8,11 +8,15 @@ Runtime close revokes that wrapper's pending backfill tickets and drains already
 
 ## BSON query identity and cache migration
 
-The stable query-key encoder uses generation `v3`. It preserves explicit `undefined` document members, distinguishes negative zero from positive zero, and retains Date, RegExp, Map insertion order and binary subtype/content, including values from another JavaScript realm. Buffer and Uint8Array views use their visible bytes; BSON Binary uses its effective `position`. Ordinary option-property order remains normalized; BSON document field order remains significant.
+The stable query-key encoder uses generation `v4`. It preserves explicit `undefined` document members, including `Code.scope`, distinguishes negative zero from positive zero, and retains Date, RegExp, Map insertion order and binary subtype/content, including values from another JavaScript realm. Buffer and Uint8Array views use their visible bytes; BSON Binary uses its effective `position`. Ordinary option-property order remains normalized; BSON document field order remains significant.
 
-All shared consumers use this generation: find/findOne/count/distinct, aggregate, ID lookups, Model query variants, page results, totals and bookmarks. Keys include effective `ignoreUndefined` using the operation option, inherited driver option, then `false`, with null/undefined inheriting the parent. Count operations forward that option as well.
+All shared consumers use this generation: find/findOne/count/distinct, aggregate, ID lookups, Model query variants, page results, totals and bookmarks. BSON options resolve from the operation, collection, then driver defaults; null/undefined inherit the parent. Keys distinguish effective input and decoding options. Count execution also receives the effective BSON flags.
 
-These caches start cold after upgrading. Rebuild bookmarks with `prewarmBookmarks()`; their public key prefix remains `bm:v4`, while its hash changes. Exact descriptors rebuild the current generation. Existing broad operation/collection invalidation still covers old and new entries; use broad invalidation or isolate caches during mixed-version deployment. Business data and sync checkpoints do not migrate. This change does not expand support for custom function serialization or other BSON decoding options.
+With `serializeFunctions: true`, each BSON function occurrence is captured using native serialization before asynchronous work. Shared references still serialize per occurrence; functions are not evaluated again for page hops or totals within that logical call. Independent calls capture again. `Code.scope` retains native document conversion and effective `ignoreUndefined` behavior; native serialization errors remain errors.
+
+Nonstandard result modes (`raw`, `promoteBuffers`, `promoteLongs: false`, `promoteValues: false`, `useBigInt64`, `bsonRegExp`, and active `fieldsAsRaw`) bypass JSON-backed result caching. Data-only `fieldsAsRaw` maps are captured with inherited properties. Proxy maps and custom accessors remain lazy and bypass result/bookmark reuse; dimensioned bookmark maintenance rejects them. See [findPage](./findPage.md).
+
+These caches start cold after upgrading. Rebuild bookmarks with `prewarmBookmarks()`; their public key prefix remains `bm:v4`, while its hash changes. Exact descriptors rebuild the current generation. Existing broad operation/collection invalidation still covers old and new entries; use broad invalidation or isolate caches during mixed-version deployment. Business data and sync checkpoints do not migrate.
 
 ## Overview
 

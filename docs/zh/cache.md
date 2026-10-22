@@ -8,11 +8,15 @@
 
 ## BSON 查询身份与缓存迁移
 
-稳定查询键编码升级为 `v3`：保留文档中显式的 `undefined` 成员，区分负零和正零，保留 Date、RegExp、Map 插入顺序及二进制子类型和内容，包括来自其他 JavaScript 执行环境的值。Buffer、Uint8Array 视图只使用可见字节；BSON Binary 使用有效 `position`。普通选项属性顺序继续归一化，BSON 文档字段顺序继续保留。
+稳定查询键编码升级为 `v4`：保留文档中显式的 `undefined` 成员，包括 `Code.scope`，区分负零和正零，保留 Date、RegExp、Map 插入顺序及二进制子类型和内容，包括来自其他 JavaScript 执行环境的值。Buffer、Uint8Array 视图只使用可见字节；BSON Binary 使用有效 `position`。普通选项属性顺序继续归一化，BSON 文档字段顺序继续保留。
 
-所有共享消费者使用同一代编码：find/findOne/count/distinct、aggregate、ID 查询、Model 查询变体、分页结果、totals 和书签。键按“操作选项、继承的驱动选项、默认 false”的顺序解析有效 `ignoreUndefined`，null/undefined 继续继承父值；count 也会将该选项传给驱动。
+所有共享消费者使用同一代编码：find/findOne/count/distinct、aggregate、ID 查询、Model 查询变体、分页结果、totals 和书签。BSON 选项按“操作、集合、驱动默认值”的顺序解析，null/undefined 继承父值。键区分有效输入及解码选项；count 执行也接收有效 BSON 标志。
 
-升级后这些缓存需要冷预热；书签可用 `prewarmBookmarks()` 重建。书签公开前缀仍是 `bm:v4`，内部哈希会改变。精确 descriptor 重建当前代键；现有按操作或集合的广泛失效仍覆盖新旧条目。混合版本部署时请使用广泛失效或隔离缓存。业务数据与同步检查点不迁移。本次不扩展自定义函数序列化或其他 BSON 解码选项的支持。
+使用 `serializeFunctions: true` 时，每个 BSON 函数出现位置在异步工作前按原生序列化捕获；同一引用出现多次仍逐次序列化，但同一次逻辑调用的分页跳转和 totals 不会再次求值。独立调用重新捕获输入。`Code.scope` 保留原生文档转换和有效 `ignoreUndefined` 语义；原生序列化错误仍会报错。
+
+非标准结果模式（`raw`、`promoteBuffers`、`promoteLongs: false`、`promoteValues: false`、`useBigInt64`、`bsonRegExp` 和生效的 `fieldsAsRaw`）旁路基于 JSON 的结果缓存。纯数据 `fieldsAsRaw` 映射连同继承属性一起捕获；Proxy 或自定义访问器保持惰性，旁路结果和书签复用，带维度的书签维护会拒绝这些动态映射。见 [findPage](./findPage.md)。
+
+升级后这些缓存需要冷预热；书签可用 `prewarmBookmarks()` 重建。书签公开前缀仍是 `bm:v4`，内部哈希会改变。精确 descriptor 重建当前代键；现有按操作或集合的广泛失效仍覆盖新旧条目。混合版本部署时请使用广泛失效或隔离缓存。业务数据与同步检查点不迁移。
 
 ## 概述
 

@@ -11,6 +11,7 @@
 
 import { readThroughCache } from '../../../core/cache-coordination';
 import { cacheNamespace } from '../../../core/cache-scope';
+import { canCacheBsonResult, canCacheBsonCount } from '../queries/bson-read-options';
 import { MODEL_COLLECTION_COLLATION } from '../../../core/model-query-context';
 import { ChangeStream, Collection, Db, Document } from 'mongodb';
 import { ErrorCodes, createError } from '../../../core/errors';
@@ -84,6 +85,7 @@ import {
     assertWritePathAllowed,
     getCurrentWritePathSource,
     getModelAggregateInvalidationNormalizer,
+    getModelFindPageInvalidationNormalizer,
     runWithModelWriteSource,
     type WritePathOperationCategory,
     type WritePathSource,
@@ -108,6 +110,7 @@ import {
     hasSessionOption,
     isCollectionCacheBarrierActive,
     normalizeFindProjectionOptions,
+    snapshotReadInputs,
 } from '../queries/query-helpers';
 import {
     buildCountCacheKey,
@@ -247,15 +250,15 @@ export class MongoCollectionAccessor<TSchema extends Document = Document> {
         options?: Parameters<Collection<TSchema>['findOne']>[1],
     ): ReturnType<Collection<TSchema>['findOne']> {
         const startTs = Date.now();
-        const normalizedQuery = this._cvFilter(query);
         const maxTimeMS = this.management.defaults?.maxTimeMS;
         const rawOptions: Record<string, unknown> = { ...(maxTimeMS !== undefined ? { maxTimeMS } : {}), ...((options ?? {}) as Record<string, unknown>) };
-        const driverOptions: Record<string, unknown> = normalizeFindProjectionOptions(rawOptions);
+        const { query: normalizedQuery, options: driverOptions } = snapshotReadInputs(this._cvFilter(query), normalizeFindProjectionOptions(rawOptions), this.collectionRef.bsonOptions);
         const cacheTTL = rawOptions.explain ? 0 : typeof rawOptions.cache === 'number' ? rawOptions.cache : 0;
 
         if (
             cacheTTL > 0
             && this.management.queryCache
+            && canCacheBsonResult(driverOptions)
             && !hasSessionOption(driverOptions)
             && !(await isCollectionCacheBarrierActive(this.management.queryCache, this.collectionRef, this.management.defaults))
         ) {
@@ -313,9 +316,9 @@ export class MongoCollectionAccessor<TSchema extends Document = Document> {
         options?: Parameters<Collection<TSchema>['countDocuments']>[1],
     ): ReturnType<Collection<TSchema>['countDocuments']> {
         const startTs = Date.now();
-        const normalizedQuery = this._cvFilter(query);
         const maxTimeMS = this.management.defaults?.maxTimeMS;
-        const merged: Record<string, unknown> = { ...(maxTimeMS !== undefined ? { maxTimeMS } : {}), ...((options ?? {}) as Record<string, unknown>) };
+        const { query: normalizedQuery, options: merged } = snapshotReadInputs(this._cvFilter(query),
+            { ...(maxTimeMS !== undefined ? { maxTimeMS } : {}), ...((options ?? {}) as Record<string, unknown>) }, this.collectionRef.bsonOptions);
         const cacheTTL = merged.explain === undefined || merged.explain === false
             ? (typeof merged.cache === 'number' ? merged.cache : 0)
             : 0;
@@ -332,6 +335,7 @@ export class MongoCollectionAccessor<TSchema extends Document = Document> {
         if (
             cacheTTL > 0
             && this.management.queryCache
+            && canCacheBsonCount(keyOptions)
             && !hasSessionOption(keyOptions)
             && !(await isCollectionCacheBarrierActive(this.management.queryCache, this.collectionRef, this.management.defaults))
         ) {
@@ -358,6 +362,7 @@ export class MongoCollectionAccessor<TSchema extends Document = Document> {
             this.management.queryCache,
             (preparedPipeline, preparedOptions) => {
                 const modelNormalizer = getModelAggregateInvalidationNormalizer();
+                const pageNormalizer = getModelFindPageInvalidationNormalizer();
                 const writeTarget = resolveAggregateWriteTarget(preparedPipeline);
                 if (!writeTarget) return undefined;
                 this.assertWritePath('aggregate', 'write', this.buildNamespaceView(
@@ -380,7 +385,8 @@ export class MongoCollectionAccessor<TSchema extends Document = Document> {
                             preparedOptions,
                         );
                         };
-                        return modelNormalizer ? runWithModelWriteSource(invalidate, modelNormalizer) : invalidate();
+                        return modelNormalizer || pageNormalizer
+                            ? runWithModelWriteSource(invalidate, modelNormalizer, pageNormalizer) : invalidate();
                     },
                 };
             },
@@ -410,7 +416,7 @@ export class MongoCollectionAccessor<TSchema extends Document = Document> {
         options?: Parameters<Collection<TSchema>['distinct']>[2],
     ): ReturnType<Collection<TSchema>['distinct']> {
         const startTs = Date.now();
-        const rawOptions = (options ?? {}) as Record<string, unknown>;
+        const { query: normalizedQuery, options: rawOptions } = snapshotReadInputs(this._cvFilter(query), (options ?? {}) as Record<string, unknown>, this.collectionRef.bsonOptions);
         const {
             meta: _meta,
             cache,
@@ -427,17 +433,17 @@ export class MongoCollectionAccessor<TSchema extends Document = Document> {
         void _preserveOrder;
         void _withDeleted;
         void _onlyDeleted;
-        const normalizedQuery = this._cvFilter(query);
         const cacheTTL = typeof cache === 'number' ? cache : 0;
         const executeDistinct = () => distinctValues(
             this.collectionRef,
             key,
             normalizedQuery,
-            options === undefined ? undefined : driverOptions as Parameters<Collection<TSchema>['distinct']>[2],
+            driverOptions as Parameters<Collection<TSchema>['distinct']>[2],
         );
         if (
             cacheTTL > 0
             && this.management.queryCache
+            && canCacheBsonResult(driverOptions)
             && !hasSessionOption(driverOptions)
             && !(await isCollectionCacheBarrierActive(this.management.queryCache, this.collectionRef, this.management.defaults))
         ) {

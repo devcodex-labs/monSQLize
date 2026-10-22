@@ -195,6 +195,34 @@ describe('P3-C model features', () => {
         assert.equal(rows[0].meta.removed, null);
     });
 
+    it('RF13 invalidates exact Model pages on soft delete and restore with custom markers', async () => {
+        for (const type of ['timestamp', 'boolean']) {
+            const name = 'rf13_pages_' + type;
+            MonSQLize.Model.define(name, { schema: {}, options: { softDelete: { field: 'meta.removed', type }, autoIndex: false } });
+            const runtime = new MonSQLize({ type: 'mongodb', databaseName: 'rf13_models', config: { uri, options: { monitorCommands: true } } });
+            activeRuntimes.add(runtime); await runtime.connect();
+            const model = runtime.model(name), raw = runtime.collection(name);
+            const { insertedId } = await model.insertOne({ name: 'A' });
+            const variants = [{}, { withDeleted: true }, { onlyDeleted: true }, { pipeline: [{ $match: { name: 'A' } }] },
+                { query: { name: 'A', 'meta.removed': type === 'boolean' ? { $ne: true } : null } }];
+            for (const variant of variants) {
+                const page = { query: { name: 'A' }, sort: { _id: 1 }, limit: 10, cache: 10000, ...variant };
+                const writeOptions = { cache: { invalidate: [{ operation: 'findPage', options: page }] } };
+                for (const action of ['deleteOne', 'restore']) {
+                    await runtime.getCache().clear();
+                    const before = await model.findPage(page); await raw.findPage(page);
+                    await model[action]({ _id: insertedId }, writeOptions);
+                    const hot = await model.findPage(page), cold = await model.findPage({ ...page, cache: 0 });
+                    const plain = (value: unknown) => JSON.parse(JSON.stringify(value));
+                    assert.deepEqual(plain(hot.items), plain(cold.items), `${type}/${action}/${JSON.stringify(variant)}`);
+                    assert.notDeepEqual(plain(before.items), plain(cold.items), 'the mutation changes this visibility or marker');
+                    const rawHot = await raw.findPage(page), rawCold = await raw.findPage({ ...page, cache: 0 });
+                    assert.deepEqual(plain(rawHot.items), plain(rawCold.items), 'raw descriptor entry is invalidated too');
+                }
+            }
+        }
+    });
+
     it('B05 filters id-only soft-delete projections without exposing the marker', async () => {
         for (const type of ['timestamp', 'boolean']) {
             const name = 'b05_' + type;
