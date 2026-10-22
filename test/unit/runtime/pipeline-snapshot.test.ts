@@ -28,6 +28,48 @@ describe('pipeline capture at the driver document boundary', () => {
         assert.equal((captured.value.scope as any).nested.y, undefined);
     });
 
+    it('preserves Code scope short circuits, repeated getters and source-before-document ordering', () => {
+        const fn = Object.assign(function () {}, { x: 1 });
+        const sequences: unknown[][] = [[null], [false], [{}, 1], [{}, null, { x: 3 }],
+            ...[null, undefined, 7, false, 'ab', 2n, Symbol('scope'), fn, new Map([['x', 3]]), [3]]
+                .map(value => [{}, {}, value])];
+        for (const sequence of sequences) for (const failAt of ['', 'scope2', 'scope3', 'code']) {
+            const make = () => {
+                let reads = 0; const events: string[] = [], value = new BSON.Code('x');
+                Object.defineProperty(value, 'scope', { get() {
+                    const event = 'scope' + ++reads; events.push(event);
+                    if (event === failAt) throw new Error(event);
+                    return sequence[Math.min(reads - 1, sequence.length - 1)];
+                } });
+                Object.defineProperty(value, 'code', { get() {
+                    events.push('code'); if (failAt === 'code') throw new Error('code'); return 'x';
+                } });
+                return { value, events };
+            };
+            const native = make(), captured = make();
+            let expected: Uint8Array | undefined, failure: Error | undefined;
+            try { expected = BSON.serialize({ value: native.value }); } catch (error) { failure = error as Error; }
+            if (failure) assert.throws(() => snapshotPipelineValue({ value: captured.value }),
+                (error: any) => error.name === failure!.name);
+            else assert.deepEqual(BSON.serialize(snapshotPipelineValue({ value: captured.value })), expected);
+            assert.deepEqual(captured.events, native.events);
+        }
+    });
+
+    it('keeps disabled DBRef functions ignored while enabled captured Code remains keyed', () => {
+        const oid = new ObjectId('000000000000000000000001');
+        const ignored = function () {}; ignored.toString = () => { throw new Error('Unused function source'); };
+        const captureRef = (fields: Record<string, unknown>, enabled = false) => snapshotPipelineValue({
+            value: new BSON.DBRef('items', oid, undefined, fields),
+        }, undefined, enabled);
+        assert.equal(stableCacheKeyString(captureRef({ fn: ignored }), 'document'), stableCacheKeyString(captureRef({}), 'document'));
+        const a = function () {}; a.toString = () => 'function a(){return 1;}';
+        const b = function () {}; b.toString = () => 'function b(){return 2;}';
+        assert.notEqual(stableCacheKeyString(captureRef({ fn: a }, true), 'document'), stableCacheKeyString(captureRef({ fn: b }, true), 'document'));
+        for (const enabled of [false, true]) assert.deepEqual(BSON.serialize(captureRef({ fn: a }, enabled), { serializeFunctions: enabled }),
+            BSON.serialize({ value: new BSON.DBRef('items', oid, undefined, { fn: a }) }, { serializeFunctions: enabled }));
+    });
+
     it('matches Code document conversion without redispatching its returned type', () => {
         for (const result of [new Map([['map', 1]]), Object.assign([1], { extra: 2 }), new Date(1), 42]) {
             const make = () => new BSON.Code('return x;', { toBSON() { return result as any; } });

@@ -57,6 +57,8 @@ await products.updateOne(
 
 Supported descriptor operations: `find`, `findOne`, `count`, `findPage`, `aggregate`, `distinct`, `findOneById`, and `findByIds`.
 
+Explicit descriptor arrays are best effort per entry. If one descriptor cannot be captured or encoded, valid siblings still invalidate their keys, and successful ordinary or aggregate writes keep their result. This does not turn a failed database write into a success.
+
 For aggregate write pipelines (`$merge` / `$out`), descriptor invalidation is resolved against the write target collection.
 
 For an aggregate descriptor, pass the same original pipeline and result-affecting options as the cached read, including supported `expr` values. Captured pipelines use the same ObjectId conversion and expression semantics for reading and invalidation; prepared literal values are not interpreted again. Invalid descriptors remain best effort and do not undo a successful write. Transaction intents retain the resolved key until commit; abort discards it.

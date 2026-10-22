@@ -639,6 +639,30 @@ describe('review repair query contracts against native MongoDB', () => {
             await native.findOne({ score: 1 }, { projection, ignoreUndefined: false }));
     });
 
+    it('does not access ignored DBRef function sources while keying cached reads', async () => {
+        const col = runtime.collection('dbref_ignored_function'), native = col.raw(); await native.deleteMany({});
+        let calls = 0; const fn = function () {};
+        fn.toString = () => { calls++; throw new Error('Ignored function source'); };
+        const payload = new BSON.DBRef('items', new ObjectId('000000000000000000000001'), undefined, { fn });
+        await native.insertOne({ n: 1, payload }, { serializeFunctions: false });
+        const query = { payload }, options = { serializeFunctions: false, cache: 10000 };
+        for (const operation of ['find', 'findOne', 'count', 'distinct', 'aggregate', 'findPage', 'findAndCount']) {
+            const call = async () => {
+                if (operation === 'find') return (await col.find(query, options)).map((row: any) => row.n);
+                if (operation === 'findOne') return (await col.findOne(query, options))?.n;
+                if (operation === 'count') return col.count(query, options);
+                if (operation === 'distinct') return col.distinct('n', query, options);
+                if (operation === 'aggregate') return (await col.aggregate([{ $match: query }], options)).map((row: any) => row.n);
+                if (operation === 'findAndCount') { const result = await col.findAndCount(query, options); return [result.data[0].n, result.total]; }
+                const result = await col.findPage({ query, sort: { n: 1 }, limit: 1, totals: false, options: { serializeFunctions: false }, cache: 10000 });
+                return result.items.map((row: any) => row.n);
+            };
+            const expected = operation === 'findOne' || operation === 'count' ? 1 : operation === 'findAndCount' ? [1, 1] : [1];
+            assert.deepEqual(await call(), expected); assert.deepEqual(await call(), expected);
+        }
+        assert.equal(calls, 0);
+    });
+
     it('keys function source and forwards serializeFunctions to all count and read consumers', async () => {
         const col = runtime.collection('function_repair'), native = col.raw(); await native.deleteMany({});
         const a = function first() { return 1; }, b = function second() { return 2; };

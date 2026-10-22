@@ -2,6 +2,8 @@
 
 ## Changes after v3.3.1
 
+- Preserve native repeated Code scope access and disabled DBRef function handling in cache keys. Isolate malformed explicit invalidation descriptors so valid siblings still run and successful aggregate writes retain their result. Add regression controls for these RF13–RF15 review follow-ups; the approved root bundle budget is 820,000 bytes and the independent CLI budget stays 50,000 bytes.
+
 - Repair soft-delete Model page descriptor invalidation across raw/Model visibility, delayed aggregate writes and transactions. Preserve native Code scope and per-occurrence function serialization; share captured inputs across page hops/totals. Key effective BSON inheritance across all read consumers and isolate shared bookmark dimensions; bypass nonstandard JSON result modes and lazy dynamic decoding maps. Shared query encoding advances to v4 with cold result/totals/bookmark prewarming; the public bm:v4 prefix, default invalidation and B02 checkpoints remain unchanged. Bilingual documentation and regression controls accompany RF13–RF16.
 
 - Upgrade shared query-key encoding to v3 for undefined members, negative zero, native binary views/effective Binary length, Maps and cross-realm BSON leaves. Align effective ignoreUndefined across read keys, count execution, exact descriptors, totals and bookmark management. Preserve executed page pipeline literals. Query/totals/bookmark caches start cold; business data, sync checkpoints and package budgets remain unchanged.

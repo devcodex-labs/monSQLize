@@ -24,9 +24,10 @@ function capture<T>(value: T, seen: WeakMap<object, unknown>, conversions: numbe
     seen.set(original, true); seen.set(value, true);
     try {
         if (typeof value === 'object' && (value as { _bsontype?: unknown })._bsontype === 'Code') {
-            const code = value as unknown as BSON.Code, scope = code.scope, source = code.code;
-            const scoped = scope !== null && typeof scope === 'object';
-            // Let BSON preserve scoped/nonscoped source coercion without consuming scope early.
+            const code = value as unknown as BSON.Code;
+            // BSON reads scope twice for dispatch, then again after encoding the source.
+            const scoped = code.scope && typeof code.scope === 'object';
+            const source = code.code;
             const shell = new Proxy(code, { get(target, key) {
                 if (key === 'scope') return scoped ? {} : null;
                 if (key === 'code') return source;
@@ -34,7 +35,7 @@ function capture<T>(value: T, seen: WeakMap<object, unknown>, conversions: numbe
                 return Reflect.get(target, key, target);
             } });
             const copy = copyNativeLeaf(shell, serializeFunctions);
-            if (scoped) copy.scope = captureDocument(scope, seen, serializeFunctions, true);
+            if (scoped) copy.scope = captureDocument(code.scope, seen, serializeFunctions, true);
             return copy as T;
         }
         if (typeof value === 'object' && (value as { _bsontype?: unknown })._bsontype === 'DBRef') {
@@ -55,10 +56,13 @@ function capture<T>(value: T, seen: WeakMap<object, unknown>, conversions: numbe
 /** Code.scope enters serializeInto directly, before value-position conversion/dispatch. */
 function captureDocument(value: unknown, seen: WeakMap<object, unknown>, serializeFunctions: boolean, root: boolean, track = root, protectMarker = true): Record<string, unknown> {
     const original = value as object, array = Array.isArray(value), map = utilTypes.isMap(value);
+    // A later Code.scope getter may yield a primitive at the document boundary.
+    const reference = value !== null && (typeof value === 'object' || typeof value === 'function');
+    track = track && reference;
     if (track && seen.has(original)) throw new BSON.BSONError('Cannot convert circular structure to BSON');
     if (track) seen.set(original, true);
     try {
-        if (root && !array && !map && typeof (value as { toBSON?: unknown }).toBSON === 'function') {
+        if (root && !array && !map && typeof (value as { toBSON?: unknown } | null)?.toBSON === 'function') {
             value = (value as { toBSON(): unknown }).toBSON();
             if (value != null && typeof value !== 'object') throw new BSON.BSONError('toBSON function did not return an object');
         }
@@ -77,7 +81,7 @@ function captureDocument(value: unknown, seen: WeakMap<object, unknown>, seriali
             Object.defineProperty(copy, key, { value: capture(entry, seen, 2, serializeFunctions),
                 enumerable: true, configurable: true, writable: true });
         }
-        if (!array && !map && !track) {
+        if (!array && !map && !track && reference) {
             // Non-BSON metadata is retained without evaluating ignored getters/converters.
             for (const key of Reflect.ownKeys(value as object)) {
                 const descriptor = Object.getOwnPropertyDescriptor(value, key)!;

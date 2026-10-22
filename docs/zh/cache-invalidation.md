@@ -57,6 +57,8 @@ await products.updateOne(
 
 支持的 descriptor 操作：`find`、`findOne`、`count`、`findPage`、`aggregate`、`distinct`、`findOneById`、`findByIds`。
 
+显式 descriptor 数组逐项按 best effort 处理。某项无法捕获或编码时，其他有效项仍失效各自的 key，已成功的普通写或聚合写保留成功结果；不会把数据库写入失败改为成功。
+
 对于聚合写入管道（`$merge` / `$out`），descriptor 失效会按写入目标集合解析。
 
 aggregate descriptor 应传入与缓存读取相同的原始管道及影响结果的选项，包括受支持的 `expr` 值。读取与失效采用相同的 ObjectId 转换和表达式语义，已准备的 literal 值不会再次解释。无效 descriptor 仍按 best effort 处理，不撤销成功写入。事务保留登记时解析的 key，提交后失效，回滚则丢弃。

@@ -195,6 +195,43 @@ describe('P3-C model features', () => {
         assert.equal(rows[0].meta.removed, null);
     });
 
+    it('RF13 isolates invalid page descriptors and preserves successful ordinary and aggregate writes', async () => {
+        const name = 'rf13_bad_descriptor';
+        MonSQLize.Model.define(name, { schema: {}, options: { softDelete: true, autoIndex: false } });
+        const runtime = new MonSQLize({ type: 'mongodb', databaseName: name, config: { uri } });
+        activeRuntimes.add(runtime); await runtime.connect();
+        const model = runtime.model(name), raw = runtime.collection(name).raw();
+        await raw.deleteMany({}); await raw.insertOne({ n: 1, label: 'old', deletedAt: null });
+        const good = { query: { n: 1 }, sort: { n: 1 }, limit: 1, totals: false };
+        const unused = { ...good, query: { n: 2 } };
+        const cache = runtime.getCache(), get = cache.get;
+        let hits = 0;
+        cache.get = function (...args: any[]) {
+            const result = get.apply(this, args);
+            const record = (value: any) => { if (value !== null && value !== undefined) hits++; return value; };
+            return result && typeof result.then === 'function' ? result.then(record) : record(result);
+        };
+        try {
+            for (const operation of ['updateOne', 'aggregate']) {
+                await model.findPage({ ...good, cache: 60000 });
+                await model.findPage({ ...unused, cache: 60000 });
+                const invalidate = [{ operation: 'findPage', options: { projection: { toBSON() { throw new Error('Bad descriptor'); } } } },
+                    { operation: 'findPage', options: good }];
+                if (operation === 'updateOne') {
+                    const result = await model.updateOne({ n: 1 }, { $set: { label: operation } }, { cache: { invalidate } });
+                    assert.equal(result.modifiedCount, 1);
+                } else await model.aggregate([{ $set: { label: operation } },
+                    { $merge: { into: name, on: '_id', whenMatched: 'merge', whenNotMatched: 'discard' } }], { cache: { invalidate } });
+                assert.equal((await raw.findOne({ n: 1 })).label, operation);
+                const hot = await model.findPage({ ...good, cache: 60000 });
+                const cold = await model.findPage({ ...good, cache: 0 });
+                assert.equal(hot.items[0].label, operation); assert.deepEqual(hot.items, cold.items);
+                let before = hits; await model.findPage({ ...good, cache: 60000 }); assert.ok(hits > before);
+                before = hits; await model.findPage({ ...unused, cache: 60000 }); assert.ok(hits > before);
+            }
+        } finally { cache.get = get; }
+    });
+
     it('RF13 invalidates exact Model pages on soft delete and restore with custom markers', async () => {
         for (const type of ['timestamp', 'boolean']) {
             const name = 'rf13_pages_' + type;

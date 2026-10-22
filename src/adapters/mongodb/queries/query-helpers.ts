@@ -507,7 +507,8 @@ function normalizeCacheKeyValue(value: unknown, mode: CacheKeyMode): unknown {
     if (Array.isArray(value)) return ['array', value.map((item) => normalizeCacheKeyValue(item, mode))];
     const bsonType = (value as { _bsontype?: unknown })._bsontype;
     if (typeof bsonType === 'string') {
-        if (bsonType === 'DBRef') return ['bson', 'DBRef', Buffer.from(BSON.serialize({ value }, { serializeFunctions: true })).toString('base64')];
+        // Captured enabled functions are already Code; disabled functions must stay ignored.
+        if (bsonType === 'DBRef') return ['bson', 'DBRef', Buffer.from(BSON.serialize({ value }, { serializeFunctions: false })).toString('base64')];
         if (bsonType === 'Code') {
             const code = value as BSON.Code;
             return ['bson', 'Code', code.code, normalizeCacheKeyValue(code.scope, 'document')];

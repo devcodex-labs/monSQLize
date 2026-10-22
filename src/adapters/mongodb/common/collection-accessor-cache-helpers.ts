@@ -385,9 +385,14 @@ function resolveExplicitInvalidationIntents<TSchema extends Document>(
         return patternsToIntents(buildReadCacheInvalidationPatterns(dbName, collectionName, defaults, 'all'));
     }
     const entries = Array.isArray(invalidate) ? invalidate : [invalidate];
-    return uniqueIntents(entries.flatMap((entry) =>
-        entryToIntents(collection, dbName, collectionName, defaults, entry as CacheInvalidationEntry),
-    ));
+    return uniqueIntents(entries.flatMap((entry) => {
+        try {
+            return entryToIntents(collection, dbName, collectionName, defaults, entry as CacheInvalidationEntry);
+        } catch {
+            // A malformed best-effort descriptor must not suppress valid siblings or the write result.
+            return [];
+        }
+    }));
 }
 
 export function resolveWriteCacheInvalidationIntents<TSchema extends Document>(
