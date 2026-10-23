@@ -16,7 +16,7 @@ The npm `latest` dist-tag and GitHub Pages are the stable channel; `main` may co
 
 This source tree targets **3.3.2**. Its cache, Model, pagination and sync fixes, including cold-cache upgrades and checkpoint rollback limits, are described in the [3.3.2 notes](./changelogs/v3.3.2.md) and [migration guide](./MIGRATION.md). Read the upgrade guide in [English](https://github.com/devcodex-labs/monSQLize/blob/main/docs/en/upgrade-3.3.2.md) or [简体中文](https://github.com/devcodex-labs/monSQLize/blob/main/docs/zh/upgrade-3.3.2.md). Untagged checkouts remain release candidates; verify the immutable tag and requested registry version before deployment. Candidate preparation does not publish npm or update stable Pages.
 
-This development source is pinned to verified registry `schema-dsl@3.0.4`. The v3 package remains subject to the full release gate before an immutable tag and npm publication.
+This development source is pinned to verified registry `schema-dsl@3.0.5`. The v3 package remains subject to the full release gate before an immutable tag and npm publication.
 
 ```bash
 npm install monsqlize

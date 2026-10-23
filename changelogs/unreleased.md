@@ -2,7 +2,9 @@
 
 ## Changes after v3.3.2
 
-The audited changes below are assigned to the [3.3.2 versioned notes](./v3.3.2.md). No additional changes have been staged after that candidate. Publication is established by the npm registry and immutable tag, not this file.
+The audited changes below are assigned to the [3.3.2 versioned notes](./v3.3.2.md). Publication is established by the npm registry and immutable tag, not this file.
+
+- Upgrade the pinned `schema-dsl` dependency from 3.0.4 to 3.0.5 (patch: preserves `type` alongside `enum` in fast-path validation, defers combined keywords to AJV, aligns regex Unicode semantics with AJV). No monSQLize API, type or package-budget change.
 
 ## Archived preparation notes for the 3.3.2 candidate
 

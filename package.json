@@ -163,7 +163,7 @@
         "cache-hub": "2.2.4",
         "ioredis": "5.11.1",
         "mongodb": "6.21.0",
-        "schema-dsl": "3.0.4",
+        "schema-dsl": "3.0.5",
         "ssh2": "1.17.0"
     },
     "overrides": {
