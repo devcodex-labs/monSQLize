@@ -24,6 +24,13 @@ export const ErrorCodes = {
     INVALID_OPERATION: 'INVALID_OPERATION',
     /** Invalid local Vector Search options before the driver is called. */
     INVALID_VECTOR_SEARCH: 'INVALID_VECTOR_SEARCH',
+    /** Search index lifecycle errors (v3.4.0). */
+    INVALID_SEARCH_INDEX_DEFINITION: 'INVALID_SEARCH_INDEX_DEFINITION',
+    SEARCH_INDEX_EXISTS: 'SEARCH_INDEX_EXISTS',
+    SEARCH_INDEX_NOT_FOUND: 'SEARCH_INDEX_NOT_FOUND',
+    SEARCH_INDEX_UNSUPPORTED: 'SEARCH_INDEX_UNSUPPORTED',
+    SEARCH_INDEX_BUILD_FAILED: 'SEARCH_INDEX_BUILD_FAILED',
+    SEARCH_INDEX_WAIT_TIMEOUT: 'SEARCH_INDEX_WAIT_TIMEOUT',
     /** Relation select is outside the supported inclusion-only top-level contract. */
     INVALID_RELATION_SELECT: 'INVALID_RELATION_SELECT',
     /** A protected delete found declared Model relations that still reference its target. */

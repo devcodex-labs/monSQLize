@@ -31,6 +31,7 @@ import type {
 } from '../../../types/collection';
 import type { SchemaDslEngine, SchemaValidateFn } from './schema-dsl';
 import { PopulatePromise } from './populate-promise';
+import type * as SI from '../../../types/search-index';
 import type { ExtendedModelCollectionLike, PopulatePath, ModelCollectionLike, ModelRuntimeLike } from './populate-promise';
 import { validateRelationConfig, normalizePopulateConfig } from './definition-validator';
 import { Model } from './model-registry';
@@ -555,6 +556,14 @@ export class ModelInstance<TDocument = Record<string, unknown>> {
     dropIndexes(): Promise<unknown> {
         return this.runModelWrite(() => this.collection.dropIndexes());
     }
+    /** Search index lifecycle (v3.4.0): writes run as model writes for writePathPolicy. */
+    createSearchIndex(spec: SI.SearchIndexSpec, options?: SI.CreateSearchIndexOptions): Promise<SI.CreateSearchIndexResult> { return this.runModelWrite(() => this.collection.createSearchIndex(spec, options)); }
+    createSearchIndexes(specs: SI.SearchIndexSpec[]): Promise<string[]> { return this.runModelWrite(() => this.collection.createSearchIndexes(specs)); }
+    listSearchIndexes(options?: SI.ListSearchIndexesOptions): Promise<SI.SearchIndexInfo[]> { return this.collection.listSearchIndexes(options); }
+    getSearchIndex(name: string): Promise<SI.SearchIndexInfo> { return this.collection.getSearchIndex(name); }
+    updateSearchIndex(name: string, definition: Record<string, unknown>): Promise<void> { return this.runModelWrite(() => this.collection.updateSearchIndex(name, definition)); }
+    dropSearchIndex(name: string, options?: SI.DropSearchIndexOptions): Promise<void> { return this.runModelWrite(() => this.collection.dropSearchIndex(name, options)); }
+    waitForSearchIndex(name: string, options?: SI.WaitForSearchIndexOptions): Promise<SI.SearchIndexInfo> { return this.collection.waitForSearchIndex(name, options); }
 
     prewarmBookmarks(keyDims?: unknown, pages?: number[]): Promise<unknown> {
         return this.extendedCollection().prewarmBookmarks(keyDims, pages);

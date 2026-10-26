@@ -18,6 +18,7 @@ import type { DeleteBatchResult, IncrementOneResult, InsertBatchResult, InsertMa
 import type { ModelScopeOptions, PopulateConfig, PopulateProxy } from '../../../types/model';
 import { createError, ErrorCodes } from '../../core/errors';
 import type { CollationOptions } from 'mongodb';
+import type { SearchIndexManagement } from '../../../types/search-index';
 import { MODEL_COLLECTION_COLLATION } from '../../core/model-query-context';
 
 /** Populate path: either a field name string or a full PopulateConfig object. */
@@ -33,7 +34,7 @@ export interface ModelRuntimeLike {
 }
 
 /** Collection operation interface used during populate resolution (subset of methods required). */
-export interface ModelCollectionLike<TDocument = Record<string, unknown>> {
+export interface ModelCollectionLike<TDocument = Record<string, unknown>> extends SearchIndexManagement {
     [MODEL_COLLECTION_COLLATION]?(): Promise<CollationOptions | null | undefined>;
     getNamespace(): { iid: string; type: 'mongodb'; db: string; collection: string; pool?: string; };
     raw(): unknown;

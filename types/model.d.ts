@@ -1,5 +1,5 @@
 import type { BookmarkClearResult, BookmarkListResult, BookmarkPrewarmResult, DeleteBatchResult, DeleteResult, IncrementOneResult, IndexCreateResult, InsertBatchResult, InsertManyResult, InsertOneResult, UpdateBatchResult, UpdateResult, VectorSearchHit, VectorSearchOptions } from './collection';
-import type { InferSchema } from 'schema-dsl';
+import type { InferSchema } from 'schema-dsl'; import type { SearchIndexManagement } from './search-index';
 import type { SchemaDslRuntime } from 'schema-dsl/runtime';
 
 /**
@@ -428,7 +428,7 @@ export type ModelDocument<TDocument = any> = TDocument & Record<string, unknown>
     toJSON(): TDocument & Record<string, unknown>;
 };
 
-export interface ModelInstance<TDocument = any> {
+export interface ModelInstance<TDocument = any> extends SearchIndexManagement {
     readonly collectionName: string;
     readonly dbName: string;
     readonly poolName?: string;

@@ -77,6 +77,8 @@ import type {
     VectorSearchOptions,
 } from '../../../../types/collection';
 import type { QueryCacheLike, RuntimeDefaults } from '../../../types/internal/query';
+import * as searchIndexes from '../search-indexes';
+import type * as SI from '../../../../types/search-index';
 import type {
     CollectionAccessorManagementOptions,
     CollectionNamespaceView,
@@ -618,6 +620,16 @@ export class MongoCollectionAccessor<TSchema extends Document = Document> {
 
     /** Drops all non-`_id` indexes from the collection. */
     async dropIndexes(): ReturnType<Collection<TSchema>['dropIndexes']> { this.assertWritePath('dropIndexes', 'management'); return dropIndexesForAccessor(this.collectionRef); }
+
+    /** Search index lifecycle (v3.4.0); writes are governed by writePathPolicy `management`. */
+    private searchIndexContext(): searchIndexes.SearchIndexContext { return { collection: this.collectionRef as unknown as searchIndexes.SearchIndexCollectionLike, namespace: this.getNamespace() }; }
+    async createSearchIndex(spec: SI.SearchIndexSpec, options?: SI.CreateSearchIndexOptions): Promise<SI.CreateSearchIndexResult> { this.assertWritePath('createSearchIndex', 'management'); return searchIndexes.createSearchIndexOp(this.searchIndexContext(), spec, options); }
+    async createSearchIndexes(specs: SI.SearchIndexSpec[]): Promise<string[]> { this.assertWritePath('createSearchIndexes', 'management'); return searchIndexes.createSearchIndexesOp(this.searchIndexContext(), specs); }
+    async listSearchIndexes(options?: SI.ListSearchIndexesOptions): Promise<SI.SearchIndexInfo[]> { return searchIndexes.listSearchIndexesOp(this.searchIndexContext(), options); }
+    async getSearchIndex(name: string): Promise<SI.SearchIndexInfo> { return searchIndexes.getSearchIndexOp(this.searchIndexContext(), name); }
+    async updateSearchIndex(name: string, definition: Record<string, unknown>): Promise<void> { this.assertWritePath('updateSearchIndex', 'management'); return searchIndexes.updateSearchIndexOp(this.searchIndexContext(), name, definition); }
+    async dropSearchIndex(name: string, options?: SI.DropSearchIndexOptions): Promise<void> { this.assertWritePath('dropSearchIndex', 'management'); return searchIndexes.dropSearchIndexOp(this.searchIndexContext(), name, options); }
+    async waitForSearchIndex(name: string, options?: SI.WaitForSearchIndexOptions): Promise<SI.SearchIndexInfo> { return searchIndexes.waitForSearchIndexOp(this.searchIndexContext(), name, options); }
 
     /** Pre-populates bookmark cache entries for the specified key dimensions and page numbers. */
     async prewarmBookmarks(keyDims: BookmarkKeyDims<TSchema> = {}, pages: number[] = []): Promise<BookmarkPrewarmResult> {

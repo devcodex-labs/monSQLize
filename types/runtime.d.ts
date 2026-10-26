@@ -345,6 +345,13 @@ export declare class ModelInstance<TDocument = any> implements ModelInstanceCont
     ensureIndexes(options?: ModelEnsureIndexesOptions): Promise<ModelIndexEnsureResult>;
     dropIndex(name: string): Promise<unknown>;
     dropIndexes(): Promise<unknown>;
+    createSearchIndex(spec: import('./search-index').SearchIndexSpec, options?: import('./search-index').CreateSearchIndexOptions): Promise<import('./search-index').CreateSearchIndexResult>;
+    createSearchIndexes(specs: import('./search-index').SearchIndexSpec[]): Promise<string[]>;
+    listSearchIndexes(options?: import('./search-index').ListSearchIndexesOptions): Promise<import('./search-index').SearchIndexInfo[]>;
+    getSearchIndex(name: string): Promise<import('./search-index').SearchIndexInfo>;
+    updateSearchIndex(name: string, definition: Record<string, unknown>): Promise<void>;
+    dropSearchIndex(name: string, options?: import('./search-index').DropSearchIndexOptions): Promise<void>;
+    waitForSearchIndex(name: string, options?: import('./search-index').WaitForSearchIndexOptions): Promise<import('./search-index').SearchIndexInfo>;
     prewarmBookmarks(keyDims?: unknown, pages?: number[]): Promise<BookmarkPrewarmResult>;
     listBookmarks(keyDims?: unknown): Promise<BookmarkListResult>;
     clearBookmarks(keyDims?: unknown): Promise<BookmarkClearResult>;

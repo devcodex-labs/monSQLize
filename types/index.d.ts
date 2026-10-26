@@ -8,6 +8,7 @@ export * from './mongodb';
 export * from './pool';
 export * from './runtime';
 export * from './saga';
+export * from './search-index';
 export * from './slow-query-log';
 export * from './sync';
 export * from './transaction';

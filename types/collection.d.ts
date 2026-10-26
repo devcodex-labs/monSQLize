@@ -1,4 +1,4 @@
-import type { ChangeStream, Document, FindOptions as MongoFindOptions, Sort } from 'mongodb';
+import type { ChangeStream, Document, FindOptions as MongoFindOptions, Sort } from 'mongodb'; import type { SearchIndexManagement } from './search-index';
 import type {
     MetaOptions,
     VectorSearchHit,
@@ -685,7 +685,7 @@ export interface AdminAccessor {
     stats(options?: { scale?: number; }): Promise<DbStatsView>;
 }
 
-export interface Collection<TSchema = any> {
+export interface Collection<TSchema = any> extends SearchIndexManagement {
     /** Returns the namespace descriptor (iid, db, collection) for this collection. */
     getNamespace(): { iid: string; type: 'mongodb'; db: string; collection: string; pool?: string; };
     /** Returns the underlying native MongoDB Collection object. */
