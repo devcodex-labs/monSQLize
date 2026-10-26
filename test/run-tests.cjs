@@ -53,6 +53,7 @@ const UNIT = [
     'test/unit/expression/expression.test.js',
     'test/unit/expression/operators.test.js',
     'test/unit/errors/errors.test.js',
+    'test/unit/search-indexes/search-indexes.test.js',
     'test/unit/management/management.test.js',
     'test/unit/writes/batch.test.js',
     'test/unit/cache/cache.test.js',
@@ -131,6 +132,7 @@ const UNIT = [
 ];
 
 const INTEGRATION = [
+    'test/integration/search-indexes/unsupported.test.js',
     'test/integration/mongodb/review-repair-regressions.test.js',
     'test/integration/model/review-model-regressions.test.js',
     'test/integration/slow-query-log/review-storage-regressions.test.js',

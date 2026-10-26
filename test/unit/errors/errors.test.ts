@@ -35,6 +35,7 @@ describe('Error system: ErrorCodes', () => {
             'WRITE_CONFLICT', 'LOCK_ACQUIRE_FAILED', 'LOCK_TIMEOUT',
             'MODEL_NOT_DEFINED', 'NO_POOL_MANAGER', 'POOL_NOT_FOUND',
             'INVALID_MODEL_DEFINITION', 'INVALID_SCHEMA_TYPE',
+            'INVALID_SEARCH_INDEX_DEFINITION', 'SEARCH_INDEX_EXISTS', 'SEARCH_INDEX_NOT_FOUND', 'SEARCH_INDEX_UNSUPPORTED', 'SEARCH_INDEX_BUILD_FAILED', 'SEARCH_INDEX_WAIT_TIMEOUT',
         ];
         for (const code of expected) {
             assert.equal(
