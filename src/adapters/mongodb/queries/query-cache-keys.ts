@@ -40,9 +40,12 @@ function normalizeFindPageLimit(limit: number | undefined, defaults: RuntimeDefa
 
 function documentReadKey<TSchema extends Document>(
     operation: string, collection: Collection<TSchema>, defaults: RuntimeDefaults,
-    query: unknown, options?: Record<string, unknown>, field?: string,
+    query: unknown, options?: Record<string, unknown>, field?: string, queryPrepared = false,
 ): string {
-    const captured = snapshotReadInputs(normalizeQueryForCache(query, defaults), options, collection.bsonOptions);
+    // A prepared query is the exact filter sent to the driver (already ObjectId-converted, then
+    // snapshotted with toBSON resolved). Converting it again would key a different query than ran.
+    const keyQuery = queryPrepared ? (query ?? {}) : normalizeQueryForCache(query, defaults);
+    const captured = snapshotReadInputs(keyQuery, options, collection.bsonOptions);
     const keyOptions = buildResultCacheKeyOptions(captured.options, collection.bsonOptions);
     if (operation === 'count') delete keyOptions.fieldsAsRaw;
     const body = field === undefined ? stableCacheKeyString(captured.query, 'document')
@@ -55,11 +58,12 @@ export function buildFindCacheKey<TSchema extends Document = Document>(
     defaults: RuntimeDefaults = {},
     query?: unknown,
     options?: Record<string, unknown>,
+    queryPrepared = false,
 ): string {
     return documentReadKey('find', collection, defaults, query, normalizeFindProjectionOptions({
         limit: defaults.findLimit,
         ...(options ?? {}),
-    }));
+    }), undefined, queryPrepared);
 }
 
 export function buildFindOneCacheKey<TSchema extends Document = Document>(
@@ -67,8 +71,9 @@ export function buildFindOneCacheKey<TSchema extends Document = Document>(
     defaults: RuntimeDefaults = {},
     query?: unknown,
     options?: Record<string, unknown>,
+    queryPrepared = false,
 ): string {
-    return documentReadKey('findOne', collection, defaults, query, normalizeFindProjectionOptions(options));
+    return documentReadKey('findOne', collection, defaults, query, normalizeFindProjectionOptions(options), undefined, queryPrepared);
 }
 
 export function buildCountCacheKey<TSchema extends Document = Document>(
@@ -76,8 +81,9 @@ export function buildCountCacheKey<TSchema extends Document = Document>(
     defaults: RuntimeDefaults = {},
     query?: unknown,
     options?: Record<string, unknown>,
+    queryPrepared = false,
 ): string {
-    return documentReadKey('count', collection, defaults, query, options);
+    return documentReadKey('count', collection, defaults, query, options, undefined, queryPrepared);
 }
 
 export function buildDistinctCacheKey<TSchema extends Document = Document>(
@@ -86,8 +92,9 @@ export function buildDistinctCacheKey<TSchema extends Document = Document>(
     field: string,
     query?: unknown,
     options?: Record<string, unknown>,
+    queryPrepared = false,
 ): string {
-    return documentReadKey('distinct', collection, defaults, query, options, field);
+    return documentReadKey('distinct', collection, defaults, query, options, field, queryPrepared);
 }
 
 export function buildAggregateCacheKey<TSchema extends Document = Document>(

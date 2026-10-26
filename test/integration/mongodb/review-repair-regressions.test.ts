@@ -706,3 +706,53 @@ describe('review repair query contracts against native MongoDB', () => {
         }
     });
 });
+
+describe('read cache keys match the executed filter when autoConvertObjectId is on', () => {
+    const bootstrap = createMemoryServerBootstrap();
+    const hex = 'aaaaaaaaaaaaaaaaaaaaaaaa';
+    let runtime: any, col: any;
+
+    before(async () => {
+        const { uri } = await bootstrap.setup();
+        runtime = new MonSQLize({ type: 'mongodb', databaseName: 'cache_key_tobson', config: { uri },
+            cache: { maxEntries: 1000, defaultTtl: 60000 }, autoConvertObjectId: true });
+        await runtime.connect();
+        col = runtime.collection('collision');
+    });
+    after(async () => {
+        try { if (runtime) await runtime.close(); } finally { await bootstrap.teardown(); }
+    });
+    beforeEach(async () => {
+        await col.raw().deleteMany({}); await runtime.getCache().clear();
+        await col.raw().insertMany([{ _id: hex, kind: 'string' }, { _id: new ObjectId(hex), kind: 'objectId' }]);
+    });
+
+    const toBsonFilter = () => ({ toBSON: () => ({ _id: hex }) });
+    const objectIdFilter = () => ({ _id: new ObjectId(hex) });
+
+    it('find: a toBSON string-_id query does not share a cache entry with the ObjectId query', async () => {
+        assert.deepEqual((await col.find(toBsonFilter(), { cache: 60000 })).map((d: any) => d.kind), ['string']);
+        assert.deepEqual((await col.find(objectIdFilter(), { cache: 60000 })).map((d: any) => d.kind), ['objectId']);
+        assert.deepEqual((await col.find(toBsonFilter(), { cache: 60000 })).map((d: any) => d.kind), ['string']);
+    });
+
+    it('findOne: toBSON and ObjectId filters are cached separately', async () => {
+        assert.equal((await col.findOne(toBsonFilter(), { cache: 60000 }))?.kind, 'string');
+        assert.equal((await col.findOne(objectIdFilter(), { cache: 60000 }))?.kind, 'objectId');
+    });
+
+    it('count and distinct: toBSON and ObjectId filters are cached separately', async () => {
+        await col.raw().deleteOne({ _id: new ObjectId(hex) });
+        assert.equal(await col.count(toBsonFilter(), { cache: 60000 }), 1);
+        assert.equal(await col.count(objectIdFilter(), { cache: 60000 }), 0);
+        assert.deepEqual(await col.distinct('kind', toBsonFilter(), { cache: 60000 }), ['string']);
+        assert.deepEqual(await col.distinct('kind', objectIdFilter(), { cache: 60000 }), []);
+    });
+
+    it('plain string _id filters still convert and share the ObjectId cache entry', async () => {
+        assert.deepEqual((await col.find({ _id: hex }, { cache: 60000 })).map((d: any) => d.kind), ['objectId']);
+        assert.deepEqual((await col.find(objectIdFilter(), { cache: 60000 })).map((d: any) => d.kind), ['objectId']);
+        assert.equal((await col.findOne({ _id: hex }, { cache: 60000 }))?.kind, 'objectId');
+        assert.equal(await col.count({ _id: hex }, { cache: 60000 }), 1);
+    });
+});

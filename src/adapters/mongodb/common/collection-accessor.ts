@@ -262,7 +262,7 @@ export class MongoCollectionAccessor<TSchema extends Document = Document> {
             && !hasSessionOption(driverOptions)
             && !(await isCollectionCacheBarrierActive(this.management.queryCache, this.collectionRef, this.management.defaults))
         ) {
-            const cacheKey = buildFindOneCacheKey(this.collectionRef, this.management.defaults, normalizedQuery, driverOptions);
+            const cacheKey = buildFindOneCacheKey(this.collectionRef, this.management.defaults, normalizedQuery, driverOptions, true);
             const result = await readThroughCache(this.management.queryCache, cacheKey, cacheTTL, () => findOneDocument(this.collectionRef, normalizedQuery, driverOptions as Parameters<Collection<TSchema>['findOne']>[1]));
             return wrapQueryResultWithMeta(this.collectionRef, this.management.defaults, 'findOne', rawOptions, startTs, result) as never;
         }
@@ -339,7 +339,7 @@ export class MongoCollectionAccessor<TSchema extends Document = Document> {
             && !hasSessionOption(keyOptions)
             && !(await isCollectionCacheBarrierActive(this.management.queryCache, this.collectionRef, this.management.defaults))
         ) {
-            const cacheKey = buildCountCacheKey(this.collectionRef, this.management.defaults, normalizedQuery, keyOptions);
+            const cacheKey = buildCountCacheKey(this.collectionRef, this.management.defaults, normalizedQuery, keyOptions, true);
             const result = await readThroughCache(this.management.queryCache, cacheKey, cacheTTL,
                 () => countQueue ? countQueue.execute(executeCount, { signal: callerSignal }) : executeCount());
             if (callerSignal?.aborted) throw createError(ErrorCodes.INVALID_OPERATION, 'Count operation aborted');
@@ -447,7 +447,7 @@ export class MongoCollectionAccessor<TSchema extends Document = Document> {
             && !hasSessionOption(driverOptions)
             && !(await isCollectionCacheBarrierActive(this.management.queryCache, this.collectionRef, this.management.defaults))
         ) {
-            const cacheKey = buildDistinctCacheKey(this.collectionRef, this.management.defaults, key, normalizedQuery, driverOptions);
+            const cacheKey = buildDistinctCacheKey(this.collectionRef, this.management.defaults, key, normalizedQuery, driverOptions, true);
             const result = await readThroughCache(this.management.queryCache, cacheKey, cacheTTL, executeDistinct);
             return wrapQueryResultWithMeta(this.collectionRef, this.management.defaults, 'distinct', rawOptions, startTs, result) as never;
         }

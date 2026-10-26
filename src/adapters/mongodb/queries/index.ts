@@ -301,7 +301,7 @@ export class FindChain<TSchema extends Document = Document> implements FindChain
             && !hasSessionOption(executeOptions)
             && !(await isCollectionCacheBarrierActive(this.queryCache, this.collection, this.defaults))
         ) {
-            const cacheKey = buildFindCacheKey(this.collection, this.defaults, prepared.query, executeOptions);
+            const cacheKey = buildFindCacheKey(this.collection, this.defaults, prepared.query, executeOptions, true);
             const result = await readThroughCache(this.queryCache, cacheKey, cacheTTL, () => this.runToArray(prepared));
             return this.wrapResult('find', startTs, result) as TSchema[] | ResultWithMeta<TSchema[]>;
         }
