@@ -2,7 +2,11 @@
 
 ## Changes after v3.3.3
 
-No changes have been staged after 3.3.3. The schema-dsl 3.0.5 upgrade is assigned to the [3.3.3 versioned notes](./v3.3.3.md). Publication is established by the npm registry and immutable tag, not this file.
+The schema-dsl 3.0.5 upgrade is assigned to the [3.3.3 versioned notes](./v3.3.3.md). Publication is established by the npm registry and immutable tag, not this file.
+
+- Key cached `find`, `findOne`, `count` and `distinct` reads by the exact filter sent to MongoDB. With `autoConvertObjectId`, a filter whose `toBSON()` yields a 24-hex string `_id` no longer shares a cache entry with the equivalent `ObjectId` query; plain string filters still convert and share keys as before. Uncached results, invalidation descriptors and public signatures are unchanged.
+- Let a health check whose ping hangs past `timeout` keep counting failures: later checks wait on the same pending ping instead of skipping, so the pool reaches `down` after `retries` timeouts. Still only one ping per pool is in flight, and a late ping result cannot overwrite newer status.
+- Refresh lockfile-only security patches: `fast-uri` 3.1.9 (production, via schema-dsl/ajv; clears 4 GHSA advisories that failed `test:audit`), dev-only `follow-redirects` 1.16.2 and overridden `brace-expansion` 1.1.21/5.0.12. No direct dependency version changes.
 
 ## Archived preparation notes for the 3.3.2 candidate
 
