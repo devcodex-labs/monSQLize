@@ -61,6 +61,8 @@ interface SearchIndexInfo {
 | `dropSearchIndex` | 索引不存在时以 `SEARCH_INDEX_NOT_FOUND` 拒绝；传 `ignoreMissing: true` 则直接返回。 |
 | `waitForSearchIndex` | 每隔 `intervalMs` 查询一次，规则见下表。 |
 
+> **vectorSearch 更新限制**：部分部署会拒绝对 `vectorSearch` 索引执行 `updateSearchIndex`（以及 `createSearchIndex` 的 `ifExists: 'update'`）。已在 `mongodb/mongodb-atlas-local`（mongod 8.3.13）上观察到，服务端返回 `BadValue`（2）`"mappings" is required`；MongoDB Atlas 上的行为未经测试。monSQLize 原样透出服务端错误（`MONGODB_ERROR`，带 `serverCode`），不会自动降级。需要改定义时，先删除索引，等待 `dropped`，再重新创建；期间索引不可查询。
+
 `status` 原样透传服务端的值。判断能否检索看 `queryable`，展示进度看 `status`。
 
 ### 索引类型

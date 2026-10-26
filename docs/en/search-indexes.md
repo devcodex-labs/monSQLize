@@ -61,6 +61,8 @@ interface SearchIndexInfo {
 | `dropSearchIndex` | A missing index rejects with `SEARCH_INDEX_NOT_FOUND` unless `ignoreMissing: true`. |
 | `waitForSearchIndex` | Polls once per `intervalMs`. See the table below. |
 
+> **vectorSearch update limitation.** Some deployments reject `updateSearchIndex` (and `createSearchIndex` with `ifExists: 'update'`) on a `vectorSearch` index. This was observed on `mongodb/mongodb-atlas-local` with mongod 8.3.13, where the server answers `BadValue` (2) `"mappings" is required`. Behavior on MongoDB Atlas was not tested. monSQLize passes the server error through as `MONGODB_ERROR` with `serverCode` and does not fall back automatically. To change the definition there, drop the index, wait for `dropped`, and create it again; the index is not queryable in between.
+
 `status` passes the server value through unchanged. Use `queryable` to decide whether searches can run and `status` to show progress.
 
 ### Index type
