@@ -28,6 +28,11 @@ if (!uri) {
 const { MongoClient } = require('mongodb');
 const MonSQLize = require(path.join(root, 'dist', 'cjs', 'index.cjs'));
 
+function isKnownVectorUpdateLimitation(error) {
+    const cause = error && error.cause;
+    return Boolean(error && error.code === 'MONGODB_ERROR' && cause && cause.code === 2 && /"mappings" is required/.test(String(cause.message || '')));
+}
+
 const REPS = Number(process.env.SEARCH_INDEX_REAL_REPS || 20);
 const SIZES = String(process.env.SEARCH_INDEX_REAL_SIZES || '1000,50000').split(',').map((v) => Number(v.trim())).filter((v) => v > 0);
 const DIMS = Number(process.env.SEARCH_INDEX_REAL_DIMS || 64);
@@ -91,18 +96,27 @@ async function main() {
         step('vector.query', hits.ok && Array.isArray(hits.value) && hits.value.length > 0, hits.ok ? { hits: hits.value.length } : { error: errInfo(hits.error) });
 
         const v1 = q1.latestDefinitionVersion && q1.latestDefinitionVersion.version;
-        await docs.updateSearchIndex('vec_idx', vectorDef([{ type: 'filter', path: 'tenantId' }]));
+        const vecUpdate = await attempt(() => docs.updateSearchIndex('vec_idx', vectorDef([{ type: 'filter', path: 'tenantId' }])));
+        // DEC-A06-2: some deployments (observed: atlas-local mongod 8.3.13) reject vectorSearch updates with
+        // BadValue(2) '"mappings" is required'. Only that exact rejection is a known environment limitation.
+        const vecUpdateKnownLimitation = !vecUpdate.ok && isKnownVectorUpdateLimitation(vecUpdate.error);
+        if (!vecUpdate.ok && !vecUpdateKnownLimitation) throw vecUpdate.error;
+        if (vecUpdateKnownLimitation) {
+            report.knownEnvironmentLimitations = report.knownEnvironmentLimitations || [];
+            report.knownEnvironmentLimitations.push({ step: 'vector.update', status: 'known-environment-limitation', error: errInfo(vecUpdate.error), workaround: 'drop the index, wait for dropped, create it again' });
+            console.log(`[search-index-real] KNOWN-LIMITATION vector.update ${JSON.stringify(errInfo(vecUpdate.error))}`);
+        }
         const afterUpdateStatuses = [];
         let afterUpdate;
         const deadline = now() + TIMEOUT_MS;
-        while (now() < deadline) {
+        while (vecUpdate.ok && now() < deadline) {
             afterUpdate = await docs.getSearchIndex('vec_idx');
             afterUpdateStatuses.push(`${afterUpdate.status}/${afterUpdate.queryable}`);
             if (afterUpdate.latestDefinitionVersion && afterUpdate.latestDefinitionVersion.version !== v1 && afterUpdate.status === 'READY') break;
             await sleep(500);
         }
         const v2 = afterUpdate && afterUpdate.latestDefinitionVersion && afterUpdate.latestDefinitionVersion.version;
-        step('vector.update', v2 !== undefined && v2 !== v1, { versionBefore: v1, versionAfter: v2, queryableDuringRebuild: afterUpdateStatuses.every((s) => s.endsWith('true')), statuses: [...new Set(afterUpdateStatuses)] });
+        if (vecUpdate.ok) step('vector.update', v2 !== undefined && v2 !== v1, { versionBefore: v1, versionAfter: v2, queryableDuringRebuild: afterUpdateStatuses.every((s) => s.endsWith('true')), statuses: [...new Set(afterUpdateStatuses)] });
 
         // OA1: same-definition update
         const before = await docs.getSearchIndex('vec_idx');
