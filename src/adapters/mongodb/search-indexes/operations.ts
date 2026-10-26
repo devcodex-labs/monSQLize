@@ -33,7 +33,7 @@ async function fetchByName(ctx: SearchIndexContext, operation: string, name: str
     try {
         // The driver cursor honors options.signal at runtime although ListSearchIndexesOptions does not declare it.
         const docs = await ctx.collection.listSearchIndexes(name, signal ? { signal } : {}).toArray();
-        const match = docs.find((doc) => doc.name === name) ?? docs[0];
+        const match = docs.find((doc) => doc.name === name);
         return match ? normalizeSearchIndexInfo(match) : missingSearchIndexInfo(name);
     } catch (error) {
         if (signal?.aborted) throw signal.reason;
@@ -241,6 +241,7 @@ export async function waitForSearchIndexOp(
             link.dispose();
         }
         last = info;
+        if (signal?.aborted) throw signal.reason;
 
         if (until === 'dropped') {
             if (info.status === 'DOES_NOT_EXIST') return info;

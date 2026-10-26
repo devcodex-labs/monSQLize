@@ -6,7 +6,7 @@
 import { ErrorCodes, createError } from '../../../core/errors';
 import type { MonSQLizeError } from '../../../core/errors';
 
-export type SearchIndexErrorKind = 'exists' | 'unsupported' | 'notFound' | 'invalid' | 'namespaceNotFound' | 'other';
+export type SearchIndexErrorKind = 'exists' | 'unsupported' | 'notFound' | 'namespaceNotFound' | 'other';
 
 const CODE_INDEX_ALREADY_EXISTS = 68;
 const CODE_INDEX_NOT_FOUND = 27;
@@ -15,11 +15,8 @@ const CODE_COMMAND_NOT_FOUND = 59;
 const CODE_COMMAND_NOT_SUPPORTED = 115;
 /** mongod 7.0 without Atlas: "$listSearchIndexes stage is only allowed on MongoDB Atlas" (observed on memory-server 7.0.37). */
 const CODE_LIST_SEARCH_ATLAS_ONLY = 6047401;
-const CODE_BAD_VALUE = 2;
-const CODE_FAILED_TO_PARSE = 9;
-const CODE_INVALID_OPTIONS = 72;
 
-const UNSUPPORTED_MESSAGE = /search index commands are only supported|mongot|atlas search|\$listSearchIndexes stage is only allowed/i;
+const UNSUPPORTED_MESSAGE = /search index commands are only supported|\$listSearchIndexes stage is only allowed/i;
 
 function readCode(error: unknown): { code?: number; codeName?: string; message: string; } {
     const e = error as { code?: unknown; codeName?: unknown; message?: unknown; } | null;
@@ -37,10 +34,10 @@ export function classifySearchIndexError(error: unknown): SearchIndexErrorKind {
     if (code === CODE_INDEX_NOT_FOUND || codeName === 'IndexNotFound') return 'notFound';
     if (code === CODE_COMMAND_NOT_FOUND || code === CODE_COMMAND_NOT_SUPPORTED || code === CODE_LIST_SEARCH_ATLAS_ONLY
         || codeName === 'CommandNotFound' || codeName === 'CommandNotSupported' || codeName === 'SearchNotEnabled') return 'unsupported';
-    if (code === CODE_BAD_VALUE || code === CODE_FAILED_TO_PARSE || code === CODE_INVALID_OPTIONS
-        || codeName === 'BadValue' || codeName === 'FailedToParse' || codeName === 'InvalidOptions') return 'invalid';
-    if (UNSUPPORTED_MESSAGE.test(message)) return 'unsupported';
+    // Generic BadValue/FailedToParse/InvalidOptions (2/9/72) are not mapped to INVALID_SEARCH_INDEX_DEFINITION
+    // until atlas-local confirms which codes mean "definition rejected" (A06 / OA5); they surface as MONGODB_ERROR.
     if (code === undefined && codeName === undefined && /already exists/i.test(message)) return 'exists';
+    if (UNSUPPORTED_MESSAGE.test(message)) return 'unsupported';
     return 'other';
 }
 
@@ -83,9 +80,7 @@ export function mapSearchIndexError(error: unknown, ctx: ErrorContext): Error {
         return searchIndexError(ErrorCodes.SEARCH_INDEX_NOT_FOUND, `Search index "${ctx.indexName}" was not found`, ctx, server, error);
     case 'unsupported':
         return searchIndexError(ErrorCodes.SEARCH_INDEX_UNSUPPORTED, 'This deployment does not support Search index commands (requires Atlas, MongoDB 8.2+ with mongot, or mongodb-atlas-local)', ctx, server, error);
-    case 'invalid':
-        return searchIndexError(ErrorCodes.INVALID_SEARCH_INDEX_DEFINITION, `Server rejected Search index definition: ${message}`, ctx, server, error);
     default:
-        return attachContext(error, ctx);
+        return attachContext(searchIndexError(ErrorCodes.MONGODB_ERROR, `${ctx.operation} failed: ${message}`, ctx, server, error), ctx);
     }
 }
