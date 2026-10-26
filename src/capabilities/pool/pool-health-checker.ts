@@ -31,7 +31,7 @@ export class HealthChecker {
     private readonly _checkConfigs = new Map<string, Record<string, unknown>>();
     private readonly _clients = new Map<string, unknown>();
     private readonly _intervals = new Map<string, ReturnType<typeof setInterval>>();
-    private readonly _inProgress = new Map<string, { client: unknown; promise: Promise<unknown> }>();
+    private readonly _inProgress = new Map<string, { client: unknown; promise: Promise<unknown>; awaited: boolean }>();
     private readonly _epochs = new Map<string, number>();
     private readonly _pingOverride?: (poolName: string) => Promise<unknown>;
     _started = false;
@@ -119,16 +119,27 @@ export class HealthChecker {
         const status = this._healthStatus.get(poolName);
         if (!status) return;
         const client = this._clients.get(poolName) ?? this._poolManager?._getPool(poolName);
-        if (this._inProgress.get(poolName)?.client === client && this._inProgress.has(poolName)) return;
+        const pending = this._inProgress.get(poolName);
+        // One ping per pool at a time. A check already waiting on it owns the result; once that
+        // wait timed out, later checks wait on the same hung ping again so every timeout window
+        // still counts as a failure and `retries` can be reached without stacking new pings.
+        if (pending && pending.client === client && pending.awaited) return;
         const epoch = this._epochs.get(poolName);
-        const promise = Promise.resolve().then(() => {
-            if (this._epochs.get(poolName) !== epoch || this._healthStatus.get(poolName) !== status) return;
-            return this._pingOverride ? this._pingOverride(poolName) : this._pingPool(poolName);
-        });
-        const operation = { client, promise };
-        this._inProgress.set(poolName, operation);
-        const clearPending = () => { if (this._inProgress.get(poolName) === operation) this._inProgress.delete(poolName); };
-        void promise.then(clearPending, clearPending);
+        let operation: { client: unknown; promise: Promise<unknown>; awaited: boolean };
+        if (pending && pending.client === client) {
+            operation = pending;
+        } else {
+            const promise = Promise.resolve().then(() => {
+                if (this._epochs.get(poolName) !== epoch || this._healthStatus.get(poolName) !== status) return;
+                return this._pingOverride ? this._pingOverride(poolName) : this._pingPool(poolName);
+            });
+            operation = { client, promise, awaited: true };
+            this._inProgress.set(poolName, operation);
+            const clearPending = () => { if (this._inProgress.get(poolName) === operation) this._inProgress.delete(poolName); };
+            void promise.then(clearPending, clearPending);
+        }
+        operation.awaited = true;
+        const promise = operation.promise;
         let timer: ReturnType<typeof setTimeout> | undefined;
         let lastError: Error | null = null;
         try {
@@ -137,7 +148,7 @@ export class HealthChecker {
                 timer.unref?.();
             })]);
         } catch (error) { lastError = error instanceof Error ? error : new Error(String(error)); }
-        finally { if (timer) clearTimeout(timer); }
+        finally { if (timer) clearTimeout(timer); operation.awaited = false; }
         if (this._epochs.get(poolName) !== epoch || this._healthStatus.get(poolName) !== status) return;
         status.lastCheck = new Date();
         if (!lastError) {

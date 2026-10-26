@@ -236,6 +236,45 @@ describe('P4-B pool manager', () => {
         await manager.close();
     });
 
+    it('marks a pool down after retries timeouts when its ping hangs forever', async () => {
+        // Health-check timers are unref'd; keep the loop alive while the ping hangs.
+        const keepAlive = setInterval(() => undefined, 1000);
+        try {
+            const checker = new MonSQLize.HealthChecker({ logger: { info: () => undefined } });
+            let pings = 0;
+            checker.register(
+                { name: 'hung', healthCheck: { timeout: 5, retries: 3 } },
+                { db: () => ({ command: () => { pings++; return new Promise(() => undefined); } }) },
+            );
+            await checker.checkPool('hung');
+            assert.equal(checker.getStatus('hung')?.consecutiveFailures, 1);
+            assert.equal(checker.getStatus('hung')?.status, 'up');
+            await checker.checkPool('hung');
+            await checker.checkPool('hung');
+            assert.equal(pings, 1, 'the hung ping is reused, not stacked');
+            assert.equal(checker.getStatus('hung')?.consecutiveFailures, 3);
+            assert.equal(checker.getStatus('hung')?.status, 'down');
+        } finally { clearInterval(keepAlive); }
+    });
+
+    it('does not let a late ping result rewrite status after the check timed out', async () => {
+        // Health-check timers are unref'd; keep the loop alive while the ping hangs.
+        const keepAlive = setInterval(() => undefined, 1000);
+        try {
+            const checker = new MonSQLize.HealthChecker({ logger: { info: () => undefined } });
+            let resolveLate: (() => void) | undefined;
+            checker.register(
+                { name: 'late', healthCheck: { timeout: 5, retries: 1 } },
+                { db: () => ({ command: () => new Promise<void>((resolve) => { resolveLate = resolve; }) }) },
+            );
+            await checker.checkPool('late');
+            assert.equal(checker.getStatus('late')?.status, 'down');
+            resolveLate?.();
+            await new Promise((resolve) => setImmediate(resolve));
+            assert.equal(checker.getStatus('late')?.status, 'down');
+        } finally { clearInterval(keepAlive); }
+    });
+
     it('clears and unreferences HealthChecker ping timeout handles', async () => {
         const originalSetTimeout = globalThis.setTimeout;
         const originalClearTimeout = globalThis.clearTimeout;
