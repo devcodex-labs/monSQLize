@@ -4,7 +4,7 @@
 
 ## Prerequisites
 
-This API requires a MongoDB deployment that supports Vector Search and a Vector Search index that already exists. monSQLize does not create, update, or delete Vector Search indexes in this release. Configure the index and make its vector dimensions, numeric representation, and indexed path match the embeddings you send to the API. See the [MongoDB `$vectorSearch` reference](https://www.mongodb.com/docs/vector-search/query/aggregation-stages/vector-search-stage/) for deployment and index requirements.
+This API requires a MongoDB deployment that supports Vector Search and a Vector Search index that already exists. Since v3.4.0 you can manage the index with the [Search index lifecycle API](search-indexes.md). Configure the index and make its vector dimensions, numeric representation, and indexed path match the embeddings you send to the API. See the [MongoDB `$vectorSearch` reference](https://www.mongodb.com/docs/vector-search/query/aggregation-stages/vector-search-stage/) for deployment and index requirements.
 
 `$vectorSearch` must be the first aggregation stage. It is also not supported inside a `$lookup` sub-pipeline or `$facet`, so use this collection-level API as the search entry point and enrich the resulting documents afterwards when needed.
 

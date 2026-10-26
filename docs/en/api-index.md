@@ -96,6 +96,7 @@ This index documents the current stable MongoDB adapter APIs and shared runtime 
 |----------|--------|-------------|
 | [Aggregation pipeline](aggregate.md) | `aggregate()` | Aggregation pipeline query |
 | [Vector search](vector-search.md) | Collection / Model `vectorSearch()` | MongoDB Vector Search query with Model soft-delete visibility when applicable |
+| [Search indexes](search-indexes.md) | Collection / Model `createSearchIndex()` and related methods | Create, inspect, update, drop, and wait for Search / Vector Search indexes |
 
 ---
 
@@ -172,6 +173,7 @@ This index documents the current stable MongoDB adapter APIs and shared runtime 
 
 - [Aggregation pipeline](aggregate.md) - Aggregation pipelines
 - [Vector search](vector-search.md) - MongoDB Vector Search queries
+- [Search indexes](search-indexes.md) - Search / Vector Search index lifecycle
 - [Query plans](explain.md) - Query plans
 - [Chain queries](chaining-api.md) - Chain queries
 

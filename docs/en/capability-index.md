@@ -14,7 +14,7 @@ Principles:
 | Layer | Current status | Scope |
 |-------|----------------|-------|
 | Shared runtime | Stable where exposed by the current runtime | Database cache, pools, transactions, model constraints, sync, slow-query logging, and runtime diagnostics |
-| MongoDB adapter | Stable | `collection()`, `db()`, `use()`, `pool()`, query/write helpers, aggregation, indexes, transactions, Change Streams |
+| MongoDB adapter | Stable | `collection()`, `db()`, `use()`, `pool()`, query/write helpers, aggregation, indexes, Search indexes, transactions, Change Streams |
 | MySQL adapter | Planned / in development | Future database-native adapter, no current public runtime API |
 | PostgreSQL adapter | Planned / in development | Future database-native adapter, no current public runtime API |
 

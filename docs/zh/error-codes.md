@@ -63,6 +63,12 @@ try {
 | `INVALID_OPERATION` | 查询重复执行、连接池全部不可用、事务状态不允许 | 是否重复 `toArray()`，池健康状态，事务生命周期 |
 | `INVALID_ARGUMENT` | 查询链参数、集合管理参数、函数缓存参数 | 参数类型、取值范围、非空字符串/对象/数组 |
 | `INVALID_VECTOR_SEARCH` | 本地 Vector Search 参数校验 | 向量索引/路径、有限 query vector、ANN/ENN 组合、filter/projection 形态 |
+| `INVALID_SEARCH_INDEX_DEFINITION` | Search 索引本地校验失败 | 索引名/类型/定义、vectorSearch fields、选项取值 |
+| `SEARCH_INDEX_EXISTS` | Search 索引同名已存在 | `ifExists` 选项、`createSearchIndexes` 中的重复名称 |
+| `SEARCH_INDEX_NOT_FOUND` | Search 索引不存在 | 索引名、集合、`ignoreMissing` |
+| `SEARCH_INDEX_UNSUPPORTED` | 部署不支持 Search 索引 | Atlas、带 mongot 的 MongoDB 8.2+ 或 mongodb-atlas-local |
+| `SEARCH_INDEX_BUILD_FAILED` | 等待期间索引构建失败 | `details[0].statusDetail`、索引定义 |
+| `SEARCH_INDEX_WAIT_TIMEOUT` | waitForSearchIndex 超时 | `timeoutMs`、`details[0].last` |
 | `INVALID_RELATION_SELECT` | relation 默认或 populate 字段选择超出 P0 包含式语法 | 只使用非空顶层包含字段 |
 | `RELATION_IN_USE` | 受保护 Model 删除发现已声明的入站引用 | 查看 `error.details[0].usages`，有意处理或保留引用 |
 | `RELATION_USAGE_UNAVAILABLE` | 受保护删除未能完成已声明关系扫描 | 查看 coverage/skipped，不要降级为未检查删除 |
@@ -186,6 +192,12 @@ try {
 - 检查参数的类型和取值范围
 - 确认参数组合是否合法
 - 参考 API 文档了解参数约束
+
+---
+
+#### SEARCH_INDEX_* / INVALID_SEARCH_INDEX_DEFINITION
+
+各码的触发条件见 [Search 索引生命周期](search-indexes.md)；由服务端错误映射而来时，驱动原错误保存在 `cause`。
 
 ---
 
@@ -978,6 +990,12 @@ try {
 | `VALIDATION_ERROR` | 验证 | 参数校验失败 |
 | `INVALID_ARGUMENT` | 验证 | 参数无效 |
 | `INVALID_VECTOR_SEARCH` | 向量查询 | 本地 Vector Search 参数无效 |
+| `INVALID_SEARCH_INDEX_DEFINITION` | Search 索引 | Search 索引本地校验失败 |
+| `SEARCH_INDEX_EXISTS` | Search 索引 | Search 索引同名已存在 |
+| `SEARCH_INDEX_NOT_FOUND` | Search 索引 | Search 索引不存在 |
+| `SEARCH_INDEX_UNSUPPORTED` | Search 索引 | 部署不支持 Search 索引 |
+| `SEARCH_INDEX_BUILD_FAILED` | Search 索引 | 等待期间索引构建失败 |
+| `SEARCH_INDEX_WAIT_TIMEOUT` | Search 索引 | waitForSearchIndex 超时 |
 | `INVALID_RELATION_SELECT` | 关系 | 不支持的 relation 包含式字段选择 |
 | `RELATION_IN_USE` | 关系 | 受保护删除发现已声明引用 |
 | `RELATION_USAGE_UNAVAILABLE` | 关系 | 受保护删除扫描 coverage 不完整或不可用 |

@@ -4,7 +4,7 @@
 
 ## 前置条件
 
-该 API 需要支持 Vector Search 的 MongoDB 部署，以及一个已经创建好的 Vector Search 索引。本版本 monSQLize 不创建、更新或删除 Vector Search 索引。请保证索引配置中的向量维度、数值表示和索引字段路径与传入 API 的 embedding 一致。部署和索引要求请参考 [MongoDB `$vectorSearch` 文档](https://www.mongodb.com/docs/vector-search/query/aggregation-stages/vector-search-stage/)。
+该 API 需要支持 Vector Search 的 MongoDB 部署，以及一个已经创建好的 Vector Search 索引。从 v3.4.0 起可以使用 [Search 索引生命周期 API](search-indexes.md) 管理该索引。请保证索引配置中的向量维度、数值表示和索引字段路径与传入 API 的 embedding 一致。部署和索引要求请参考 [MongoDB `$vectorSearch` 文档](https://www.mongodb.com/docs/vector-search/query/aggregation-stages/vector-search-stage/)。
 
 `$vectorSearch` 必须是聚合管道的第一个阶段；它也不能放在 `$lookup` 子管道或 `$facet` 中。因此应以集合级 API 作为检索入口，如需补充关联信息，再对命中文档做后续处理。
 

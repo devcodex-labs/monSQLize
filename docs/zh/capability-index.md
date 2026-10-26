@@ -13,7 +13,7 @@ monSQLize 是数据库原生的生产数据运行时增强层。当前稳定适�
 | 层级 | 当前状态 | 范围 |
 |------|----------|------|
 | 共享运行时 | 当前 runtime 已暴露能力稳定 | 数据库缓存、连接池、事务、模型约束、同步、慢查询日志与运行时诊断 |
-| MongoDB adapter | Stable | `collection()`、`db()`、`use()`、`pool()`、查询/写入增强、聚合、索引、事务、Change Streams |
+| MongoDB adapter | Stable | `collection()`、`db()`、`use()`、`pool()`、查询/写入增强、聚合、索引、Search 索引、事务、Change Streams |
 | MySQL adapter | Planned / in development | 后续数据库原生 adapter，当前暂无公开 runtime API |
 | PostgreSQL adapter | Planned / in development | 后续数据库原生 adapter，当前暂无公开 runtime API |
 

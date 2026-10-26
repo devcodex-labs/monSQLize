@@ -358,6 +358,7 @@ const sidebarSource: SidebarGroupSource[] = [
       { en: 'Create Indexes in Bulk', zh: '批量创建索引', link: '/create-indexes' },
       { en: 'Drop Index', zh: '删除索引', link: '/drop-index' },
       { en: 'List Indexes', zh: '列出索引', link: '/list-indexes' },
+      { en: 'Search Indexes', zh: 'Search 索引', link: '/search-indexes' },
       { en: 'Database Administration', zh: '数据库管理', link: '/admin' },
       { en: 'Error Code Reference', zh: '错误码参考', link: '/error-codes' },
       { en: 'Data Validation', zh: '数据验证', link: '/validation' },

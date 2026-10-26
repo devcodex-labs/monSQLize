@@ -66,6 +66,12 @@ See [Data Tasks](./data-tasks.md) for the preview, approval, apply, backup, and 
 | `INVALID_OPERATION` | The query is executed repeatedly, all connection pools are unavailable, and the transaction status is not allowed | Whether to repeat `toArray()`, pool health status, transaction life cycle |
 | `INVALID_ARGUMENT` | Query chain parameters, collection management parameters, function cache parameters | Parameter type, value range, non-empty string/object/array |
 | `INVALID_VECTOR_SEARCH` | Local Vector Search option validation | Vector index/path, finite query vector, ANN/ENN combination, filter/projection shape |
+| `INVALID_SEARCH_INDEX_DEFINITION` | Local Search index validation | Index name/type/definition, vectorSearch fields, option values |
+| `SEARCH_INDEX_EXISTS` | Search index name already exists | `ifExists` option, duplicate names in `createSearchIndexes` |
+| `SEARCH_INDEX_NOT_FOUND` | Search index target is missing | Index name, collection, `ignoreMissing` |
+| `SEARCH_INDEX_UNSUPPORTED` | Deployment lacks Search index support | Atlas, MongoDB 8.2+ with mongot, or mongodb-atlas-local |
+| `SEARCH_INDEX_BUILD_FAILED` | Search index build failed while waiting | `details[0].statusDetail`, index definition |
+| `SEARCH_INDEX_WAIT_TIMEOUT` | waitForSearchIndex timed out | `timeoutMs`, `details[0].last` |
 | `INVALID_RELATION_SELECT` | Relation default or populate selection is outside P0 inclusion syntax | Use non-empty top-level inclusion fields only |
 | `RELATION_IN_USE` | Protected Model deletion found declared inbound references | Inspect `error.details[0].usages`; remove or retain references intentionally |
 | `RELATION_USAGE_UNAVAILABLE` | Protected deletion could not complete its declared-relation scan | Inspect coverage/skipped details; do not retry as an unchecked delete |
@@ -195,6 +201,12 @@ try {
 - Check the type and value range of parameters
 - Confirm whether the parameter combination is legal
 - Refer to the API documentation for parameter constraints
+
+---
+
+### SEARCH_INDEX_* / INVALID_SEARCH_INDEX_DEFINITION
+
+See [Search index lifecycle](search-indexes.md) for when each code is raised; mapped server errors keep the driver error as `cause`.
 
 ---
 
@@ -1023,6 +1035,12 @@ try {
 | `VALIDATION_ERROR` | Verification | Parameter verification failed |
 | `INVALID_ARGUMENT` | Validation | Invalid parameter |
 | `INVALID_VECTOR_SEARCH` | Vector Search | Invalid local Vector Search option |
+| `INVALID_SEARCH_INDEX_DEFINITION` | Search indexes | Local Search index validation |
+| `SEARCH_INDEX_EXISTS` | Search indexes | Search index name already exists |
+| `SEARCH_INDEX_NOT_FOUND` | Search indexes | Search index target is missing |
+| `SEARCH_INDEX_UNSUPPORTED` | Search indexes | Deployment lacks Search index support |
+| `SEARCH_INDEX_BUILD_FAILED` | Search indexes | Search index build failed while waiting |
+| `SEARCH_INDEX_WAIT_TIMEOUT` | Search indexes | waitForSearchIndex timed out |
 | `INVALID_RELATION_SELECT` | Relations | Unsupported relation inclusion selection |
 | `RELATION_IN_USE` | Relations | Protected delete found declared references |
 | `RELATION_USAGE_UNAVAILABLE` | Relations | Protected delete scan coverage is incomplete or unavailable |
