@@ -1,8 +1,8 @@
 # Unreleased
 
-## Changes after v3.3.4 (planned 3.4.0, unreleased)
+## Changes after v3.4.0
 
-- Add the Search index lifecycle API on collection accessors and Models: `createSearchIndex`, `createSearchIndexes`, `listSearchIndexes`, `getSearchIndex`, `updateSearchIndex`, `dropSearchIndex`, and `waitForSearchIndex`, covering full-text `search` and `vectorSearch` indexes. Write methods follow `writePathPolicy` as `management` operations. `SearchIndexInfo` reports `typeSource` and infers the type from the definition when the server omits it (self-managed mongot). Six error codes are added: `INVALID_SEARCH_INDEX_DEFINITION`, `SEARCH_INDEX_EXISTS`, `SEARCH_INDEX_NOT_FOUND`, `SEARCH_INDEX_UNSUPPORTED`, `SEARCH_INDEX_BUILD_FAILED`, `SEARCH_INDEX_WAIT_TIMEOUT`. Purely additive; existing APIs, defaults, and dependency versions are unchanged. Whether a `vectorSearch` index can be updated in place depends on the deployment (rejected on mongodb-atlas-local 8.3.13, accepted on Community 8.2.12 with mongot; Atlas not tested); monSQLize passes server rejections through without fallback, and the docs describe a zero-downtime rename-and-switch pattern. An opt-in `npm run test:search-index:real` check runs against mongodb-atlas-local. The approved root CJS/ESM bundle budget rises from 820,000 to 840,000 bytes per artifact to fit this capability; the CLI budget stays 50,000 bytes. The documentation site's single JavaScript file budget rises from 700,000 to 720,000 bytes for the new Search index page. Publication is established by the npm registry and immutable tag, not this file.
+No changes have been staged after 3.4.0. The Search index lifecycle API is assigned to the [3.4.0 versioned notes](./v3.4.0.md). Publication is established by the npm registry and immutable tag, not this file.
 
 ## Archived preparation notes for the 3.3.2 candidate
 
