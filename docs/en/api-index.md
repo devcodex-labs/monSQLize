@@ -97,6 +97,7 @@ This index documents the current stable MongoDB adapter APIs and shared runtime 
 | [Aggregation pipeline](aggregate.md) | `aggregate()` | Aggregation pipeline query |
 | [Vector search](vector-search.md) | Collection / Model `vectorSearch()` | MongoDB Vector Search query with Model soft-delete visibility when applicable |
 | [Search indexes](search-indexes.md) | Collection / Model `createSearchIndex()` and related methods | Create, inspect, update, drop, and wait for Search / Vector Search indexes |
+| [GridFS](gridfs.md) | `msq.gridfs()` / Model `gridfs()` | Upload, download, and resume GridFS files |
 
 ---
 
@@ -174,6 +175,7 @@ This index documents the current stable MongoDB adapter APIs and shared runtime 
 - [Aggregation pipeline](aggregate.md) - Aggregation pipelines
 - [Vector search](vector-search.md) - MongoDB Vector Search queries
 - [Search indexes](search-indexes.md) - Search / Vector Search index lifecycle
+- [GridFS](gridfs.md) - GridFS upload, download, and resumable upload
 - [Query plans](explain.md) - Query plans
 - [Chain queries](chaining-api.md) - Chain queries
 
@@ -209,6 +211,7 @@ This index documents the current stable MongoDB adapter APIs and shared runtime 
 | [Create indexes in bulk](create-indexes.md) | Create indexes in bulk |
 | [Drop an index](drop-index.md) | Drop an index |
 | [List indexes](list-indexes.md) | List indexes |
+| [GridFS](gridfs.md) | GridFS buckets, ranges, and resumable upload |
 | [Find and count](find-and-count.md) | Find and count |
 | [Expression functions](expression-functions.md) | Expression functions |
 | [Quick upsert](quick-upsert.md) | Quick upsert |

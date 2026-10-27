@@ -40,6 +40,7 @@ type WritePathPolicyRule = {
   mode?: WritePathPolicyMode;
   raw?: 'inherit' | 'allow' | 'block';
   management?: 'inherit' | 'allow' | 'block';
+  gridfs?: 'inherit' | 'allow' | 'block';
   onViolation?: 'throw' | 'warn';
 };
 
@@ -54,6 +55,7 @@ type WritePathPolicyOptions = {
 | `mode` | `allow-both` | `allow-both` 允许 collection 与 Model 写入。`model-only` 会阻断直接 collection、db、legacy 写入，除非命名空间规则覆盖。 |
 | `raw` | `inherit` | 控制 `collection.raw()`、`db.raw()` 与 db command 入口。`model-only` 下继承为 `block`，`allow-both` 下继承为 `allow`。 |
 | `management` | `inherit` | 控制索引、集合、validator 等管理操作。`model-only` 下 Model 管理方法允许，直接 collection 管理方法阻断。 |
+| `gridfs` | `inherit` | 控制 `<bucket>.files` 上的 GridFS 写入。`inherit` 只在 `mode` 为 `allow-both` 时允许。`model-only` 下 `msq.gridfs()` 和 `model.gridfs()` 的写入都会被阻断。它与 `management` 分开。 |
 | `onViolation` | `throw` | `throw` 会拒绝操作；`warn` 只记录告警并放行。 |
 
 ## 命名空间匹配
@@ -76,7 +78,8 @@ type WritePathPolicyOptions = {
 
 - Collection 写操作：`insertOne`、`insertMany`、`updateOne`、`updateMany`、`replaceOne`、`findOneAndUpdate`、`findOneAndReplace`、`findOneAndDelete`、`upsertOne`、`deleteOne`、`deleteMany`。
 - 批量 helper：`insertBatch`、`updateBatch`、`deleteBatch`、`incrementOne`。
-- Collection 管理操作：索引创建/删除、集合创建/删除、validator、`renameCollection`、`collMod`、capped 转换。
+- Collection 管理操作：索引创建/删除、集合创建/删除、validator、`renameCollection`、`collMod`、capped 转换。`gridfs().drop()` 属于 management。`management` 为 `inherit` 且 `mode` 为 `model-only` 时，Model 的 drop 仍允许，实例 drop 被阻断。
+- GridFS 写入和 `ensureIndexes()`：类别 `gridfs`，命名空间 `<bucket>.files`。见 [GridFS](gridfs.md)。违规是 `INVALID_OPERATION`，`details[0].reason` 为 `WRITE_PATH_POLICY`，`details[0].category` 为 `gridfs`。
 - Raw/db/legacy 写入口：`collection.raw()`、`db.raw()`、`db.runCommand()`、`dropDatabase()`、legacy adapter 写操作。
 - 最后阶段包含 `$out` 或 `$merge` 的聚合管道；策略按实际写入目标 namespace 判断。
 

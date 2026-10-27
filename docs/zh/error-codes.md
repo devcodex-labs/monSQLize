@@ -69,6 +69,12 @@ try {
 | `SEARCH_INDEX_UNSUPPORTED` | 部署不支持 Search 索引 | Atlas、带 mongot 的 MongoDB 8.2+ 或 mongodb-atlas-local |
 | `SEARCH_INDEX_BUILD_FAILED` | 等待期间索引构建失败 | `details[0].statusDetail`、索引定义 |
 | `SEARCH_INDEX_WAIT_TIMEOUT` | waitForSearchIndex 超时 | `timeoutMs`、`details[0].last` |
+| `GRIDFS_FILE_NOT_FOUND` | GridFS 文件或可恢复会话不存在 | id、filename、`ignoreMissing` |
+| `GRIDFS_FILE_EXISTS` | GridFS 上传与已可见文件或未完成会话冲突 | `ifExists`、`sha256`、id |
+| `GRIDFS_INTEGRITY_MISMATCH` | GridFS 字节与声明的 sha256 或分片长度不符 | `details[0].expected`、`details[0].actual` |
+| `GRIDFS_UPLOAD_INCOMPLETE` | 可恢复上传 finalize 发现缺少分片 | `details[0].missingChunks` |
+| `GRIDFS_RESUME_MISMATCH` | 可恢复上传的 append 与已存储前缀不符 | `fromChunk`、`expectedNextChunk` |
+| `GRIDFS_RANGE_INVALID` | GridFS 下载区间不是合法半开区间 | `start`、`end`、`length` |
 | `INVALID_RELATION_SELECT` | relation 默认或 populate 字段选择超出 P0 包含式语法 | 只使用非空顶层包含字段 |
 | `RELATION_IN_USE` | 受保护 Model 删除发现已声明的入站引用 | 查看 `error.details[0].usages`，有意处理或保留引用 |
 | `RELATION_USAGE_UNAVAILABLE` | 受保护删除未能完成已声明关系扫描 | 查看 coverage/skipped，不要降级为未检查删除 |
@@ -198,6 +204,12 @@ try {
 #### SEARCH_INDEX_* / INVALID_SEARCH_INDEX_DEFINITION
 
 各码的触发条件见 [Search 索引生命周期](search-indexes.md)；由服务端错误映射而来时，驱动原错误保存在 `cause`。
+
+---
+
+#### GRIDFS_*
+
+各码的触发条件见 [GridFS](gridfs.md)。`downloadStream` 把不存在和区间错误发到流的 `'error'` 事件。其他驱动失败是 `MONGODB_ERROR`，驱动原错误保存在 `cause`。`writePathPolicy` 阻断仍是 `INVALID_OPERATION`，不是 GridFS 错误码，`details[0].reason` 为 `WRITE_PATH_POLICY`。
 
 ---
 
@@ -996,6 +1008,12 @@ try {
 | `SEARCH_INDEX_UNSUPPORTED` | Search 索引 | 部署不支持 Search 索引 |
 | `SEARCH_INDEX_BUILD_FAILED` | Search 索引 | 等待期间索引构建失败 |
 | `SEARCH_INDEX_WAIT_TIMEOUT` | Search 索引 | waitForSearchIndex 超时 |
+| `GRIDFS_FILE_NOT_FOUND` | GridFS | GridFS 文件或可恢复会话不存在 |
+| `GRIDFS_FILE_EXISTS` | GridFS | GridFS 上传与已有文件或会话冲突 |
+| `GRIDFS_INTEGRITY_MISMATCH` | GridFS | GridFS 字节与 sha256 或分片长度不符 |
+| `GRIDFS_UPLOAD_INCOMPLETE` | GridFS | 可恢复上传 finalize 发现缺少分片 |
+| `GRIDFS_RESUME_MISMATCH` | GridFS | 可恢复上传的 append 与已存储前缀不符 |
+| `GRIDFS_RANGE_INVALID` | GridFS | GridFS 下载区间无效 |
 | `INVALID_RELATION_SELECT` | 关系 | 不支持的 relation 包含式字段选择 |
 | `RELATION_IN_USE` | 关系 | 受保护删除发现已声明引用 |
 | `RELATION_USAGE_UNAVAILABLE` | 关系 | 受保护删除扫描 coverage 不完整或不可用 |
