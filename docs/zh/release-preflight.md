@@ -11,7 +11,7 @@ npm run release:preflight
 
 ## 它会做什么
 
-1. 拒绝存在未提交文件、无效安装依赖树或当前提交尚未推送到 `origin` 的候选版本。提交等于某个 `origin` 引用的尖端，或是某个 `origin` 分支（含 `origin/main` 与上游跟踪分支）的祖先时，视为已推送。`main` 出现更新的尖端不会把该祖先误判为未发布。浅克隆会先 fetch，必要时再 deepen 或 unshallow，直到能够判断祖先关系。从未推送的本地提交仍然失败。
+1. 拒绝存在未提交文件、无效安装依赖树或当前提交尚未推送到 `origin` 的候选版本。提交等于某个 `origin` 引用的尖端，或是某个 `origin` 分支（含 `origin/main` 与仅限 origin 的上游）的祖先时，视为已推送。`main` 出现更新的尖端不会把该祖先误判为未发布。浅克隆会先 fetch，必要时再 deepen 或 unshallow，直到能够判断祖先关系。从未推送的本地提交仍然失败。
 2. 检查 `package-lock.json` 是否与当前 `package.json` 版本一致，且不包含 `file:` / `workspace:` / sibling 本地路径残留。
 3. 检查当前 `package.json` 版本对应的 changelog 文件，以及包内 `MIGRATION.md` / `SECURITY.md` 是否存在。
 4. 检查工程治理必需文档是否存在：

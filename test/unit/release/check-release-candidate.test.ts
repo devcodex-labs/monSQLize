@@ -91,7 +91,7 @@ test('ancestor of origin/main passes the release-candidate check', () => {
         const publication = assertHeadPublished(work);
         assert.equal(publication.relationship, 'ancestor');
         assert.equal(publication.head, ancestor);
-        assert.ok(publication.refs.includes('origin/main'));
+        assert.ok(publication.refs.includes('refs/remotes/origin/main'));
     });
 });
 
@@ -116,8 +116,8 @@ test('ancestor of a non-main tracking branch passes the release-candidate check'
 
         const publication = assertHeadPublished(work);
         assert.equal(publication.relationship, 'ancestor');
-        assert.ok(publication.refs.includes('origin/release'));
-        assert.equal(publication.refs.includes('origin/main'), false);
+        assert.ok(publication.refs.includes('refs/remotes/origin/release'));
+        assert.equal(publication.refs.includes('refs/remotes/origin/main'), false);
     });
 });
 
@@ -135,7 +135,7 @@ test('depth-1 checkout of an origin/main ancestor passes after main moves', () =
         const publication = assertHeadPublished(shallow);
         assert.equal(publication.relationship, 'ancestor');
         assert.equal(publication.head, ancestor);
-        assert.ok(publication.refs.includes('origin/main'));
+        assert.ok(publication.refs.includes('refs/remotes/origin/main'));
         assert.equal(git(shallow, ['rev-parse', '--is-shallow-repository']), 'true');
     });
 });
@@ -154,11 +154,50 @@ test('depth-truncated origin/main still accepts an ancestor after history is dee
         git(shallow, ['fetch', '--depth', '1', 'origin', ancestor]);
         git(shallow, ['checkout', '--detach', 'FETCH_HEAD']);
         git(shallow, ['fetch', '--depth', '1', 'origin', '+refs/heads/*:refs/remotes/origin/*']);
-        assert.equal(gitStatus(shallow, ['merge-base', '--is-ancestor', 'HEAD', 'origin/main']), 1);
+        assert.equal(gitStatus(shallow, ['merge-base', '--is-ancestor', 'HEAD', 'refs/remotes/origin/main']), 1);
 
         const publication = assertHeadPublished(shallow);
         assert.equal(publication.relationship, 'ancestor');
         assert.equal(publication.head, ancestor);
-        assert.ok(publication.refs.includes('origin/main'));
+        assert.ok(publication.refs.includes('refs/remotes/origin/main'));
+    });
+});
+
+test('upstream outside refs/remotes/origin does not publish an unpushed commit', () => {
+    withPublishedBase(({ work }) => {
+        commitFile(work, 'local-only', 'local-only\n');
+        git(work, ['branch', 'feat', 'HEAD']);
+        git(work, ['branch', '--set-upstream-to=feat']);
+        assert.equal(git(work, ['rev-parse', '--symbolic-full-name', '@{upstream}']), 'refs/heads/feat');
+        assert.throws(
+            () => assertHeadPublished(work),
+            /HEAD [0-9a-f]{40} is not present on origin; push the reviewed commit before release preflight\./,
+        );
+    });
+
+    withPublishedBase(({ dir, work }) => {
+        commitFile(work, 'fork-only', 'fork-only\n');
+        const fork = path.join(dir, 'fork.git');
+        git(dir, ['init', '--bare', '-b', 'main', fork]);
+        git(work, ['remote', 'add', 'fork', toFileUrl(fork)]);
+        git(work, ['push', '-u', 'fork', 'HEAD:main']);
+        assert.equal(git(work, ['rev-parse', '--symbolic-full-name', '@{upstream}']), 'refs/remotes/fork/main');
+        assert.throws(
+            () => assertHeadPublished(work),
+            /HEAD [0-9a-f]{40} is not present on origin; push the reviewed commit before release preflight\./,
+        );
+    });
+});
+
+test('a local branch named origin/main does not publish an unpushed commit', () => {
+    withPublishedBase(({ work }) => {
+        commitFile(work, 'local-only', 'local-only\n');
+        git(work, ['branch', 'origin/main', 'HEAD']);
+        assert.equal(gitStatus(work, ['merge-base', '--is-ancestor', 'HEAD', 'origin/main']), 0);
+        assert.equal(gitStatus(work, ['merge-base', '--is-ancestor', 'HEAD', 'refs/remotes/origin/main']), 1);
+        assert.throws(
+            () => assertHeadPublished(work),
+            /HEAD [0-9a-f]{40} is not present on origin; push the reviewed commit before release preflight\./,
+        );
     });
 });

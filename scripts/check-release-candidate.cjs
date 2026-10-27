@@ -53,6 +53,10 @@ function refExists(cwd, ref) {
     return result.status === 0;
 }
 
+function isOriginRemoteBranch(name) {
+    return name.startsWith('refs/remotes/origin/') && name !== 'refs/remotes/origin/HEAD';
+}
+
 function remoteTipRefs(cwd, head) {
     const output = git(cwd, ['ls-remote', 'origin']).stdout;
     const refs = [];
@@ -64,25 +68,27 @@ function remoteTipRefs(cwd, head) {
     return refs;
 }
 
-function upstreamRef(cwd) {
-    const result = gitResult(cwd, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}']);
+function upstreamOriginRef(cwd) {
+    const result = gitResult(cwd, ['rev-parse', '--symbolic-full-name', '@{upstream}']);
     if (result.error) throw result.error;
     if (result.status !== 0) return null;
     const name = result.stdout.trim();
-    if (!name || name === '@{upstream}') return null;
+    // A local branch or another remote can be @{upstream}. Only origin's
+    // remote-tracking refs prove the commit was pushed to origin.
+    if (!isOriginRemoteBranch(name)) return null;
     return name;
 }
 
 function originBranchRefs(cwd) {
-    const output = git(cwd, ['for-each-ref', '--format=%(refname:short)', 'refs/remotes/origin']).stdout;
+    const output = git(cwd, ['for-each-ref', '--format=%(refname)', 'refs/remotes/origin']).stdout;
     const refs = new Set();
     for (const line of output.split(/\r?\n/)) {
         const name = line.trim();
-        if (!name || name === 'origin/HEAD') continue;
+        if (!isOriginRemoteBranch(name)) continue;
         refs.add(name);
     }
-    if (refExists(cwd, 'origin/main')) refs.add('origin/main');
-    const upstream = upstreamRef(cwd);
+    if (refExists(cwd, 'refs/remotes/origin/main')) refs.add('refs/remotes/origin/main');
+    const upstream = upstreamOriginRef(cwd);
     if (upstream && refExists(cwd, upstream)) refs.add(upstream);
     return [...refs];
 }
@@ -99,12 +105,10 @@ function refsContainingCommit(cwd, head) {
         if (result.status !== 1) throw gitFailure(['merge-base', '--is-ancestor', head, ref], result);
     }
 
-    const listed = gitResult(cwd, ['branch', '-r', '--contains', head]);
-    if (listed.error) throw listed.error;
-    if (listed.status !== 0) throw gitFailure(['branch', '-r', '--contains', head], listed);
+    const listed = git(cwd, ['for-each-ref', '--contains', head, '--format=%(refname)', 'refs/remotes/origin']);
     for (const line of listed.stdout.split(/\r?\n/)) {
-        const name = line.trim().replace(/^\*\s+/, '');
-        if (!name || name.includes('->')) continue;
+        const name = line.trim();
+        if (!isOriginRemoteBranch(name)) continue;
         containing.add(name);
     }
     return [...containing].sort();
@@ -131,7 +135,8 @@ function deepenShallowHistory(cwd, head) {
 
 /**
  * HEAD is published when it is the tip of an origin ref, or an ancestor of an
- * origin branch (at least origin/main and the upstream tracking branch).
+ * origin branch (at least refs/remotes/origin/main and an upstream ref only
+ * when that upstream is under refs/remotes/origin/).
  * Shallow clones fetch and deepen until that ancestry can be decided.
  * @param {string} cwd
  * @returns {{ head: string, refs: string[], relationship: 'tip' | 'ancestor' }}

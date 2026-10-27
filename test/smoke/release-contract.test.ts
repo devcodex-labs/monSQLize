@@ -63,7 +63,9 @@ test('release paths consume the complete single-source preflight gate', () => {
     assert.match(candidateCheck, /npm[\s\S]*ls[\s\S]*--all/);
     assert.match(candidateCheck, /git[\s\S]*ls-remote[\s\S]*origin/);
     assert.match(candidateCheck, /merge-base[\s\S]*--is-ancestor/);
-    assert.match(candidateCheck, /branch[\s\S]*-r[\s\S]*--contains/);
+    assert.match(candidateCheck, /--symbolic-full-name[\s\S]*@\{upstream\}/);
+    assert.match(candidateCheck, /for-each-ref[\s\S]*--contains[\s\S]*refs\/remotes\/origin/);
+    assert.match(candidateCheck, /refs\/remotes\/origin\/main/);
     assert.match(candidateCheck, /--is-shallow-repository/);
     assert.match(candidateCheck, /--deepen=/);
     assert.match(candidateCheck, /--unshallow/);

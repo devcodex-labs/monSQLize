@@ -11,7 +11,7 @@ You can also trigger the **Release Preflight** workflow through GitHub Actions. 
 
 ## What will it do
 
-1. Reject a candidate with uncommitted files, an invalid installed dependency tree, or a current commit that has not been pushed to `origin`. A commit is pushed when it is the tip of an `origin` ref or an ancestor of an `origin` branch, including `origin/main` and the upstream tracking branch. A newer tip on `main` does not make that ancestor look unpublished. Shallow clones fetch, then deepen or unshallow until the ancestry check can be decided. Commits that were never pushed still fail.
+1. Reject a candidate with uncommitted files, an invalid installed dependency tree, or a current commit that has not been pushed to `origin`. A commit is pushed when it is the tip of an `origin` ref or an ancestor of an `origin` branch, including `origin/main` and the origin-only upstream. A newer tip on `main` does not make that ancestor look unpublished. Shallow clones fetch, then deepen or unshallow until the ancestry check can be decided. Commits that were never pushed still fail.
 2. Check whether `package-lock.json` is consistent with the current `package.json` version and does not contain `file:` / `workspace:` / sibling local path residue.
 3. Check whether the changelog for the current version and packaged `MIGRATION.md` / `SECURITY.md` files exist.
 4. Check whether the necessary documents for project management exist:
