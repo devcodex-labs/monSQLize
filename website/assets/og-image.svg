@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">monSQLize</title>
+  <desc id="desc">MongoDB today, MySQL and PostgreSQL adapters next</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d2a22"/>
+      <stop offset="0.48" stop-color="#071611"/>
+      <stop offset="1" stop-color="#04110d"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="matrix(520 0 0 420 280 250)">
+      <stop offset="0" stop-color="#10b981" stop-opacity="0.34"/>
+      <stop offset="0.55" stop-color="#10b981" stop-opacity="0.08"/>
+      <stop offset="1" stop-color="#10b981" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="bar" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#19c7b6"/>
+      <stop offset="0.52" stop-color="#32d583"/>
+      <stop offset="1" stop-color="#f0b429"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#34d399"/>
+      <stop offset="1" stop-color="#19c7b6"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect width="1200" height="630" fill="url(#glow)"/>
+  <rect width="1200" height="8" fill="url(#bar)"/>
+
+  <g fill="none" stroke="#a7f3d0" stroke-opacity="0.14" stroke-width="2">
+    <path d="M860 150h220"/>
+    <path d="M900 190h180"/>
+    <path d="M940 230h140"/>
+  </g>
+  <g fill="#34d399">
+    <circle cx="852" cy="150" r="5" opacity="0.9"/>
+    <circle cx="892" cy="190" r="5" opacity="0.55"/>
+    <circle cx="932" cy="230" r="5" opacity="0.35"/>
+  </g>
+
+  <g transform="translate(80 168)">
+    <rect width="92" height="92" rx="24" fill="#10261f" stroke="#34d399" stroke-opacity="0.85" stroke-width="2"/>
+    <path d="M24 68V34l22 20 22-20v34" fill="none" stroke="url(#mark)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <text x="196" y="214" fill="#8ee8c8" font-family="Inter, Liberation Sans, sans-serif" font-size="22" font-weight="600" letter-spacing="2.4">TYPESCRIPT DATA RUNTIME</text>
+  <text x="80" y="318" fill="#f4fff8" font-family="Inter, Liberation Sans, sans-serif" font-size="92" font-weight="700">monSQLize</text>
+  <rect x="84" y="358" width="112" height="6" rx="3" fill="url(#bar)"/>
+  <text x="80" y="432" fill="#e7fff4" font-family="Inter, Liberation Sans, sans-serif" font-size="36" font-weight="500">MongoDB today, MySQL and PostgreSQL adapters next</text>
+</svg>

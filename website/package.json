@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "rspress dev",
     "build": "rspress build",
+    "render:og-image": "node scripts/render-og-image.cjs",
     "preview": "rspress preview",
     "type-check": "tsc --noEmit -p tsconfig.json",
     "check:links": "node ../scripts/validation/check-site-links.cjs",
