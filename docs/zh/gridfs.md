@@ -50,7 +50,7 @@ const modelBucket = model.gridfs(bucketName?: string, opts?: {
 - 带 `sha256` 的 `skip` 返回该摘要最新的可见文件。不带 `sha256` 的 `skip` 返回同名最新可见文件。`duplicate` 总是再创建一份。
 - `uploadStream` 只把 `sha256` 写入 metadata。它不校验字节，也不接受 `ifExists`。
 
-这些助手写入的 `metadata.sha256` 会覆盖调用方自己放在 `metadata.sha256` 里的值。
+这些助手写入的 `metadata.sha256` 会覆盖调用方自己放在 `metadata.sha256` 里的值。提供的 `contentType` 写入 `metadata.contentType`，并覆盖调用方在该字段上的值。`FileInfo.contentType` 会返回它。旧文件上残留的顶层 `contentType` 同样会返回。
 
 ### 区间
 

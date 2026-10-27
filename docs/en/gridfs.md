@@ -50,7 +50,7 @@ Calling either method before `connect()` throws `NOT_CONNECTED`.
 - `skip` with `sha256` returns the newest visible file with that digest. `skip` without `sha256` returns the newest visible file with the same filename. `duplicate` always creates another file.
 - `uploadStream` stores `sha256` in metadata only. It does not check the bytes and it does not accept `ifExists`.
 
-`metadata.sha256` written by these helpers overwrites a caller-supplied `metadata.sha256`.
+`metadata.sha256` written by these helpers overwrites a caller-supplied `metadata.sha256`. A provided `contentType` is stored as `metadata.contentType` and overwrites a caller-supplied value of that field. `FileInfo.contentType` returns it. An older file that still has a top-level `contentType` is returned the same way.
 
 ### Ranges
 

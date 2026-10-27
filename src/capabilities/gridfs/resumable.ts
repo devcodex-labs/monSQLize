@@ -17,6 +17,7 @@ import {
     chunkLengthAt,
     isReadableStream,
     toNodeBuffer,
+    withContentType,
 } from './validate';
 import { readReadable } from './bytes';
 
@@ -149,7 +150,10 @@ export async function finalizeResumableUpload(ctx: GridFSContext, uploadId: Obje
         throw integrityMismatch('finalizeResumableUpload', ctx.bucketName, { uploadId, expected: session.sha256, actual });
     }
 
-    const metadata = buildMetadata(session.metadata, session.sha256, 'finalizeResumableUpload');
+    const metadata = withContentType(
+        buildMetadata(session.metadata, session.sha256, 'finalizeResumableUpload'),
+        session.contentType,
+    );
     try {
         await files.insertOne({
             _id: uploadId,
@@ -157,7 +161,6 @@ export async function finalizeResumableUpload(ctx: GridFSContext, uploadId: Obje
             chunkSize: session.chunkSizeBytes,
             uploadDate: new Date(),
             filename: session.filename,
-            ...(session.contentType !== undefined ? { contentType: session.contentType } : {}),
             ...(metadata ? { metadata } : {}),
         });
     } catch (error) {

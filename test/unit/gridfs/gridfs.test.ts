@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import { ObjectId } from 'mongodb';
 import { createHash } from 'node:crypto';
 import { createMonSQLizeGridFSBucket } from '../../../src/capabilities/gridfs';
+import { gridFSUploadStreamOptions } from '../../../src/capabilities/gridfs/driver';
+import { toFileInfo } from '../../../src/capabilities/gridfs/normalize';
 import { openModelGridFS, openRuntimeGridFS } from '../../../src/entry/runtime-gridfs';
 import { normalizeWritePathPolicy } from '../../../src/capabilities/write-path-policy';
 import { sha256Hex } from '../../../src/capabilities/gridfs/validate';
@@ -370,6 +372,37 @@ describe('gridfs bucket', () => {
         assert.equal(indexes.length, 4);
         assert.ok(indexes.some((index) => index.expireAfterSeconds === 604800));
         assert.ok(indexes.some((index) => index.key?.['metadata.sha256'] === 1));
+    });
+
+    it('stores contentType on metadata and omits it from driver upload options', () => {
+        const options = gridFSUploadStreamOptions({
+            chunkSizeBytes: 4,
+            metadata: { kind: 'bin', contentType: 'from-metadata' },
+            contentType: 'text/plain',
+        });
+        assert.equal(Object.prototype.hasOwnProperty.call(options, 'contentType'), false);
+        assert.equal(options.metadata?.contentType, 'text/plain');
+        assert.equal(options.metadata?.kind, 'bin');
+        const unchanged = gridFSUploadStreamOptions({ chunkSizeBytes: 4, metadata: { kind: 'bin' } });
+        assert.equal(unchanged.metadata?.contentType, undefined);
+        const info = toFileInfo({
+            _id: new ObjectId(),
+            filename: 'a.bin',
+            length: 1,
+            chunkSize: 4,
+            uploadDate: new Date(),
+            metadata: { contentType: 'text/plain' },
+        });
+        assert.equal(info.contentType, 'text/plain');
+        const legacy = toFileInfo({
+            _id: new ObjectId(),
+            filename: 'b.bin',
+            length: 1,
+            chunkSize: 4,
+            uploadDate: new Date(),
+            contentType: 'application/octet-stream',
+        });
+        assert.equal(legacy.contentType, 'application/octet-stream');
     });
 
     it('routes a named pool to that client and keeps Model pool and database fixed', () => {

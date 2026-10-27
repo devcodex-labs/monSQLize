@@ -119,6 +119,12 @@ export function buildMetadata(metadata: Record<string, unknown> | undefined, sha
     return out;
 }
 
+/** Driver 7 dropped the upload-stream `contentType` option. Store it on metadata instead. */
+export function withContentType(metadata: Document | undefined, contentType: string | undefined): Document | undefined {
+    if (contentType === undefined) return metadata;
+    return { ...(metadata ?? {}), contentType };
+}
+
 export function parseRangeShape(range: GridFSDownloadRange | undefined, operation: string, bucket: string): ParsedRange {
     if (range === undefined) return {};
     if (!isPlainRecord(range)) throw rangeInvalid(operation, bucket, undefined, undefined);

@@ -59,6 +59,7 @@ describe('gridfs memory-server integration', () => {
         assert.equal(info.length, payload.length);
         assert.equal(info.chunkSize, 8);
         assert.equal(info.metadata?.sha256, digest);
+        assert.equal(info.metadata?.contentType, 'application/octet-stream');
         assert.equal(info.metadata?.tenantId, 't1');
         assert.deepEqual(await bucket.download(info.id), payload);
         assert.deepEqual(await bucket.download({ filename: 'report.bin' }), payload);
@@ -131,6 +132,7 @@ describe('gridfs memory-server integration', () => {
         assert.equal(next.nextChunk, 3);
         const info = await resumed.finalizeResumableUpload(started.uploadId);
         assert.equal(info.metadata?.sha256, digest);
+        assert.equal(info.metadata?.contentType, 'application/octet-stream');
         assert.equal(info.contentType, 'application/octet-stream');
         assert.deepEqual(await resumed.download(info.id), payload);
         const skipped = await resumed.upload('again.bin', payload, { sha256: digest, ifExists: 'skip' });

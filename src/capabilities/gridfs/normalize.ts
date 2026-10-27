@@ -22,10 +22,12 @@ export function toFileInfo(doc: Record<string, unknown>): GridFSFileInfo {
         chunkSize: typeof doc.chunkSize === 'number' ? doc.chunkSize : 0,
         uploadDate: doc.uploadDate instanceof Date ? doc.uploadDate : new Date(doc.uploadDate as string | number),
     };
-    if (typeof doc.contentType === 'string') info.contentType = doc.contentType;
     if (doc.metadata !== undefined && doc.metadata !== null && typeof doc.metadata === 'object') {
         info.metadata = doc.metadata as Record<string, unknown>;
     }
+    const storedContentType = info.metadata?.contentType;
+    if (typeof doc.contentType === 'string') info.contentType = doc.contentType;
+    else if (typeof storedContentType === 'string') info.contentType = storedContentType;
     return info;
 }
 
