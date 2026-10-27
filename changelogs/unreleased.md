@@ -2,7 +2,8 @@
 
 ## Changes after v3.5.0
 
-No changes have been staged after 3.5.0. GridFS buckets are assigned to the [3.5.0 versioned notes](./v3.5.0.md). Publication is established by the npm registry and immutable tag, not this file.
+- Treat a release-candidate HEAD as pushed when it is an ancestor of an origin branch (`origin/main` and the origin-only upstream included), including after a newer commit becomes the tip. Shallow clones fetch and deepen history before that decision. Local-only commits still fail. This note does not change the package version.
+- GridFS buckets are assigned to the [3.5.0 versioned notes](./v3.5.0.md). Publication is established by the npm registry and immutable tag, not this file.
 
 ## Archived preparation notes for the 3.3.2 candidate
 
