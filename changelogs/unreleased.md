@@ -3,6 +3,7 @@
 ## Changes after v3.4.0
 
 - Add GridFS buckets on `msq.gridfs()` and `model.gridfs()`, including upload, download, ranges, `ensureIndexes`, and phase-1 resumable upload. `writePathPolicy` gains a `gridfs` field and category. Policy violations stay `INVALID_OPERATION` with `reason: 'WRITE_PATH_POLICY'`. These notes stage the work after 3.4.0; the npm package version is unchanged and this file is not a 3.5.0 release. The Search index lifecycle API remains in the [3.4.0 versioned notes](./v3.4.0.md).
+- Raise the CJS and ESM runtime package budgets for GridFS 3.5.0. `gridfs()` stays synchronous, so the single-file build keeps that code in the main bundle.
 
 ## Archived preparation notes for the 3.3.2 candidate
 

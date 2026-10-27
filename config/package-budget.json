@@ -1,7 +1,8 @@
 {
+  "comment": "GridFS 3.5.0 stays in the main bundle: sync gridfs() cannot be split out of the single-file build.",
   "artifacts": {
-    "dist/cjs/index.cjs": 840000,
-    "dist/esm/index.mjs": 840000,
+    "dist/cjs/index.cjs": 872000,
+    "dist/esm/index.mjs": 870000,
     "dist/cjs/cli/data-task.cjs": 50000
   }
 }
