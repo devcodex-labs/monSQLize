@@ -96,6 +96,7 @@ import {
     orchestrateModelUpsertOne,
 } from './model-mutation-orchestrator';
 import { runWithModelWriteSource } from '../write-path-policy';
+import { openModelGridFS } from '../../entry/runtime-gridfs';
 import {
     executeModelVectorSearch,
     executeProtectedRelationDelete,
@@ -232,6 +233,8 @@ export class ModelInstance<TDocument = Record<string, unknown>> {
     raw(): unknown {
         return this.collection.raw();
     }
+
+    gridfs(bucketName?: string, opts?: { chunkSizeBytes?: number }) { return openModelGridFS(this.runtime, this.dbName, this.poolName, bucketName, opts?.chunkSizeBytes); }
 
     private extendedCollection(): ExtendedModelCollectionLike<TDocument> {
         return this.collection as ExtendedModelCollectionLike<TDocument>;

@@ -72,6 +72,12 @@ See [Data Tasks](./data-tasks.md) for the preview, approval, apply, backup, and 
 | `SEARCH_INDEX_UNSUPPORTED` | Deployment lacks Search index support | Atlas, MongoDB 8.2+ with mongot, or mongodb-atlas-local |
 | `SEARCH_INDEX_BUILD_FAILED` | Search index build failed while waiting | `details[0].statusDetail`, index definition |
 | `SEARCH_INDEX_WAIT_TIMEOUT` | waitForSearchIndex timed out | `timeoutMs`, `details[0].last` |
+| `GRIDFS_FILE_NOT_FOUND` | GridFS file or resumable session is missing | id, filename, `ignoreMissing` |
+| `GRIDFS_FILE_EXISTS` | GridFS upload conflicts with a visible file or an open session | `ifExists`, `sha256`, id |
+| `GRIDFS_INTEGRITY_MISMATCH` | GridFS bytes do not match the declared sha256 or chunk size | `details[0].expected`, `details[0].actual` |
+| `GRIDFS_UPLOAD_INCOMPLETE` | Resumable finalize found missing chunks | `details[0].missingChunks` |
+| `GRIDFS_RESUME_MISMATCH` | Resumable append does not match the stored prefix | `fromChunk`, `expectedNextChunk` |
+| `GRIDFS_RANGE_INVALID` | GridFS download range is not a legal half-open interval | `start`, `end`, `length` |
 | `INVALID_RELATION_SELECT` | Relation default or populate selection is outside P0 inclusion syntax | Use non-empty top-level inclusion fields only |
 | `RELATION_IN_USE` | Protected Model deletion found declared inbound references | Inspect `error.details[0].usages`; remove or retain references intentionally |
 | `RELATION_USAGE_UNAVAILABLE` | Protected deletion could not complete its declared-relation scan | Inspect coverage/skipped details; do not retry as an unchecked delete |
@@ -207,6 +213,12 @@ try {
 ### SEARCH_INDEX_* / INVALID_SEARCH_INDEX_DEFINITION
 
 See [Search index lifecycle](search-indexes.md) for when each code is raised; mapped server errors keep the driver error as `cause`.
+
+---
+
+### GRIDFS_*
+
+See [GridFS](gridfs.md) for when each code is raised. `downloadStream` reports not-found and range failures as stream `'error'` events. Other driver failures are `MONGODB_ERROR` and keep the driver error as `cause`. `writePathPolicy` blocks are `INVALID_OPERATION`, not a GridFS code, with `details[0].reason` `WRITE_PATH_POLICY`.
 
 ---
 
@@ -1041,6 +1053,12 @@ try {
 | `SEARCH_INDEX_UNSUPPORTED` | Search indexes | Deployment lacks Search index support |
 | `SEARCH_INDEX_BUILD_FAILED` | Search indexes | Search index build failed while waiting |
 | `SEARCH_INDEX_WAIT_TIMEOUT` | Search indexes | waitForSearchIndex timed out |
+| `GRIDFS_FILE_NOT_FOUND` | GridFS | GridFS file or resumable session is missing |
+| `GRIDFS_FILE_EXISTS` | GridFS | GridFS upload conflicts with an existing file or session |
+| `GRIDFS_INTEGRITY_MISMATCH` | GridFS | GridFS bytes do not match sha256 or chunk size |
+| `GRIDFS_UPLOAD_INCOMPLETE` | GridFS | Resumable finalize found missing chunks |
+| `GRIDFS_RESUME_MISMATCH` | GridFS | Resumable append does not match the stored prefix |
+| `GRIDFS_RANGE_INVALID` | GridFS | GridFS download range is invalid |
 | `INVALID_RELATION_SELECT` | Relations | Unsupported relation inclusion selection |
 | `RELATION_IN_USE` | Relations | Protected delete found declared references |
 | `RELATION_USAGE_UNAVAILABLE` | Relations | Protected delete scan coverage is incomplete or unavailable |

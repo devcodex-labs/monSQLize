@@ -2,6 +2,7 @@ export * from './base';
 export * from './collection';
 export * from './data-tasks';
 export * from './expression';
+export * from './gridfs';
 export * from './lock';
 export * from './model';
 export * from './mongodb';

@@ -14,14 +14,15 @@ Principles:
 | Layer | Current status | Scope |
 |-------|----------------|-------|
 | Shared runtime | Stable where exposed by the current runtime | Database cache, pools, transactions, model constraints, sync, slow-query logging, and runtime diagnostics |
-| MongoDB adapter | Stable | `collection()`, `db()`, `use()`, `pool()`, query/write helpers, aggregation, indexes, Search indexes, transactions, Change Streams |
+| MongoDB adapter | Stable | `collection()`, `db()`, `use()`, `pool()`, query/write helpers, aggregation, indexes, Search indexes, GridFS, transactions, Change Streams |
 | MySQL adapter | Planned / in development | Future database-native adapter, no current public runtime API |
 | PostgreSQL adapter | Planned / in development | Future database-native adapter, no current public runtime API |
 
 | Capability | Recommended entry | Notes |
 |------------|----------------------|-------|
 | Model | `msq.model()` / `MonSQLize.Model` | Supports model registration, relations, virtuals, populate, and common query entries |
-| write-path-policy | `writePathPolicy` | Optional runtime guard for Model-only write namespaces |
+| write-path-policy | `writePathPolicy` | Optional runtime guard for Model-only write namespaces, including the `gridfs` category |
+| GridFS | `msq.gridfs()` / `model.gridfs()` | Upload, download, and phase-1 resumable GridFS upload. See [GridFS](./gridfs.md) |
 | cache | Query `cache` options / `msq.cache` | Database query cache, multi-layer cache access, invalidation, and statistics |
 | transaction | `startSession()` / `withTransaction()` | Supports MongoDB transaction wrappers and transaction statistics |
 | pool | `pools` / `pool()` / `ConnectionPoolManager` | Declare `pools: PoolConfig[]` in the constructor, route with `pool()`, and use the low-level manager for advanced inspection or manual management |
@@ -50,7 +51,7 @@ Available entries:
 - `writePathPolicy.namespaces`
 - `WritePathPolicyOptions`
 
-Use this when selected namespaces should be written through `msq.model()` instead of direct `collection()` writes. See [Write Path Policy](./write-path-policy.md).
+Use this when selected namespaces should be written through `msq.model()` instead of direct `collection()` writes. See [Write Path Policy](./write-path-policy.md). GridFS writes use the `gridfs` field and are documented in [GridFS](./gridfs.md).
 
 ## 3. transaction
 

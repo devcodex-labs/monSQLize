@@ -395,6 +395,13 @@
       "status": "covered"
     },
     {
+      "doc": "gridfs",
+      "kind": "doc-check",
+      "target": "docs/en/gridfs.md",
+      "runner": "check:docs-examples",
+      "status": "covered"
+    },
+    {
       "doc": "hooks",
       "kind": "example",
       "target": "examples/docs/hooks.ts",

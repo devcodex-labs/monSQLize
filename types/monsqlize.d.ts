@@ -37,6 +37,7 @@ export interface SSHConfig {
 }
 
 import type { Collection, CursorValueNormalizer, CursorValueType, DbAccessor, HealthView } from './collection';
+import type { GridFSBucketOpenOptions, MonSQLizeGridFSBucket } from './gridfs';
 import type { DataTaskJobError } from './data-tasks';
 import type { Lock, LockOptions, LockStats } from './lock';
 import type { ModelAutoIndexOptions, ModelDescriptor, ModelEnsureAllIndexesOptions, ModelIndexEnsureSummary, ModelInstance } from './model';
@@ -92,6 +93,12 @@ export type WritePathPolicyRawMode = 'inherit' | 'allow' | 'block';
 /** Controls whether collection/database management writes are available under a write path policy. */
 export type WritePathPolicyManagementMode = 'inherit' | 'allow' | 'block';
 
+/**
+ * Controls GridFS writes. `inherit` follows `mode`, except `model-only` still blocks
+ * GridFS writes from every source until the rule is `allow`.
+ */
+export type WritePathPolicyGridfsMode = 'inherit' | 'allow' | 'block';
+
 /** Controls violation handling; `warn` logs and allows for migration observation. */
 export type WritePathPolicyViolationAction = 'throw' | 'warn';
 
@@ -103,6 +110,11 @@ export interface WritePathPolicyRule {
     raw?: WritePathPolicyRawMode;
     /** Management write policy. `inherit` allows model management and blocks external management in `model-only`. */
     management?: WritePathPolicyManagementMode;
+    /**
+     * GridFS write policy. Default: `inherit`.
+     * `inherit` allows GridFS writes in `allow-both` and blocks them in `model-only` even when `source` is `model`.
+     */
+    gridfs?: WritePathPolicyGridfsMode;
     /** Violation action. Default: `throw`. */
     onViolation?: WritePathPolicyViolationAction;
 }
@@ -325,6 +337,12 @@ export interface MonSQLizeInstance {
      */
     db(name?: string): DbAccessor;
     /**
+     * Open a GridFS bucket. The default bucket name is `fs`.
+     * Call after `connect()`; otherwise this throws `NOT_CONNECTED`.
+     * @since v3.5.0
+     */
+    gridfs(bucketName?: string, opts?: GridFSBucketOpenOptions): MonSQLizeGridFSBucket;
+    /**
      * Switch to the given database and return its `collection` and `model` accessors.
      * @param name Target database name.
      */
@@ -546,6 +564,8 @@ export default class MonSQLize implements MonSQLizeInstance {
     collection<TSchema = any>(name: string): Collection<TSchema>;
     collection(name: string): Collection<any>;
     db(name?: string): DbAccessor;
+    /** @since v3.5.0 */
+    gridfs(bucketName?: string, opts?: GridFSBucketOpenOptions): MonSQLizeGridFSBucket;
     use(name: string): {
         collection: <TSchema = any>(collectionName: string) => Collection<TSchema>;
         model: ModelBindingAccessor;

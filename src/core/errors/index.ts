@@ -31,6 +31,13 @@ export const ErrorCodes = {
     SEARCH_INDEX_UNSUPPORTED: 'SEARCH_INDEX_UNSUPPORTED',
     SEARCH_INDEX_BUILD_FAILED: 'SEARCH_INDEX_BUILD_FAILED',
     SEARCH_INDEX_WAIT_TIMEOUT: 'SEARCH_INDEX_WAIT_TIMEOUT',
+    /** GridFS file, range, and resumable-upload errors (v3.5.0). */
+    GRIDFS_FILE_NOT_FOUND: 'GRIDFS_FILE_NOT_FOUND',
+    GRIDFS_FILE_EXISTS: 'GRIDFS_FILE_EXISTS',
+    GRIDFS_INTEGRITY_MISMATCH: 'GRIDFS_INTEGRITY_MISMATCH',
+    GRIDFS_UPLOAD_INCOMPLETE: 'GRIDFS_UPLOAD_INCOMPLETE',
+    GRIDFS_RESUME_MISMATCH: 'GRIDFS_RESUME_MISMATCH',
+    GRIDFS_RANGE_INVALID: 'GRIDFS_RANGE_INVALID',
     /** Relation select is outside the supported inclusion-only top-level contract. */
     INVALID_RELATION_SELECT: 'INVALID_RELATION_SELECT',
     /** A protected delete found declared Model relations that still reference its target. */

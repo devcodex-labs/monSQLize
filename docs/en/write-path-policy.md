@@ -40,6 +40,7 @@ type WritePathPolicyRule = {
   mode?: WritePathPolicyMode;
   raw?: 'inherit' | 'allow' | 'block';
   management?: 'inherit' | 'allow' | 'block';
+  gridfs?: 'inherit' | 'allow' | 'block';
   onViolation?: 'throw' | 'warn';
 };
 
@@ -54,6 +55,7 @@ type WritePathPolicyOptions = {
 | `mode` | `allow-both` | `allow-both` allows collection and Model writes. `model-only` blocks direct collection, db, and legacy writes unless overridden. |
 | `raw` | `inherit` | Controls `collection.raw()`, `db.raw()`, and db command access. Inherits `block` from `model-only` and `allow` from `allow-both`. |
 | `management` | `inherit` | Controls index and collection management operations. In `model-only`, Model management methods are allowed while direct collection management is blocked. |
+| `gridfs` | `inherit` | Controls GridFS writes on `<bucket>.files`. `inherit` allows them only when `mode` is `allow-both`. Under `model-only`, both `msq.gridfs()` and `model.gridfs()` writes are blocked. This is separate from `management`. |
 | `onViolation` | `throw` | `throw` rejects the operation. `warn` logs a warning and allows the operation. |
 
 ## Namespace Matching
@@ -76,7 +78,8 @@ Inside `namespaces`, the key `default` is reserved for the fallback matcher and 
 
 - Collection writes: `insertOne`, `insertMany`, `updateOne`, `updateMany`, `replaceOne`, `findOneAndUpdate`, `findOneAndReplace`, `findOneAndDelete`, `upsertOne`, `deleteOne`, `deleteMany`.
 - Batch helpers: `insertBatch`, `updateBatch`, `deleteBatch`, `incrementOne`.
-- Collection management: index creation/drop, collection creation/drop, validators, `renameCollection`, `collMod`, and capped conversion.
+- Collection management: index creation/drop, collection creation/drop, validators, `renameCollection`, `collMod`, and capped conversion. `gridfs().drop()` is management. Model drop stays allowed when `management` is `inherit` and `mode` is `model-only`; instance drop is blocked.
+- GridFS writes and `ensureIndexes()`: category `gridfs`, namespace `<bucket>.files`. See [GridFS](gridfs.md). A violation is `INVALID_OPERATION` with `details[0].reason` set to `WRITE_PATH_POLICY` and `details[0].category` set to `gridfs`.
 - Raw/db/legacy write surfaces: `collection.raw()`, `db.raw()`, `db.runCommand()`, `dropDatabase()`, and legacy adapter writes.
 - Aggregation pipelines whose final stage writes with `$out` or `$merge`; the policy is checked against the write target namespace.
 

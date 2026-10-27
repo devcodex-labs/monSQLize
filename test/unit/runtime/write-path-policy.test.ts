@@ -506,3 +506,94 @@ describe('writePathPolicy runtime enforcement', () => {
         }));
     });
 });
+
+describe('writePathPolicy gridfs category', () => {
+    const namespace = { db: 'policy_db', collection: 'fs.files' };
+
+    function assertGridfs(policyInput: Parameters<typeof normalizeWritePathPolicy>[0], source: 'db' | 'model') {
+        return () => assertWritePathAllowed({
+            policy: normalizeWritePathPolicy(policyInput),
+            namespace,
+            source,
+            operation: 'upload',
+            category: 'gridfs',
+        });
+    }
+
+    it('keeps gridfs inherit and preserves an explicit allow value', () => {
+        const implicit = normalizeWritePathPolicy({ default: 'model-only' });
+        assert.equal(implicit.default.gridfs, 'inherit');
+        const explicit = normalizeWritePathPolicy({ default: { mode: 'model-only', gridfs: 'allow' } });
+        assert.equal(explicit.default.gridfs, 'allow');
+        assert.equal(explicit.default.mode, 'model-only');
+    });
+
+    it('rejects an unknown gridfs enum and ignores unrelated keys', () => {
+        assert.throws(
+            () => normalizeWritePathPolicy({ default: { gridfs: 'sometimes' as 'allow' } }),
+            /gridfs/,
+        );
+        const normalized = normalizeWritePathPolicy({ default: { mode: 'allow-both', extra: true } as { mode: 'allow-both' } });
+        assert.equal(normalized.default.gridfs, 'inherit');
+        assert.equal(normalized.default.mode, 'allow-both');
+    });
+
+    it('allows gridfs inherit writes only in allow-both, from either source', () => {
+        assert.doesNotThrow(assertGridfs({ default: 'allow-both' }, 'db'));
+        assert.doesNotThrow(assertGridfs({ default: 'allow-both' }, 'model'));
+        assert.throws(assertGridfs({ default: 'model-only' }, 'db'), /writePathPolicy blocked/);
+        assert.throws(assertGridfs({ default: 'model-only' }, 'model'), /writePathPolicy blocked/);
+    });
+
+    it('lets gridfs allow or block override mode, including model source', () => {
+        assert.doesNotThrow(assertGridfs({ default: { mode: 'model-only', gridfs: 'allow' } }, 'model'));
+        assert.doesNotThrow(assertGridfs({ default: { mode: 'model-only', gridfs: 'allow' } }, 'db'));
+        assert.throws(assertGridfs({ default: { mode: 'allow-both', gridfs: 'block' } }, 'db'), /writePathPolicy blocked/);
+        assert.throws(assertGridfs({ default: { mode: 'allow-both', gridfs: 'block' } }, 'model'), /writePathPolicy blocked/);
+    });
+
+    it('matches the bucket files namespace and records category plus reason', () => {
+        const policy = normalizeWritePathPolicy({
+            default: 'allow-both',
+            namespaces: { 'policy_db.fs.files': { gridfs: 'block' } },
+        });
+        try {
+            assertWritePathAllowed({
+                policy,
+                namespace,
+                source: 'db',
+                operation: 'upload',
+                category: 'gridfs',
+            });
+            assert.fail('expected gridfs write to be blocked');
+        } catch (error) {
+            const details = (error as { details?: Array<Record<string, unknown>> }).details?.[0];
+            assert.equal(details?.category, 'gridfs');
+            assert.equal(details?.reason, 'WRITE_PATH_POLICY');
+            assert.equal(details?.matchedRule, 'policy_db.fs.files');
+        }
+    });
+
+    it('warns and allows a blocked gridfs write when onViolation is warn', () => {
+        const warnings: unknown[] = [];
+        assert.doesNotThrow(() => assertWritePathAllowed({
+            policy: normalizeWritePathPolicy({ default: { mode: 'model-only', onViolation: 'warn' } }),
+            namespace,
+            source: 'model',
+            operation: 'upload',
+            category: 'gridfs',
+            logger: { warn: (...args: unknown[]) => { warnings.push(args); } },
+        }));
+        assert.equal(warnings.length, 1);
+    });
+
+    it('keeps management inherit distinct from gridfs inherit', () => {
+        const policy = normalizeWritePathPolicy({ default: 'model-only' });
+        assert.throws(() => assertWritePathAllowed({
+            policy, namespace, source: 'db', operation: 'drop', category: 'management',
+        }), /writePathPolicy blocked/);
+        assert.doesNotThrow(() => assertWritePathAllowed({
+            policy, namespace, source: 'model', operation: 'drop', category: 'management',
+        }));
+    });
+});

@@ -343,6 +343,8 @@ export declare class ModelInstance<TDocument = any> implements ModelInstanceCont
     createIndexes(specs: Array<{ key: unknown; } & Record<string, unknown>>): Promise<string[]>;
     listIndexes(): Promise<Record<string, unknown>[]>;
     ensureIndexes(options?: ModelEnsureIndexesOptions): Promise<ModelIndexEnsureResult>;
+    /** @since v3.5.0 */
+    gridfs(bucketName?: string, opts?: import('./gridfs').GridFSModelBucketOpenOptions): import('./gridfs').MonSQLizeGridFSBucket;
     dropIndex(name: string): Promise<unknown>;
     dropIndexes(): Promise<unknown>;
     createSearchIndex(spec: import('./search-index').SearchIndexSpec, options?: import('./search-index').CreateSearchIndexOptions): Promise<import('./search-index').CreateSearchIndexResult>;

@@ -13,14 +13,15 @@ monSQLize 是数据库原生的生产数据运行时增强层。当前稳定适�
 | 层级 | 当前状态 | 范围 |
 |------|----------|------|
 | 共享运行时 | 当前 runtime 已暴露能力稳定 | 数据库缓存、连接池、事务、模型约束、同步、慢查询日志与运行时诊断 |
-| MongoDB adapter | Stable | `collection()`、`db()`、`use()`、`pool()`、查询/写入增强、聚合、索引、Search 索引、事务、Change Streams |
+| MongoDB adapter | Stable | `collection()`、`db()`、`use()`、`pool()`、查询/写入增强、聚合、索引、Search 索引、GridFS、事务、Change Streams |
 | MySQL adapter | Planned / in development | 后续数据库原生 adapter，当前暂无公开 runtime API |
 | PostgreSQL adapter | Planned / in development | 后续数据库原生 adapter，当前暂无公开 runtime API |
 
 | 能力 | 推荐入口 | 说明 |
 |------|--------------|------|
 | Model | `msq.model()` / `MonSQLize.Model` | 支持 Model 注册、关系、虚拟字段、populate 与常用查询入口 |
-| write-path-policy | `writePathPolicy` | 可选的 Model-only 写入命名空间运行时护栏 |
+| write-path-policy | `writePathPolicy` | 可选的 Model-only 写入命名空间运行时护栏，包含 `gridfs` 类别 |
+| GridFS | `msq.gridfs()` / `model.gridfs()` | 上传、下载和第一阶段可恢复 GridFS 上传。见 [GridFS](./gridfs.md) |
 | cache | 查询 `cache` 选项 / `msq.cache` | 数据库查询缓存、多层缓存接入、缓存失效与统计 |
 | transaction | `startSession()` / `withTransaction()` | 支持 MongoDB 事务封装与事务统计 |
 | pool | `pools` / `pool()` / `ConnectionPoolManager` | 在构造函数中声明 `pools: PoolConfig[]`，通过 `pool()` 路由，底层管理器用于进阶状态查看与手动管理 |
@@ -49,7 +50,7 @@ Model 相关文档与示例：
 - `writePathPolicy.namespaces`
 - `WritePathPolicyOptions`
 
-当指定命名空间必须通过 `msq.model()` 写入，而不能直接通过 `collection()` 写入时使用。详见 [写路径策略](./write-path-policy.md)。
+当指定命名空间必须通过 `msq.model()` 写入，而不能直接通过 `collection()` 写入时使用。详见 [写路径策略](./write-path-policy.md)。GridFS 写入使用 `gridfs` 字段，说明见 [GridFS](./gridfs.md)。
 
 ## 3. transaction
 
