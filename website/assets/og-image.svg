@@ -38,7 +38,7 @@
     <circle cx="932" cy="230" r="5" opacity="0.35"/>
   </g>
 
-  <g transform="translate(80 168)">
+  <g transform="translate(80 118)">
     <rect width="92" height="92" rx="24" fill="#10261f" stroke="#34d399" stroke-opacity="0.85" stroke-width="2"/>
     <path d="M24 68V34l22 20 22-20v34" fill="none" stroke="url(#mark)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
   </g>
