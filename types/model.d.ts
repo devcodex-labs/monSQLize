@@ -706,6 +706,8 @@ export interface ModelInstance<TDocument = any> extends SearchIndexManagement {
      * Does not drop, rename, or rebuild conflicting indexes.
      */
     ensureIndexes(options?: ModelEnsureIndexesOptions): Promise<ModelIndexEnsureResult>;
+    /** Opens a GridFS bucket bound to this Model's pool and database. Default bucket name is `fs`. @since v3.5.0 */
+    gridfs(bucketName?: string, opts?: import('./gridfs').GridFSModelBucketOpenOptions): import('./gridfs').MonSQLizeGridFSBucket;
     /**
      * Drops the specified index by name.
      * @param name Index name.

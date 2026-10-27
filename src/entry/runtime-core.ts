@@ -144,6 +144,7 @@ import { normalizeRuntimeCacheWithLifecycle } from './runtime-cache-normalizer';
 import { prepareSshTunnelConnectConfig } from './runtime-ssh';
 import { createInitialRuntimeSchemaDslEngine, disposeRuntimeSchemaDslEngine, replaceRuntimeSchemaDslEngine, type SchemaDslEngine } from './runtime-schema-dsl';
 import { cleanupFailedRuntimeConnection } from './runtime-connect-cleanup';
+import { openRuntimeGridFS } from './runtime-gridfs';
 
 // All public symbols are re-exported from the barrel file to keep the public API unchanged
 export * from './runtime-exports';
@@ -465,6 +466,8 @@ export class MonSQLizeRuntime {
         // v1 compat path: delegate via dbInstance
         return dbInstance.collection(name) as CollectionFacade;
     }
+
+    gridfs(bucketName?: string, opts?: { db?: string; pool?: string; chunkSizeBytes?: number }) { return openRuntimeGridFS(this, bucketName, opts); }
 
     db(name?: string): DbFacade {
         if (name !== undefined) {
