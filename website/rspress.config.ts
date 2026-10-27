@@ -8,6 +8,13 @@ import type {
   UserConfig,
 } from '@rspress/core';
 import { pluginSitemap } from '@rspress/plugin-sitemap';
+import {
+  applyBuiltPageMeta,
+  docsSiteOrigin,
+  localeDescriptions,
+  siteBase,
+  socialHeadEntries,
+} from './social-meta';
 
 type MarkdownAstNode = {
   type?: string;
@@ -386,7 +393,6 @@ const isExternalLink = (link: string) => /^https?:\/\//.test(link);
 const repositoryRoot = path.join(import.meta.dirname, '..');
 const docsRoot = path.join(repositoryRoot, 'docs');
 const githubRepositoryUrl = 'https://github.com/devcodex-labs/monSQLize';
-const siteBase = '/monSQLize/';
 
 const isExternalOrSiteLink = (url: string) =>
   /^(?:[a-z][a-z0-9+.-]*:|\/\/|#|\/)/i.test(url);
@@ -535,8 +541,13 @@ const rewriteGeneratedLanguageSwitchLinks: RspressPlugin = {
   name: 'rewrite-generated-language-switch-links',
   afterBuild(config) {
     const builtSiteDir = path.resolve(import.meta.dirname, config.outDir || 'dist');
+    const htmlFiles = collectHtmlFiles(builtSiteDir);
+    let descriptionCorrected = 0;
+    let socialAdded = 0;
+    const correctedPages: string[] = [];
+    const socialPages: string[] = [];
 
-    collectHtmlFiles(builtSiteDir).forEach(htmlFile => {
+    htmlFiles.forEach(htmlFile => {
       const originalContent = fs.readFileSync(htmlFile, 'utf8');
       let rewrittenContent = originalContent;
 
@@ -544,10 +555,30 @@ const rewriteGeneratedLanguageSwitchLinks: RspressPlugin = {
         rewrittenContent = rewrittenContent.split(source).join(target);
       });
 
+      const relativePath = path.relative(builtSiteDir, htmlFile);
+      const meta = applyBuiltPageMeta(rewrittenContent, relativePath);
+      if (meta.descriptionCorrected) {
+        descriptionCorrected += 1;
+        correctedPages.push(relativePath);
+      }
+      if (meta.socialAdded) {
+        socialAdded += 1;
+        socialPages.push(relativePath);
+      }
+      rewrittenContent = meta.html;
+
       if (rewrittenContent !== originalContent) {
         fs.writeFileSync(htmlFile, rewrittenContent);
       }
     });
+
+    console.log(`[docs-meta] pages=${htmlFiles.length} description-corrections=${descriptionCorrected} social-tags-added=${socialAdded}`);
+    if (correctedPages.length > 0) {
+      console.log(`[docs-meta] corrected descriptions: ${correctedPages.join(', ')}`);
+    }
+    if (socialPages.length > 0) {
+      console.log(`[docs-meta] inserted social tags: ${socialPages.join(', ')}`);
+    }
   }
 };
 
@@ -555,12 +586,15 @@ const config: UserConfig = {
   root: path.join(import.meta.dirname, '..', 'docs'),
   themeDir: path.join(import.meta.dirname, 'theme'),
   base: siteBase,
+  siteOrigin: docsSiteOrigin,
   lang: 'en',
   title: 'monSQLize',
   icon: '/favicon.svg',
   globalStyles: path.join(import.meta.dirname, 'styles', 'home.css'),
-  description: 'A database-native TypeScript production data runtime layer with MongoDB stable today, plus cache, pools, transactions, models, sync, and observability.',
+  // Locale descriptions are the fallback. A root description would override them
+  // for every page that has no extracted summary, including Chinese pages.
   outDir: 'dist',
+  head: socialHeadEntries(),
   builderConfig: {
     performance: {
       buildCache: false,
@@ -584,13 +618,13 @@ const config: UserConfig = {
       lang: 'en',
       label: 'English',
       title: 'monSQLize',
-      description: 'A database-native TypeScript production data runtime layer.'
+      description: localeDescriptions.en
     },
     {
       lang: 'zh',
       label: '简体中文',
       title: 'monSQLize',
-      description: '数据库原生 TypeScript 生产数据运行时增强层。'
+      description: localeDescriptions.zh
     }
   ],
   plugins: [
@@ -618,7 +652,7 @@ const config: UserConfig = {
         lang: 'en',
         label: 'English',
         title: 'monSQLize',
-        description: 'A database-native TypeScript production data runtime layer.',
+        description: localeDescriptions.en,
         nav: englishNav,
         sidebar: {
           '/': englishSidebar
@@ -628,7 +662,7 @@ const config: UserConfig = {
         lang: 'zh',
         label: '简体中文',
         title: 'monSQLize',
-        description: '数据库原生 TypeScript 生产数据运行时增强层。',
+        description: localeDescriptions.zh,
         nav: chineseNav,
         sidebar: {
           '/zh/': chineseSidebar
