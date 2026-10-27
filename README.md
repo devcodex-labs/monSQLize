@@ -22,7 +22,7 @@ This development source is pinned to verified registry `schema-dsl@3.0.5`. The v
 npm install monsqlize
 ```
 
-MongoDB is the first complete adapter. MySQL and PostgreSQL adapters are planned as database-native runtime adapters, not as a transparent promise that every database already accepts the same query syntax.
+Database-native production runtime for MongoDB today, with MySQL and PostgreSQL adapters next. MongoDB is stable today; MySQL and PostgreSQL are planned as database-native adapters, not fake MongoDB dialects. The current official support scope is only MongoDB.
 
 ## Why monSQLize
 
@@ -38,13 +38,13 @@ monSQLize is not an ORM and it is not just a CRUD wrapper. It is a production da
 
 ## Adapter Status
 
-| Adapter | Current status | Public entry |
+| Adapter | Status | Public entry |
 |---|---|---|
-| MongoDB | Stable and fully implemented | `type: 'mongodb'`, `collection()`, `db()`, `use()`, `pool()` |
+| MongoDB | Stable | `type: 'mongodb'`, `collection()`, `db()`, `use()`, `pool()` |
 | MySQL | Planned / in development | Not part of the current npm runtime yet |
 | PostgreSQL | Planned / in development | Not part of the current npm runtime yet |
 
-The shared runtime direction is cache consistency, connection lifecycle, transaction helpers, model constraints, synchronization, and observability across adapters. Adapter-native query, transaction, and connection semantics will stay explicit.
+The current stable adapter is MongoDB. MySQL and PostgreSQL adapters are next: they are planned as database-native adapters under the same runtime contract (cache consistency, connection lifecycle, transaction helpers, model constraints, synchronization, and observability), not as fake MongoDB dialects. The current official support scope is only MongoDB.
 
 ## Runtime Consistency Contract
 
@@ -78,7 +78,7 @@ monSQLize is a good fit when you need:
 |---|---|
 | High-concurrency reads | Cache hot data and reduce repeated database work. |
 | MongoDB API compatibility today | Keep familiar MongoDB syntax while adding higher-level runtime helpers. |
-| A future multi-database runtime boundary | Prepare for MySQL/PostgreSQL adapters without turning SQL into fake MongoDB syntax. |
+| The next database adapters | MySQL and PostgreSQL are planned as database-native adapters, not fake MongoDB dialects. |
 | Multi-instance services | Use Redis invalidation and pool health checks to keep instances coordinated. |
 | Transaction-heavy flows | Use `withTransaction()` and transaction-aware helpers instead of hand-rolled lifecycle code. |
 | Model-level ergonomics | Add schema validation, hooks, populate, and custom methods only where needed. |
@@ -96,7 +96,7 @@ Use Node.js 18 or newer and provide a MongoDB connection URI. Optional Redis, SS
 
 ## Quick Start
 
-The current stable quick start uses the MongoDB adapter.
+The current stable quick start uses the MongoDB adapter. MySQL and PostgreSQL are planned next and are not part of this sample.
 
 ### CommonJS
 
@@ -169,6 +169,67 @@ Published entry points:
 | Types | `dist/types/index.d.ts` |
 
 The package root exports only the public package contract. Deep imports into historical `lib/**` files are not part of the v3 publishing surface.
+
+## Native driver vs monSQLize
+
+The same task in both styles: one page of active orders, newest `createdAt` first, with a cursor for the next page and a 60-second result cache.
+
+### MongoDB Node driver
+
+The query below is the official `mongodb` driver (`find` / `sort` / `limit`). The cursor token (`createdAt` ISO time, `|`, ObjectId hex), the `$or` range, and the in-process cache are application code. `JSON` does not preserve BSON types.
+
+```ts
+import { MongoClient, ObjectId, type Document } from 'mongodb';
+
+type Order = { status: string; createdAt: Date };
+const orders = new MongoClient('mongodb://localhost:27017').db('shop').collection<Order>('orders');
+const pageCache = new Map<string, string>();
+
+export async function listActiveOrders(cursor?: string | null, limit = 20) {
+  const cacheKey = `orders:active:${limit}:${cursor ?? ''}`;
+  const hit = pageCache.get(cacheKey);
+  if (hit) return JSON.parse(hit) as { items: Order[]; hasNext: boolean; endCursor: string | null };
+  const filter: Document = { status: 'active' };
+  if (cursor) {
+    const [iso, id] = cursor.split('|');
+    const createdAt = new Date(iso);
+    filter.$or = [{ createdAt: { $lt: createdAt } }, { createdAt, _id: { $lt: new ObjectId(id) } }];
+  }
+  const docs = await orders.find(filter).sort({ createdAt: -1, _id: -1 }).limit(limit + 1).toArray();
+  const items = docs.slice(0, limit);
+  const last = items.at(-1);
+  const page = { items, hasNext: docs.length > limit, endCursor: last ? `${last.createdAt.toISOString()}|${last._id.toHexString()}` : null };
+  pageCache.set(cacheKey, JSON.stringify(page));
+  return page;
+}
+```
+
+### monSQLize
+
+`findPage` takes one options object. `cache` is the page-result TTL in milliseconds. When `sort` omits `_id`, `findPage` adds `_id: 1`. Pass `page.pageInfo.endCursor` as `after` for the next page. Writes do not clear this cache unless you opt in (`cache.invalidate`, `autoInvalidate`, or `collection.invalidate('findPage')`). See [findPage](./docs/en/findPage.md).
+
+```ts
+import MonSQLize from 'monsqlize';
+
+const msq = new MonSQLize({
+  type: 'mongodb',
+  databaseName: 'shop',
+  config: { uri: 'mongodb://localhost:27017' },
+  cache: { maxEntries: 10_000, defaultTtl: 60_000 },
+});
+await msq.connect();
+
+export async function listActiveOrders(cursor?: string | null) {
+  const page = await msq.collection<{ createdAt: Date }>('orders').findPage({
+    query: { status: 'active' },
+    sort: { createdAt: -1 },
+    limit: 20,
+    after: cursor ?? undefined,
+    cache: 60_000,
+  });
+  return { items: page.items, hasNext: page.pageInfo.hasNext, endCursor: page.pageInfo.endCursor };
+}
+```
 
 ## Model Layer
 
@@ -617,10 +678,9 @@ npm run test:real-env:private
 
 ## Roadmap
 
-- MongoDB remains the stable adapter and the current production runtime.
-- MySQL and PostgreSQL adapters will be introduced as database-native adapters under the same production runtime contract.
-- Adapter status will move from planned to alpha/stable only after runtime support, public types, examples, and verification coverage are present.
-- The project does not currently promise production-ready "one query syntax automatically adapts to every database" behavior.
+- MongoDB is stable today and remains the current production runtime. The current official support scope is only MongoDB.
+- MySQL and PostgreSQL adapters are next. They are planned as database-native adapters, not fake MongoDB dialects, and are not part of the current npm runtime yet.
+- A production-ready "one query syntax that automatically adapts to all databases" is not part of the current version.
 - Query analyzer improvements.
 - Automatic index suggestions.
 - Additional data-task observability and large-scope operational probes.
