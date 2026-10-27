@@ -54,7 +54,7 @@ Calling either method before `connect()` throws `NOT_CONNECTED`.
 
 ### Ranges
 
-`downloadStream` ranges use an inclusive `start` and an exclusive `end`. Omitted `start` means `0`. Omitted `end` means the file length. A legal range satisfies `0 <= start < end <= length`. Anything else, including `start === end` and `start === length`, emits `GRIDFS_RANGE_INVALID`. When the failure depends on the file length, `details[0].length` is that length. Shape errors that can be rejected before a lookup omit `length`. `download()` rejects the promise with the same codes; it does not apply a range.
+`downloadStream` ranges use an inclusive `start` and an exclusive `end`. Omitted `start` means `0`. Omitted `end` means the file length. A legal range satisfies `0 <= start < end <= length`. Anything else, including `start === end` and `start === length`, emits `GRIDFS_RANGE_INVALID`. When the failure depends on the file length, `details[0].length` is that length. Shape errors that can be rejected before a lookup omit `length`. `download()` reads the whole file and does not accept a range.
 
 ## Resumable upload
 
@@ -80,13 +80,14 @@ Chunk bytes must follow the session size:
 
 - Every chunk except the last has length `chunkSizeBytes`.
 - The last chunk has length `length % chunkSizeBytes`, or `chunkSizeBytes` when the length divides evenly.
-- A payload that does not split into those sizes throws `INVALID_ARGUMENT`.
+- A payload that does not split into those sizes throws `INVALID_ARGUMENT`. The whole payload is checked before any chunk is inserted.
 
 `appendChunks` is addressed by `fromChunk`:
 
 - `fromChunk` past the contiguous prefix throws `GRIDFS_RESUME_MISMATCH` with `expectedNextChunk`.
-- Replaying an earlier chunk with the same bytes is idempotent and does not move `nextChunk` backward.
+- Replaying already stored chunks with the same bytes is idempotent and does not move `nextChunk` backward.
 - Replaying an earlier chunk with different bytes throws `GRIDFS_RESUME_MISMATCH`.
+- A payload that contains any new chunk must start at `nextChunk`. Starting earlier throws `GRIDFS_RESUME_MISMATCH` and writes nothing.
 - A duplicate `{ files_id, n }` insert is accepted only when the stored bytes match.
 
 `finalizeResumableUpload` requires a contiguous prefix, a total length equal to the session length, and a sha256 equal to the session digest. It then inserts the files document, sets `metadata.sha256`, and deletes the session. Missing chunk indexes throw `GRIDFS_UPLOAD_INCOMPLETE` with `details[0].missingChunks`. A bad digest or a chunk of the wrong size throws `GRIDFS_INTEGRITY_MISMATCH`. The files document is not inserted in those cases.

@@ -329,6 +329,32 @@ describe('gridfs bucket', () => {
         await bucket.abortResumableUpload(new ObjectId());
     });
 
+    it('validates an append before writing and does not extend a replay', async () => {
+        const { bucket, db } = bucketFor({ driver: false });
+        const payload = Buffer.from('abcdefghijkl');
+        const started = await bucket.beginResumableUpload('big.bin', { length: payload.length, sha256: sha(payload), chunkSizeBytes: 4 });
+        await assert.rejects(() => bucket.appendChunks(started.uploadId, 0, Buffer.from('abcdef')), (error: unknown) => codeOf(error) === 'INVALID_ARGUMENT');
+        assert.equal((await db.collection('fs.chunks').find({ files_id: started.uploadId }).toArray()).length, 0);
+
+        await bucket.appendChunks(started.uploadId, 0, payload.subarray(0, 8));
+        await assert.rejects(
+            () => bucket.appendChunks(started.uploadId, 0, Buffer.concat([payload.subarray(0, 8), Buffer.from('WXYZ')])),
+            (error: unknown) => {
+                assert.equal(codeOf(error), 'GRIDFS_RESUME_MISMATCH');
+                assert.equal(detailsOf(error).expectedNextChunk, 2);
+                return true;
+            },
+        );
+        const stored = await db.collection('fs.chunks').find({ files_id: started.uploadId }).sort({ n: 1 }).toArray();
+        assert.deepEqual(stored.map((chunk) => chunk.n), [0, 1]);
+        assert.equal((await db.collection('fs.uploads').findOne({ _id: started.uploadId }))?.nextChunk, 2);
+
+        const replay = await bucket.appendChunks(started.uploadId, 0, payload.subarray(0, 8));
+        assert.equal(replay.nextChunk, 2);
+        const advanced = await bucket.appendChunks(started.uploadId, 2, payload.subarray(8));
+        assert.equal(advanced.nextChunk, 3);
+    });
+
     it('abort removes pending chunks and ensureIndexes is idempotent', async () => {
         const { bucket, db } = bucketFor({ driver: false });
         const started = await bucket.beginResumableUpload('partial.bin', { length: 4, sha256: sha(Buffer.from('abcd')), chunkSizeBytes: 4 });

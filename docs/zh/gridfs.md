@@ -54,7 +54,7 @@ const modelBucket = model.gridfs(bucketName?: string, opts?: {
 
 ### 区间
 
-`downloadStream` 的区间是包含的 `start` 和排除的 `end`。省略 `start` 表示 `0`，省略 `end` 表示文件长度。合法区间满足 `0 <= start < end <= length`。其余情况，包括 `start === end` 和 `start === length`，都会发出 `GRIDFS_RANGE_INVALID`。依赖文件长度才能判断的失败会带上 `details[0].length`。查找文件之前就能拒绝的形态错误不含 `length`。`download()` 用同一个错误码拒绝 Promise，并且不接受区间。
+`downloadStream` 的区间是包含的 `start` 和排除的 `end`。省略 `start` 表示 `0`，省略 `end` 表示文件长度。合法区间满足 `0 <= start < end <= length`。其余情况，包括 `start === end` 和 `start === length`，都会发出 `GRIDFS_RANGE_INVALID`。依赖文件长度才能判断的失败会带上 `details[0].length`。查找文件之前就能拒绝的形态错误不含 `length`。`download()` 读取整个文件，不接受区间。
 
 ## 可恢复上传
 
@@ -80,13 +80,14 @@ await bucket.abortResumableUpload(session.uploadId);
 
 - 除最后一片外，每片长度都是 `chunkSizeBytes`。
 - 最后一片长度是 `length % chunkSizeBytes`；能够整除时仍是 `chunkSizeBytes`。
-- 无法按这些长度切开的 payload 抛出 `INVALID_ARGUMENT`。
+- 无法按这些长度切开的 payload 抛出 `INVALID_ARGUMENT`。整段 payload 会在插入任何分片之前完成检查。
 
 `appendChunks` 以 `fromChunk` 定位：
 
 - `fromChunk` 超过从 0 开始的连续前缀时，抛出 `GRIDFS_RESUME_MISMATCH`，并带上 `expectedNextChunk`。
 - 用相同字节重放已写入的分片是幂等的，不会把 `nextChunk` 往回退。
 - 用不同字节重放已写入的分片会抛出 `GRIDFS_RESUME_MISMATCH`。
+- 只要 payload 含有新分片，`fromChunk` 就必须等于 `nextChunk`。从更早的序号开始会抛出 `GRIDFS_RESUME_MISMATCH`，并且不会写入。
 - `{ files_id, n }` 唯一索引冲突只有在已存字节相同的时候才算成功。
 
 `finalizeResumableUpload` 要求分片从 0 连续、总长度等于会话长度，且 sha256 等于会话摘要。然后插入 files 文档、写入 `metadata.sha256`，并删除会话。缺少的分片序号抛出 `GRIDFS_UPLOAD_INCOMPLETE`，`details[0].missingChunks` 列出缺口。摘要不符或分片长度不对抛出 `GRIDFS_INTEGRITY_MISMATCH`。这些失败都不会插入 files 文档。

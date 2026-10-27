@@ -81,18 +81,14 @@ export async function appendChunks(
         throw resumeMismatch('appendChunks', ctx.bucketName, { uploadId, fromChunk, expectedNextChunk: nextChunk });
     }
 
-    const total = chunkCount(session.length, session.chunkSizeBytes);
-    let offset = 0;
-    let index = fromChunk;
-    while (offset < payload.length) {
-        if (index >= total) throw badChunkSize();
-        const expected = chunkLengthAt(index, session.length, session.chunkSizeBytes);
-        if (offset + expected > payload.length) throw badChunkSize();
-        const slice = payload.subarray(offset, offset + expected);
-        if (index < nextChunk) await assertStoredChunk(ctx, uploadId, index, slice);
-        else await writeChunk(ctx, uploadId, index, slice);
-        offset += expected;
-        index += 1;
+    const slices = planChunkSlices(payload, fromChunk, session.length, session.chunkSizeBytes);
+    const lastIndex = slices[slices.length - 1].index;
+    if (lastIndex >= nextChunk && fromChunk !== nextChunk) {
+        throw resumeMismatch('appendChunks', ctx.bucketName, { uploadId, fromChunk, expectedNextChunk: nextChunk });
+    }
+    for (const slice of slices) {
+        if (slice.index < nextChunk) await assertStoredChunk(ctx, uploadId, slice.index, slice.bytes);
+        else await writeChunk(ctx, uploadId, slice.index, slice.bytes);
     }
 
     const advanced = await contiguousNext(ctx, uploadId);
@@ -199,6 +195,22 @@ async function payloadBytes(data: Buffer | Uint8Array | Readable): Promise<Buffe
 
 function badChunkSize() {
     return invalidArgument('appendChunks', 'data', 'chunk payload must match the session chunk size');
+}
+
+function planChunkSlices(payload: Buffer, fromChunk: number, length: number, chunkSizeBytes: number): Array<{ index: number; bytes: Buffer }> {
+    const total = chunkCount(length, chunkSizeBytes);
+    const slices: Array<{ index: number; bytes: Buffer }> = [];
+    let offset = 0;
+    let index = fromChunk;
+    while (offset < payload.length) {
+        if (index >= total) throw badChunkSize();
+        const expected = chunkLengthAt(index, length, chunkSizeBytes);
+        if (offset + expected > payload.length) throw badChunkSize();
+        slices.push({ index, bytes: payload.subarray(offset, offset + expected) });
+        offset += expected;
+        index += 1;
+    }
+    return slices;
 }
 
 async function requirePending(ctx: GridFSContext, uploadId: ObjectId, operation: string): Promise<GridFSUploadSession> {
