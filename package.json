@@ -136,7 +136,7 @@
         "test:coverage": "node scripts/run-coverage.cjs",
         "test:audit": "npm audit --omit=dev --registry=https://registry.npmjs.org/",
         "test": "npm run build && npm run build:tests && node test/run-tests.cjs",
-        "type-check": "npm run build && tsc -p tsconfig.json --noEmit && tsd --files test/types/root-import.test-d.ts --files test/types/cache-usage.test-d.ts --files test/types/model-usage.test-d.ts --files test/types/pool-usage.test-d.ts --files test/types/sync-usage.test-d.ts --files test/types/slow-query-log-usage.test-d.ts --files test/types/saga-usage.test-d.ts --files test/types/data-tasks-usage.test-d.ts --files test/types/search-index-usage.test-d.ts",
+        "type-check": "npm run build && tsc -p tsconfig.json --noEmit && tsd --files test/types/root-import.test-d.ts --files test/types/cache-usage.test-d.ts --files test/types/model-usage.test-d.ts --files test/types/pool-usage.test-d.ts --files test/types/sync-usage.test-d.ts --files test/types/slow-query-log-usage.test-d.ts --files test/types/saga-usage.test-d.ts --files test/types/data-tasks-usage.test-d.ts --files test/types/search-index-usage.test-d.ts --files test/types/gridfs-usage.test-d.ts",
         "check:test-language": "node scripts/check-test-language.cjs",
         "check:docs-examples": "node scripts/validation/check-doc-example-matrix.cjs",
         "check:release-candidate": "node scripts/check-release-candidate.cjs",
