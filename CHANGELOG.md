@@ -1,18 +1,19 @@
 # CHANGELOG
 
-> Summary index — the 3.4.0 versioned details are in [changelogs/v3.4.0.md](./changelogs/v3.4.0.md). A versioned note does not establish npm publication; check the registry and immutable tag before deployment.
+> Summary index — the 3.5.0 versioned details are in [changelogs/v3.5.0.md](./changelogs/v3.5.0.md). A versioned note does not establish npm publication; check the registry and immutable tag before deployment.
 > **Last updated**: 2026-10-27
 
 ---
 
 ## Unreleased
 
-The Search index lifecycle API is assigned to **3.4.0** ([versioned notes](./changelogs/v3.4.0.md)); the weekly-scan cache-key, health-check and lockfile security fixes are in [3.3.4](./changelogs/v3.3.4.md); the schema-dsl 3.0.5 upgrade is in [3.3.3](./changelogs/v3.3.3.md); the audited 3.3.2 repairs are in its [versioned notes](./changelogs/v3.3.2.md) and the [next-change staging log](https://github.com/devcodex-labs/monSQLize/blob/main/changelogs/unreleased.md). Untagged checkouts remain release candidates.
+GridFS buckets are assigned to **3.5.0** ([versioned notes](./changelogs/v3.5.0.md)); the Search index lifecycle API is in [3.4.0](./changelogs/v3.4.0.md); the weekly-scan cache-key, health-check and lockfile security fixes are in [3.3.4](./changelogs/v3.3.4.md); the schema-dsl 3.0.5 upgrade is in [3.3.3](./changelogs/v3.3.3.md); the audited 3.3.2 repairs are in its [versioned notes](./changelogs/v3.3.2.md) and the [next-change staging log](https://github.com/devcodex-labs/monSQLize/blob/main/changelogs/unreleased.md). Untagged checkouts remain release candidates.
 
 ## Version Overview
 
 | Version | Date | Summary | Details |
 |---------|------|---------|---------|
+| [v3.5.0](./changelogs/v3.5.0.md) | 2026-10-27 | Minor: GridFS buckets with upload, download, ranges, ensureIndexes and phase-1 resumable upload | [View](./changelogs/v3.5.0.md) |
 | [v3.4.0](./changelogs/v3.4.0.md) | 2026-10-27 | Minor: Search index lifecycle API for Atlas Search and Vector Search | [View](./changelogs/v3.4.0.md) |
 | [v3.3.4](./changelogs/v3.3.4.md) | 2026-10-26 | Patch: cached-read keys under autoConvertObjectId, hung health-check pings, lockfile security patches | [View](./changelogs/v3.3.4.md) |
 | [v3.3.3](./changelogs/v3.3.3.md) | 2026-10-23 | Patch: pin schema-dsl 3.0.5 (dependency bug fixes only) | [View](./changelogs/v3.3.3.md) |
