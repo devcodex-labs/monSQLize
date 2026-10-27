@@ -12,6 +12,7 @@ export interface CreateGridFSBucketDeps {
     bucketName: string;
     dbName: string;
     poolName?: string;
+    instanceId?: string;
     chunkSizeBytes?: number;
     source: 'db' | 'model';
     policy?: NormalizedWritePathPolicy;
@@ -30,6 +31,7 @@ export function createMonSQLizeGridFSBucket(deps: CreateGridFSBucketDeps): MonSQ
         bucketName: deps.bucketName,
         dbName: deps.dbName,
         poolName: deps.poolName,
+        instanceId: deps.instanceId,
         chunkSizeBytes,
         source: deps.source,
         policy: deps.policy,

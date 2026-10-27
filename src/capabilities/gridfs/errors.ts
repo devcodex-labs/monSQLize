@@ -130,6 +130,7 @@ export function isDriverFileNotFound(error: unknown): boolean {
 
 export function mapDriverError(error: unknown, operation: string, ctx: Pick<GridFSContext, 'bucketName'>, target: { id?: ObjectId; filename?: string; uploadId?: ObjectId } = {}): MonSQLizeError {
     if (isGridFSDomainError(error)) return error;
+    if (error instanceof Error && (error as MonSQLizeError).code === ErrorCodes.MONGODB_ERROR) return error as MonSQLizeError;
     const cause = error instanceof Error ? error : new Error(String(error));
     if (isDriverFileNotFound(error)) {
         return fileNotFound(operation, ctx, target);

@@ -4,6 +4,9 @@
 
 - Add GridFS buckets on `msq.gridfs()` and `model.gridfs()`, including upload, download, ranges, `ensureIndexes`, and phase-1 resumable upload. `writePathPolicy` gains a `gridfs` field and category. Policy violations stay `INVALID_OPERATION` with `reason: 'WRITE_PATH_POLICY'`. These notes stage the work after 3.4.0; the npm package version is unchanged and this file is not a 3.5.0 release. The Search index lifecycle API remains in the [3.4.0 versioned notes](./v3.4.0.md).
 - Raise the CJS and ESM runtime package budgets for GridFS 3.5.0. `gridfs()` stays synchronous, so the single-file build keeps that code in the main bundle. The CJS ceiling is 873000 bytes after `contentType` moved onto file metadata.
+- Map driver failures from GridFS `getFile`, `findFiles`, `abortResumableUpload`, and index creation to `MONGODB_ERROR`, with the driver error kept as `cause`. Existing `GRIDFS_*` errors stay unchanged.
+- Pass the collection-style internal instance id (`iid`) into GridFS `writePathPolicy` matching. Model-only reads stay allowed, and writes still require `gridfs: 'allow'`.
+- Raise the CJS runtime ceiling from 873000 to 874000 bytes and the ESM ceiling from 870000 to 871000 bytes for that driver-error mapping and iid matching. The CLI budget stays 50000 bytes.
 
 ## Archived preparation notes for the 3.3.2 candidate
 
