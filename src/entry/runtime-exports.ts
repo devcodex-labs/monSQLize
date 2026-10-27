@@ -141,6 +141,7 @@ export type {
     NormalizedWritePathRule,
     WritePathNamespace,
     WritePathOperationCategory,
+    WritePathPolicyGridfsMode,
     WritePathPolicyManagementMode,
     WritePathPolicyMode,
     WritePathPolicyOptions,

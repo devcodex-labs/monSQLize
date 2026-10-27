@@ -5,12 +5,15 @@ import { ErrorCodes, createError } from '../../core/errors';
 export type WritePathPolicyMode = 'allow-both' | 'model-only';
 export type WritePathPolicyRawMode = 'inherit' | 'allow' | 'block';
 export type WritePathPolicyManagementMode = 'inherit' | 'allow' | 'block';
+export type WritePathPolicyGridfsMode = 'inherit' | 'allow' | 'block';
 export type WritePathPolicyViolationAction = 'throw' | 'warn';
 
 export interface WritePathPolicyRule {
     mode?: WritePathPolicyMode;
     raw?: WritePathPolicyRawMode;
     management?: WritePathPolicyManagementMode;
+    /** GridFS writes. `inherit` allows them only in `allow-both`; `model-only` still blocks until `allow`. */
+    gridfs?: WritePathPolicyGridfsMode;
     onViolation?: WritePathPolicyViolationAction;
 }
 
@@ -19,7 +22,7 @@ export interface WritePathPolicyOptions {
     namespaces?: Record<string, WritePathPolicyMode | WritePathPolicyRule>;
 }
 
-export type WritePathOperationCategory = 'write' | 'batch' | 'management' | 'raw';
+export type WritePathOperationCategory = 'write' | 'batch' | 'management' | 'raw' | 'gridfs';
 export type WritePathSource = 'collection' | 'model' | 'legacy' | 'db' | 'client';
 
 export interface WritePathNamespace {
@@ -33,6 +36,7 @@ export interface NormalizedWritePathRule {
     mode: WritePathPolicyMode;
     raw: WritePathPolicyRawMode;
     management: WritePathPolicyManagementMode;
+    gridfs: WritePathPolicyGridfsMode;
     onViolation: WritePathPolicyViolationAction;
 }
 
@@ -51,12 +55,14 @@ const DEFAULT_RULE: NormalizedWritePathRule = Object.freeze({
     mode: 'allow-both',
     raw: 'inherit',
     management: 'inherit',
+    gridfs: 'inherit',
     onViolation: 'throw',
 });
 
 const ALLOWED_MODES = new Set<WritePathPolicyMode>(['allow-both', 'model-only']);
 const ALLOWED_RAW = new Set<WritePathPolicyRawMode>(['inherit', 'allow', 'block']);
 const ALLOWED_MANAGEMENT = new Set<WritePathPolicyManagementMode>(['inherit', 'allow', 'block']);
+const ALLOWED_GRIDFS = new Set<WritePathPolicyGridfsMode>(['inherit', 'allow', 'block']);
 const ALLOWED_VIOLATION_ACTIONS = new Set<WritePathPolicyViolationAction>(['throw', 'warn']);
 
 type AggregateInvalidationNormalizer = (input: {
@@ -117,6 +123,10 @@ function normalizeRule(
     if (!ALLOWED_MANAGEMENT.has(management as WritePathPolicyManagementMode)) {
         invalidConfig(`${path}.management`, 'must be "inherit", "allow", or "block"');
     }
+    const gridfs = ownValue<WritePathPolicyGridfsMode>(input, 'gridfs') ?? DEFAULT_RULE.gridfs;
+    if (!ALLOWED_GRIDFS.has(gridfs as WritePathPolicyGridfsMode)) {
+        invalidConfig(`${path}.gridfs`, 'must be "inherit", "allow", or "block"');
+    }
     const onViolation = ownValue<WritePathPolicyViolationAction>(input, 'onViolation') ?? DEFAULT_RULE.onViolation;
     if (!ALLOWED_VIOLATION_ACTIONS.has(onViolation as WritePathPolicyViolationAction)) {
         invalidConfig(`${path}.onViolation`, 'must be "throw" or "warn"');
@@ -126,6 +136,7 @@ function normalizeRule(
         mode: mode as WritePathPolicyMode,
         raw: raw as WritePathPolicyRawMode,
         management: management as WritePathPolicyManagementMode,
+        gridfs: gridfs as WritePathPolicyGridfsMode,
         onViolation: onViolation as WritePathPolicyViolationAction,
     };
 }
@@ -231,6 +242,11 @@ function isAllowed(rule: NormalizedWritePathRule, source: WritePathSource, categ
         }
         return resolveManagement(rule) === 'allow';
     }
+    if (category === 'gridfs') {
+        if (rule.gridfs === 'allow') return true;
+        if (rule.gridfs === 'block') return false;
+        return rule.mode === 'allow-both';
+    }
     if (rule.mode === 'model-only') {
         return source === 'model';
     }
@@ -261,6 +277,7 @@ export function assertWritePathAllowed(config: {
         namespace: config.namespace,
         matchedRule: resolved.key,
         rule: resolved.rule,
+        reason: 'WRITE_PATH_POLICY' as const,
     };
     const message = buildViolationMessage(config.operation, config.category, config.source);
     if (resolved.rule.onViolation === 'warn') {
@@ -345,6 +362,7 @@ export function assertDbLevelWritePathAllowed(config: {
         namespace: { db: config.dbName },
         matchedRule: blocked.key,
         rule: blocked.rule,
+        reason: 'WRITE_PATH_POLICY' as const,
     };
     const message = buildViolationMessage(config.operation, config.category, 'db');
     if (blocked.rule.onViolation === 'warn') {
@@ -386,6 +404,7 @@ export function assertClientLevelWritePathAllowed(config: {
         namespace: {},
         matchedRule: blocked.key,
         rule: blocked.rule,
+        reason: 'WRITE_PATH_POLICY' as const,
     };
     const message = buildViolationMessage(config.operation, 'raw', 'client');
     if (blocked.rule.onViolation === 'warn') {

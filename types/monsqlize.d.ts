@@ -92,6 +92,12 @@ export type WritePathPolicyRawMode = 'inherit' | 'allow' | 'block';
 /** Controls whether collection/database management writes are available under a write path policy. */
 export type WritePathPolicyManagementMode = 'inherit' | 'allow' | 'block';
 
+/**
+ * Controls GridFS writes. `inherit` follows `mode`, except `model-only` still blocks
+ * GridFS writes from every source until the rule is `allow`.
+ */
+export type WritePathPolicyGridfsMode = 'inherit' | 'allow' | 'block';
+
 /** Controls violation handling; `warn` logs and allows for migration observation. */
 export type WritePathPolicyViolationAction = 'throw' | 'warn';
 
@@ -103,6 +109,11 @@ export interface WritePathPolicyRule {
     raw?: WritePathPolicyRawMode;
     /** Management write policy. `inherit` allows model management and blocks external management in `model-only`. */
     management?: WritePathPolicyManagementMode;
+    /**
+     * GridFS write policy. Default: `inherit`.
+     * `inherit` allows GridFS writes in `allow-both` and blocks them in `model-only` even when `source` is `model`.
+     */
+    gridfs?: WritePathPolicyGridfsMode;
     /** Violation action. Default: `throw`. */
     onViolation?: WritePathPolicyViolationAction;
 }
