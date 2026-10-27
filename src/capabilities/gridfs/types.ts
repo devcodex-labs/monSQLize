@@ -114,6 +114,8 @@ export interface GridFSContext {
     bucketName: string;
     dbName: string;
     poolName?: string;
+    /** Configured namespace instance id. The write-path iid is derived the same way as collection writes. */
+    instanceId?: string;
     chunkSizeBytes: number;
     source: Extract<WritePathSource, 'db' | 'model'>;
     policy?: NormalizedWritePathPolicy;

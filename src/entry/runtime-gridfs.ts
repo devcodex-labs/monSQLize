@@ -64,6 +64,7 @@ function openGridFS(runtime: unknown, request: {
         bucketName,
         dbName,
         poolName: request.poolName,
+        instanceId: state._runtimeDefaults?.namespace?.instanceId,
         chunkSizeBytes: request.chunkSizeBytes,
         source: request.source,
         policy: state._runtimeDefaults?.writePathPolicy,

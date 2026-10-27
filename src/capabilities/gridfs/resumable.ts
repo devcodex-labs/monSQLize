@@ -177,17 +177,21 @@ export async function finalizeResumableUpload(ctx: GridFSContext, uploadId: Obje
 
 export async function abortResumableUpload(ctx: GridFSContext, uploadId: ObjectId): Promise<void> {
     assertObjectId(uploadId, 'abortResumableUpload', 'uploadId');
-    const uploads = ctx.db.collection(uploadsCollectionName(ctx.bucketName));
-    const session = await uploads.findOne({ _id: uploadId });
-    if (!session || session.status === 'aborted' || session.status === 'finalized') return;
-    const visible = await ctx.db.collection(filesCollectionName(ctx.bucketName)).findOne(
-        { _id: uploadId },
-        { projection: { _id: 1 } },
-    );
-    if (!visible) {
-        await ctx.db.collection(chunksCollectionName(ctx.bucketName)).deleteMany({ files_id: uploadId });
+    try {
+        const uploads = ctx.db.collection(uploadsCollectionName(ctx.bucketName));
+        const session = await uploads.findOne({ _id: uploadId });
+        if (!session || session.status === 'aborted' || session.status === 'finalized') return;
+        const visible = await ctx.db.collection(filesCollectionName(ctx.bucketName)).findOne(
+            { _id: uploadId },
+            { projection: { _id: 1 } },
+        );
+        if (!visible) {
+            await ctx.db.collection(chunksCollectionName(ctx.bucketName)).deleteMany({ files_id: uploadId });
+        }
+        await uploads.deleteOne({ _id: uploadId });
+    } catch (error) {
+        throw mapDriverError(error, 'abortResumableUpload', ctx, { uploadId });
     }
-    await uploads.deleteOne({ _id: uploadId });
 }
 
 async function payloadBytes(data: Buffer | Uint8Array | Readable): Promise<Buffer> {

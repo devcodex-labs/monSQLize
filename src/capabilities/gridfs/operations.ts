@@ -157,19 +157,27 @@ export function openDownloadStream(ctx: GridFSContext, idOrName: GridFSIdOrName,
 
 export async function getFile(ctx: GridFSContext, id: ObjectId): Promise<GridFSFileInfo | null> {
     assertObjectId(id, 'getFile', 'id');
-    const doc = await ctx.db.collection(filesCollectionName(ctx.bucketName)).findOne({ _id: id });
-    return doc ? toFileInfo(doc as Record<string, unknown>) : null;
+    try {
+        const doc = await ctx.db.collection(filesCollectionName(ctx.bucketName)).findOne({ _id: id });
+        return doc ? toFileInfo(doc as Record<string, unknown>) : null;
+    } catch (error) {
+        throw mapDriverError(error, 'getFile', ctx, { id });
+    }
 }
 
 export async function findFiles(ctx: GridFSContext, filter?: GridFSFindFilesFilter, opts?: GridFSFindFilesOptions): Promise<GridFSFileInfo[]> {
     const query = sanitizeFilter(filter, 'findFiles');
     assertFindOptions(opts);
-    let cursor = ctx.db.collection(filesCollectionName(ctx.bucketName)).find(query);
-    if (opts?.sort) cursor = cursor.sort(opts.sort as Sort);
-    if (opts?.skip) cursor = cursor.skip(opts.skip);
-    if (opts?.limit) cursor = cursor.limit(opts.limit);
-    const docs = await cursor.toArray();
-    return docs.map((doc) => toFileInfo(doc as Record<string, unknown>));
+    try {
+        let cursor = ctx.db.collection(filesCollectionName(ctx.bucketName)).find(query);
+        if (opts?.sort) cursor = cursor.sort(opts.sort as Sort);
+        if (opts?.skip) cursor = cursor.skip(opts.skip);
+        if (opts?.limit) cursor = cursor.limit(opts.limit);
+        const docs = await cursor.toArray();
+        return docs.map((doc) => toFileInfo(doc as Record<string, unknown>));
+    } catch (error) {
+        throw mapDriverError(error, 'findFiles', ctx);
+    }
 }
 
 export async function deleteFile(ctx: GridFSContext, id: ObjectId, opts?: GridFSDeleteOptions): Promise<void> {

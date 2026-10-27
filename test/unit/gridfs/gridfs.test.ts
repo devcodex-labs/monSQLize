@@ -147,7 +147,29 @@ function detailsOf(error: unknown): Record<string, unknown> {
     return (details?.[0] ?? {}) as Record<string, unknown>;
 }
 
-function bucketFor(options: { policy?: ReturnType<typeof normalizeWritePathPolicy>; source?: 'db' | 'model'; driver?: boolean } = {}) {
+function causeOf(error: unknown): unknown {
+    return error && typeof error === 'object' ? (error as { cause?: unknown }).cause : undefined;
+}
+
+function driverFailure(message: string, code: number): Error & { code: number } {
+    return Object.assign(new Error(message), { code });
+}
+
+function assertMapped(error: unknown, operation: string, cause: Error): boolean {
+    assert.equal(codeOf(error), 'MONGODB_ERROR');
+    assert.equal(causeOf(error), cause);
+    assert.equal(detailsOf(error).operation, operation);
+    assert.equal(detailsOf(error).bucket, 'fs');
+    return true;
+}
+
+function bucketFor(options: {
+    policy?: ReturnType<typeof normalizeWritePathPolicy>;
+    source?: 'db' | 'model';
+    driver?: boolean;
+    instanceId?: string;
+    poolName?: string;
+} = {}) {
     const db = new MemoryDb();
     const calls: string[] = [];
     const bytes = new Map<string, Buffer>();
@@ -205,6 +227,8 @@ function bucketFor(options: { policy?: ReturnType<typeof normalizeWritePathPolic
         db: db as never,
         bucketName: 'fs',
         dbName: 'app',
+        poolName: options.poolName,
+        instanceId: options.instanceId,
         source: options.source ?? 'db',
         policy: options.policy,
         driver: options.driver === false ? undefined : driver as never,
@@ -424,5 +448,144 @@ describe('gridfs bucket', () => {
         openModelGridFS(runtime, 'assets', 'archive', undefined, 1024);
         openRuntimeGridFS(runtime, undefined, undefined);
         assert.deepEqual(seen, ['archive:assets', 'archive:assets', 'default:main']);
+    });
+
+    it('maps driver failures from getFile, findFiles, abort, and index creation', async () => {
+        const { bucket, db } = bucketFor({ driver: false });
+        const files = db.collection('fs.files');
+        const uploads = db.collection('fs.uploads');
+        const id = new ObjectId();
+        const preserved = Object.assign(new Error('GridFS file was not found'), { code: 'GRIDFS_FILE_NOT_FOUND' });
+        const originalFindOne = files.findOne.bind(files);
+        files.findOne = async () => { throw preserved; };
+        await assert.rejects(() => bucket.getFile(id), (error: unknown) => error === preserved);
+        await assert.rejects(() => bucket.getFile('nope' as never), (error: unknown) => codeOf(error) === 'INVALID_ARGUMENT');
+
+        const readError = driverFailure('socket closed', 11600);
+        files.findOne = async () => { throw readError; };
+        await assert.rejects(() => bucket.getFile(id), (error: unknown) => {
+            assertMapped(error, 'getFile', readError);
+            assert.equal(detailsOf(error).id, id);
+            return true;
+        });
+        files.findOne = originalFindOne;
+        assert.equal(await bucket.getFile(id), null);
+
+        const queryError = driverFailure('cursor failed', 43);
+        files.find = () => { throw queryError; };
+        await assert.rejects(
+            () => bucket.findFiles({ ['__proto__']: { admin: true } } as never),
+            (error: unknown) => codeOf(error) === 'INVALID_ARGUMENT',
+        );
+        await assert.rejects(() => bucket.findFiles({}), (error: unknown) => assertMapped(error, 'findFiles', queryError));
+
+        const abortError = driverFailure('abort failed', 91);
+        uploads.findOne = async () => { throw abortError; };
+        await assert.rejects(() => bucket.abortResumableUpload('x' as never), (error: unknown) => codeOf(error) === 'INVALID_ARGUMENT');
+        await assert.rejects(() => bucket.abortResumableUpload(id), (error: unknown) => {
+            assertMapped(error, 'abortResumableUpload', abortError);
+            assert.equal(detailsOf(error).uploadId, id);
+            return true;
+        });
+
+        const indexError = driverFailure('index build failed', 67);
+        const originalCreateIndex = files.createIndex.bind(files);
+        files.createIndex = async () => { throw indexError; };
+        await assert.rejects(() => bucket.ensureIndexes(), (error: unknown) => assertMapped(error, 'ensureIndexes', indexError));
+        const stream = bucket.uploadStream('a.bin');
+        stream.end(Buffer.from('x'));
+        await assert.rejects(() => stream.done, (error: unknown) => assertMapped(error, 'ensureIndexes', indexError));
+        files.createIndex = originalCreateIndex;
+        await bucket.ensureIndexes();
+        assert.ok(files.indexes.length >= 1);
+    });
+
+    it('matches GridFS write policy with the collection write-path iid', async () => {
+        const modelOnly = normalizeWritePathPolicy({ default: 'model-only' });
+        const modelBucket = bucketFor({ policy: modelOnly, source: 'model', instanceId: 'node-a' });
+        assert.throws(() => modelBucket.bucket.upload('a.bin', Buffer.from('x')), (error: unknown) => {
+            assert.equal(codeOf(error), 'INVALID_OPERATION');
+            assert.equal(detailsOf(error).category, 'gridfs');
+            assert.equal(detailsOf(error).source, 'model');
+            assert.equal(detailsOf(error).matchedRule, 'default');
+            assert.equal((detailsOf(error).namespace as { iid?: string }).iid, 'node-a:app:fs.files');
+            return true;
+        });
+        assert.equal(await modelBucket.bucket.getFile(new ObjectId()), null);
+        await modelBucket.bucket.drop();
+        const directBucket = bucketFor({ policy: modelOnly, source: 'db', instanceId: 'node-a' });
+        assert.throws(() => directBucket.bucket.drop(), (error: unknown) => detailsOf(error).category === 'management');
+
+        const allowedPolicy = normalizeWritePathPolicy({
+            default: 'model-only',
+            namespaces: { 'node-a:app:fs.files': { mode: 'model-only', gridfs: 'allow' } },
+        });
+        const allowed = bucketFor({ policy: allowedPolicy, source: 'db', instanceId: 'node-a' });
+        assert.equal((await allowed.bucket.upload('a.bin', Buffer.from('ok'))).length, 2);
+        const otherInstance = bucketFor({ policy: allowedPolicy, source: 'model', instanceId: 'node-b' });
+        assert.throws(() => otherInstance.bucket.upload('a.bin', Buffer.from('x')), (error: unknown) => detailsOf(error).matchedRule === 'default');
+        assert.equal(await otherInstance.bucket.getFile(new ObjectId()), null);
+        assert.deepEqual(await otherInstance.bucket.findFiles(), []);
+
+        const pooled = bucketFor({
+            policy: normalizeWritePathPolicy({
+                default: { mode: 'allow-both' },
+                namespaces: {
+                    'node-a:archive:app.fs.files': { gridfs: 'block' },
+                    'archive:app.fs.files': { gridfs: 'allow' },
+                },
+            }),
+            source: 'db',
+            instanceId: 'node-a',
+            poolName: 'archive',
+        });
+        assert.throws(() => pooled.bucket.upload('a.bin', Buffer.from('x')), (error: unknown) => {
+            assert.equal(detailsOf(error).matchedRule, 'node-a:archive:app.fs.files');
+            assert.equal((detailsOf(error).namespace as { iid?: string }).iid, 'node-a:archive:app.fs.files');
+            return true;
+        });
+
+        const colon = bucketFor({
+            policy: normalizeWritePathPolicy({
+                default: { mode: 'allow-both' },
+                namespaces: { 'app:fs.files': { gridfs: 'block' } },
+            }),
+            source: 'db',
+        });
+        assert.throws(() => colon.bucket.ensureIndexes(), (error: unknown) => {
+            assert.equal(detailsOf(error).matchedRule, 'app:fs.files');
+            assert.equal((detailsOf(error).namespace as { iid?: string }).iid, 'app:fs.files');
+            return true;
+        });
+
+        const runtime = {
+            ensureConnected() { return undefined; },
+            options: { type: 'mongodb' as const, databaseName: 'app' },
+            _client: { db: () => ({ collection: () => ({}) }) },
+            _poolManager: {
+                getPool: (name: string) => name === 'archive' ? { db: () => ({ collection: () => ({}) }) } : null,
+                getPoolNames: () => ['archive'],
+            },
+            _runtimeDefaults: {
+                namespace: { instanceId: 'node-a' },
+                writePathPolicy: normalizeWritePathPolicy({
+                    default: { mode: 'allow-both' },
+                    namespaces: { 'node-a:archive:assets.photos.files': { gridfs: 'block' } },
+                }),
+            },
+        };
+        const runtimeBucket = openRuntimeGridFS(runtime, 'photos', { pool: 'archive', db: 'assets' });
+        assert.throws(() => runtimeBucket.upload('a.bin', Buffer.from('x')), (error: unknown) => {
+            assert.equal(detailsOf(error).matchedRule, 'node-a:archive:assets.photos.files');
+            assert.equal(detailsOf(error).source, 'db');
+            return true;
+        });
+        const modelRuntimeBucket = openModelGridFS(runtime, 'assets', 'archive', 'photos');
+        assert.throws(() => modelRuntimeBucket.upload('a.bin', Buffer.from('x')), (error: unknown) => {
+            assert.equal(detailsOf(error).source, 'model');
+            assert.equal(detailsOf(error).category, 'gridfs');
+            assert.equal((detailsOf(error).namespace as { iid?: string }).iid, 'node-a:archive:assets.photos.files');
+            return true;
+        });
     });
 });

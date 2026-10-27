@@ -18,6 +18,12 @@ import type {
 import { deleteFile, downloadFile, dropBucket, findFiles, getFile, openDownloadStream, openUploadStream, renameFile, uploadFile } from './operations';
 import { abortResumableUpload, appendChunks, beginResumableUpload, finalizeResumableUpload } from './resumable';
 
+/** Same iid as collection write paths (`instanceId` prefix, then `pool:db.collection` or `db:collection`). */
+function collectionWritePathIid(instanceId: string | undefined, poolName: string | undefined, dbName: string, collection: string): string {
+    const scopedName = poolName ? `${poolName}:${dbName}.${collection}` : `${dbName}:${collection}`;
+    return instanceId ? `${instanceId}:${scopedName}` : scopedName;
+}
+
 export class MonSQLizeGridFSBucketImpl {
     constructor(private readonly ctx: GridFSContext) {}
 
@@ -96,12 +102,14 @@ export class MonSQLizeGridFSBucketImpl {
     }
 
     private assertAllowed(operation: string, category: 'gridfs' | 'management'): void {
+        const collection = `${this.ctx.bucketName}.files`;
         assertWritePathAllowed({
             policy: this.ctx.policy,
             namespace: {
+                iid: collectionWritePathIid(this.ctx.instanceId, this.ctx.poolName, this.ctx.dbName, collection),
                 ...(this.ctx.poolName ? { pool: this.ctx.poolName } : {}),
                 db: this.ctx.dbName,
-                collection: `${this.ctx.bucketName}.files`,
+                collection,
             },
             source: this.ctx.source,
             operation,
