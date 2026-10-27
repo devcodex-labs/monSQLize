@@ -57,11 +57,21 @@ interface SearchIndexInfo {
 | `createSearchIndexes` | Validates every spec before sending one command. It has no `ifExists` option; duplicate names reject with `SEARCH_INDEX_EXISTS`. |
 | `listSearchIndexes` | Returns normalized entries. `type` filters by the resolved type. |
 | `getSearchIndex` | A missing index resolves to `status: 'DOES_NOT_EXIST'`; it does not throw. |
-| `updateSearchIndex` | Replaces the definition and the server rebuilds the index. While it rebuilds, the previous version can keep serving queries (`queryable` stays `true`). A missing index rejects with `SEARCH_INDEX_NOT_FOUND`. |
+| `updateSearchIndex` | Replaces the definition and the server rebuilds the index. While it rebuilds, the previous version can keep serving queries. The reported `queryable` flag varies: Community 8.2.12 kept it `true`, while atlas-local 8.3.13 reported `false` during a `search` rebuild even though `$search` still returned results (both measured). A missing index rejects with `SEARCH_INDEX_NOT_FOUND`. |
 | `dropSearchIndex` | A missing index rejects with `SEARCH_INDEX_NOT_FOUND` unless `ignoreMissing: true`. |
 | `waitForSearchIndex` | Polls once per `intervalMs`. See the table below. |
 
-> **vectorSearch update limitation.** Some deployments reject `updateSearchIndex` (and `createSearchIndex` with `ifExists: 'update'`) on a `vectorSearch` index. This was observed on `mongodb/mongodb-atlas-local` with mongod 8.3.13, where the server answers `BadValue` (2) `"mappings" is required`. Behavior on MongoDB Atlas was not tested. monSQLize passes the server error through as `MONGODB_ERROR` with `serverCode` and does not fall back automatically. To change the definition there, drop the index, wait for `dropped`, and create it again; the index is not queryable in between.
+> **Updating a `vectorSearch` index depends on the deployment.**
+>
+> | Deployment | In-place `updateSearchIndex` on `vectorSearch` |
+> |---|---|
+> | MongoDB Atlas | Supported according to the MongoDB documentation; the old index keeps serving queries while the new one builds. Not tested by monSQLize. |
+> | `mongodb/mongodb-atlas-local` (mongod 8.3.13) | Rejected by the server: `BadValue` (2) `"mappings" is required`. Measured. |
+> | Community 8.2.12 + `mongodb/mongodb-community-search` | Accepted. During the rebuild (about 30 s for 20,000 documents × 64 dimensions) `$vectorSearch` kept returning results. Measured. |
+>
+> On every measured deployment the server rejects a `type` field in the `updateSearchIndex` command (`IDLUnknownField`), so sending one does not help. monSQLize passes a rejection through as `MONGODB_ERROR` with `serverCode` and never falls back on its own.
+>
+> Where an in-place update is not available, change the definition without downtime like this: create an index under a new name, `waitForSearchIndex(newName, { until: 'queryable' })`, switch your queries to the new name, then drop the old index. Both indexes exist for a while, which uses extra resources and counts against index limits (Atlas Free tier: 3 Search indexes, Flex: 10). If a short outage is acceptable, you can instead drop the index, wait for `dropped`, and create it again. Searches fail until it is queryable again, and that gap grows with data size (measured on atlas-local: about 1–2 s for 50,000 documents × 64 dimensions).
 
 `status` passes the server value through unchanged. Use `queryable` to decide whether searches can run and `status` to show progress.
 

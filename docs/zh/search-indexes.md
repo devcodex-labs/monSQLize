@@ -57,11 +57,21 @@ interface SearchIndexInfo {
 | `createSearchIndexes` | 全部校验通过后一次提交；不支持 `ifExists`，名称重复时以 `SEARCH_INDEX_EXISTS` 拒绝。 |
 | `listSearchIndexes` | 返回归一化后的条目；`type` 按解析出的类型过滤。 |
 | `getSearchIndex` | 索引不存在时返回 `status: 'DOES_NOT_EXIST'`，不抛错。 |
-| `updateSearchIndex` | 替换定义，服务端随后重建；重建期间旧版本可以继续提供查询（`queryable` 保持 `true`）。索引不存在时以 `SEARCH_INDEX_NOT_FOUND` 拒绝。 |
+| `updateSearchIndex` | 替换定义，服务端随后重建；重建期间旧版本可以继续提供查询。上报的 `queryable` 不一致：Community 8.2.12 保持 `true`；atlas-local 8.3.13 在 `search` 索引重建期间上报 `false`，但 `$search` 仍返回结果（均为实测）。索引不存在时以 `SEARCH_INDEX_NOT_FOUND` 拒绝。 |
 | `dropSearchIndex` | 索引不存在时以 `SEARCH_INDEX_NOT_FOUND` 拒绝；传 `ignoreMissing: true` 则直接返回。 |
 | `waitForSearchIndex` | 每隔 `intervalMs` 查询一次，规则见下表。 |
 
-> **vectorSearch 更新限制**：部分部署会拒绝对 `vectorSearch` 索引执行 `updateSearchIndex`（以及 `createSearchIndex` 的 `ifExists: 'update'`）。已在 `mongodb/mongodb-atlas-local`（mongod 8.3.13）上观察到，服务端返回 `BadValue`（2）`"mappings" is required`；MongoDB Atlas 上的行为未经测试。monSQLize 原样透出服务端错误（`MONGODB_ERROR`，带 `serverCode`），不会自动降级。需要改定义时，先删除索引，等待 `dropped`，再重新创建；期间索引不可查询。
+> **`vectorSearch` 索引能否原地更新取决于部署环境。**
+>
+> | 部署 | 对 `vectorSearch` 执行 `updateSearchIndex` |
+> |---|---|
+> | MongoDB Atlas | 按 MongoDB 官方文档支持原地更新，重建期间旧索引继续提供查询。monSQLize 未实测。 |
+> | `mongodb/mongodb-atlas-local`（mongod 8.3.13） | 服务端拒绝：`BadValue`（2）`"mappings" is required`。已实测。 |
+> | Community 8.2.12 + `mongodb/mongodb-community-search` | 接受。重建期间（20,000 文档 × 64 维约 30 秒）`$vectorSearch` 持续返回结果。已实测。 |
+>
+> 在所有实测环境中，服务端都不接受 `updateSearchIndex` 命令带 `type` 字段（`IDLUnknownField`），带上也没有用。服务端拒绝时，monSQLize 原样透出为 `MONGODB_ERROR`（带 `serverCode`），不会自动降级。
+>
+> 不能原地更新时，推荐用换名切换做到不中断：用新名字创建索引，`waitForSearchIndex(newName, { until: 'queryable' })`，把查询切到新名字，再删除旧索引。期间两个索引同时存在，会额外占用资源，并计入索引数量上限（Atlas Free 档 3 个 Search 索引，Flex 档 10 个）。如果能接受短暂中断，也可以先删除索引、等待 `dropped`、再重新创建；在它重新可查询之前检索会失败，中断时长随数据量增长（atlas-local 实测：50,000 文档 × 64 维约 1–2 秒）。
 
 `status` 原样透传服务端的值。判断能否检索看 `queryable`，展示进度看 `status`。
 
