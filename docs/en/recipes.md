@@ -197,6 +197,12 @@ Model schema callbacks use the isolated `schema-dsl/runtime` owned by the `MonSQ
 
 Example source: [`examples/docs/model.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/model.ts)
 
+## Query with vectorSearch
+
+`vectorSearch()` queries a Search index of type `vectorSearch`. Create and wait for that index with the [Search index lifecycle API](./search-indexes.md), then run the query described in [`vectorSearch()`](./vector-search.md).
+
+The runnable example is [`examples/docs/vector-search.ts`](../../examples/docs/vector-search.ts). It needs MongoDB Atlas, `mongodb/mongodb-atlas-local`, or Community/Enterprise 8.2+ with `mongot`. Set `MONSQLIZE_VECTOR_SEARCH_URI` or `MONSQLIZE_ATLAS_LOCAL_URI`. `mongodb-memory-server` cannot run the Search calls. When those variables are unset, the example exits without calling Search.
+
 ## Troubleshoot by Error Code
 
 ```ts

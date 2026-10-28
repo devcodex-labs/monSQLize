@@ -62,7 +62,7 @@ try {
 | `POOL_NOT_FOUND` | 指定连接池不存在或 health checker 找不到池 | 池名称是否注册、大小写是否一致、`pools` 是否传入 |
 | `INVALID_OPERATION` | 查询重复执行、连接池全部不可用、事务状态不允许 | 是否重复 `toArray()`，池健康状态，事务生命周期 |
 | `INVALID_ARGUMENT` | 查询链参数、集合管理参数、函数缓存参数 | 参数类型、取值范围、非空字符串/对象/数组 |
-| `INVALID_VECTOR_SEARCH` | 本地 Vector Search 参数校验 | 向量索引/路径、有限 query vector、ANN/ENN 组合、filter/projection 形态 |
+| `INVALID_VECTOR_SEARCH` | 本地 Vector Search 参数校验 | index 名称与 path、有限 query vector、ANN/ENN 组合、filter/projection 形态 |
 | `INVALID_SEARCH_INDEX_DEFINITION` | Search 索引本地校验失败 | 索引名/类型/定义、vectorSearch fields、选项取值 |
 | `SEARCH_INDEX_EXISTS` | Search 索引同名已存在 | `ifExists` 选项、`createSearchIndexes` 中的重复名称 |
 | `SEARCH_INDEX_NOT_FOUND` | Search 索引不存在 | 索引名、集合、`ignoreMissing` |

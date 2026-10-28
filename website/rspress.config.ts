@@ -228,12 +228,13 @@ const sidebarSource: SidebarGroupSource[] = [
         items: [
           { en: 'find()', zh: 'find()', link: '/find' },
           { en: 'findOne()', zh: 'findOne()', link: '/findOne' },
+          { en: 'findOneById()', zh: 'findOneById()', link: '/find-one-by-id' },
+          { en: 'findByIds()', zh: 'findByIds()', link: '/find-by-ids' },
           { en: 'findPage()', zh: 'findPage()', link: '/findPage' },
           { en: 'findAndCount()', zh: 'findAndCount()', link: '/find-and-count' },
           { en: 'count()', zh: 'count()', link: '/count' },
           { en: 'distinct()', zh: 'distinct()', link: '/distinct' },
           { en: 'aggregate()', zh: 'aggregate()', link: '/aggregate' },
-          { en: 'vectorSearch()', zh: 'vectorSearch()', link: '/vector-search' },
           { en: 'explain()', zh: 'explain()', link: '/explain' }
         ]
       },
@@ -288,6 +289,14 @@ const sidebarSource: SidebarGroupSource[] = [
     ]
   },
   {
+    en: 'Search and vectors',
+    zh: 'Search 与向量',
+    items: [
+      { en: 'vectorSearch()', zh: 'vectorSearch()', link: '/vector-search' },
+      { en: 'Search indexes', zh: 'Search 索引', link: '/search-indexes' }
+    ]
+  },
+  {
     en: 'Model and Schema',
     zh: 'Model 与 Schema',
     items: [
@@ -304,9 +313,11 @@ const sidebarSource: SidebarGroupSource[] = [
     en: 'Cache',
     zh: '缓存',
     items: [
+      { en: 'Cache API', zh: '缓存 API', link: '/cache' },
       { en: 'Cache Configuration', zh: '缓存配置', link: '/cache-configuration' },
       { en: 'Cache Creation', zh: '缓存创建', link: '/cache-creation' },
-      { en: 'Cache Invalidation', zh: '缓存失效', link: '/cache-invalidation' }
+      { en: 'Cache Invalidation', zh: '缓存失效', link: '/cache-invalidation' },
+      { en: 'Pagination bookmarks', zh: '分页书签', link: '/bookmarks' }
     ]
   },
   {
@@ -352,7 +363,8 @@ const sidebarSource: SidebarGroupSource[] = [
       { en: 'Performance Evidence', zh: '性能证据', link: '/performance-evidence' },
       { en: 'Upsert Guide', zh: 'Upsert 指南', link: '/upsert-guide' },
       { en: 'Quick Upsert API', zh: 'Quick Upsert API', link: '/quick-upsert' },
-      { en: 'Failure Recovery Examples', zh: '失败恢复示例', link: '/failure-recovery-examples' }
+      { en: 'Failure Recovery Examples', zh: '失败恢复示例', link: '/failure-recovery-examples' },
+      { en: 'Runtime architecture', zh: '运行时架构', link: '/runtime-architecture' }
     ]
   },
   {
@@ -365,7 +377,6 @@ const sidebarSource: SidebarGroupSource[] = [
       { en: 'Create Indexes in Bulk', zh: '批量创建索引', link: '/create-indexes' },
       { en: 'Drop Index', zh: '删除索引', link: '/drop-index' },
       { en: 'List Indexes', zh: '列出索引', link: '/list-indexes' },
-      { en: 'Search Indexes', zh: 'Search 索引', link: '/search-indexes' },
       { en: 'GridFS', zh: 'GridFS', link: '/gridfs' },
       { en: 'Database Administration', zh: '数据库管理', link: '/admin' },
       { en: 'Error Code Reference', zh: '错误码参考', link: '/error-codes' },
@@ -377,7 +388,8 @@ const sidebarSource: SidebarGroupSource[] = [
     en: 'Compatibility and Migration',
     zh: '兼容与迁移',
     items: [
-      { en: 'Upgrade to 3.3.2', zh: '升级到 3.3.2', link: '/upgrade-3.3.2' },
+      { en: 'Upgrade guide', zh: '升级指南', link: '/upgrade-3.3.2' },
+      { en: 'Roadmap boundaries', zh: '路线图边界', link: '/roadmap-boundaries' },
       { en: 'MongoDB Driver Compatibility', zh: 'MongoDB Driver 兼容性', link: '/mongodb-driver-compatibility' },
       { en: 'MongoDB Native vs Extensions', zh: 'MongoDB 原生 vs 扩展', link: '/mongodb-native-vs-extensions' },
       { en: 'findOneAnd Return Value', zh: 'findOneAnd 返回值统一', link: '/findOneAnd-return-value-unified' },
@@ -601,12 +613,12 @@ const config: UserConfig = {
     },
   },
   route: {
+    // Kept off the public site: legacy compatibility pages and maintainer runbooks.
+    // find-one-by-id and find-by-ids are public query references and stay published.
     exclude: [
       '**/function-cache.md',
       '**/cache-and-function-cache.md',
       '**/cache-hub-migration.md',
-      '**/find-one-by-id.md',
-      '**/find-by-ids.md',
       '**/file-dependency-governance.md',
       '**/capability-traceability.md',
       '**/release-preflight.md',

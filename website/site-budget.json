@@ -2,7 +2,7 @@
   "minimumHtmlFiles": 197,
   "maximumFiles": 450,
   "maximumTotalBytes": 68000000,
-  "maximumSingleJavaScriptBytes": 720000,
+  "maximumSingleJavaScriptBytes": 740000,
   "maximumSingleHtmlBytes": 550000,
   "maximumSearchIndexBytesPerLocale": 1800000,
   "maximumCombinedSearchIndexBytes": 3500000,
