@@ -65,7 +65,7 @@ See [Data Tasks](./data-tasks.md) for the preview, approval, apply, backup, and 
 | `POOL_NOT_FOUND` | The specified connection pool does not exist or the health checker cannot find the pool | Whether the pool name is registered, whether the case is consistent, and whether `pools` is passed in |
 | `INVALID_OPERATION` | The query is executed repeatedly, all connection pools are unavailable, and the transaction status is not allowed | Whether to repeat `toArray()`, pool health status, transaction life cycle |
 | `INVALID_ARGUMENT` | Query chain parameters, collection management parameters, function cache parameters | Parameter type, value range, non-empty string/object/array |
-| `INVALID_VECTOR_SEARCH` | Local Vector Search option validation | Vector index/path, finite query vector, ANN/ENN combination, filter/projection shape |
+| `INVALID_VECTOR_SEARCH` | Local Vector Search option validation | index name and path, finite query vector, ANN/ENN combination, filter/projection shape |
 | `INVALID_SEARCH_INDEX_DEFINITION` | Local Search index validation | Index name/type/definition, vectorSearch fields, option values |
 | `SEARCH_INDEX_EXISTS` | Search index name already exists | `ifExists` option, duplicate names in `createSearchIndexes` |
 | `SEARCH_INDEX_NOT_FOUND` | Search index target is missing | Index name, collection, `ignoreMissing` |

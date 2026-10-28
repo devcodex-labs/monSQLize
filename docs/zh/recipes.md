@@ -197,6 +197,12 @@ Model 的 schema 回调使用当前 `MonSQLize` 实例隔离的 `schema-dsl/runt
 
 示例源码：[`examples/docs/model.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/model.ts)
 
+## 用 vectorSearch 查询
+
+`vectorSearch()` 查询的是 `vectorSearch` 类型的 Search 索引。先用 [Search 索引生命周期 API](./search-indexes.md) 创建并等待该索引，再按 [`vectorSearch()`](./vector-search.md) 的说明发起查询。
+
+可运行示例是 [`examples/docs/vector-search.ts`](../../examples/docs/vector-search.ts)。它需要 MongoDB Atlas、`mongodb/mongodb-atlas-local`，或带 `mongot` 的 Community / Enterprise 8.2+。请设置 `MONSQLIZE_VECTOR_SEARCH_URI` 或 `MONSQLIZE_ATLAS_LOCAL_URI`。`mongodb-memory-server` 不能执行 Search 调用。这两个变量都未设置时，示例不会调用 Search 并直接退出。
+
 ## 按错误码排障
 
 ```ts

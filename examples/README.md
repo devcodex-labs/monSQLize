@@ -3,7 +3,7 @@
 Runnable TypeScript examples for every major monSQLize API.
 Each file uses an in-memory MongoDB server (`mongodb-memory-server`) — no real database needed.
 
-> This repository currently includes **58** runnable TypeScript examples. `examples/helpers/bootstrap.ts` is a shared helper module, and `npm run test:examples` compiles and runs the executable examples.
+> This repository currently includes **59** runnable TypeScript examples. `examples/helpers/bootstrap.ts` is a shared helper module, and `npm run test:examples` compiles and runs the executable examples. `examples/docs/vector-search.ts` exits without calling Search when `MONSQLIZE_VECTOR_SEARCH_URI` and `MONSQLIZE_ATLAS_LOCAL_URI` are unset.
 
 ## Prerequisites
 
@@ -115,6 +115,14 @@ npm run test:examples
 | [`docs/sync.ts`](docs/sync.ts) | ChangeStreamSyncManager + ResumeTokenStore — resume-token-based change stream sync |
 | [`docs/sync-target-failure.ts`](docs/sync-target-failure.ts) | Sync target failure accounting and recovery path |
 
+### Docs — Search and vectors
+
+`examples/docs/vector-search.ts` needs MongoDB Atlas, `mongodb/mongodb-atlas-local`, or Community/Enterprise 8.2+ with `mongot`. Set `MONSQLIZE_VECTOR_SEARCH_URI` or `MONSQLIZE_ATLAS_LOCAL_URI`. `npm run test:examples` still invokes the file; without those variables it prints a skip line and exits 0, because `mongodb-memory-server` cannot serve Search indexes.
+
+| File | Description |
+|------|-------------|
+| [`docs/vector-search.ts`](docs/vector-search.ts) | Create a `vectorSearch` Search index, wait until queryable, query with `vectorSearch()`, then drop it |
+
 ### Docs — Legacy Compatibility
 
 These examples remain runnable for existing users, but they are not primary monSQLize capabilities. New non-database function caching, business locks, and Saga orchestration should live in the application or framework runtime.
@@ -186,6 +194,7 @@ node .generated/examples-dist/examples/docs/pool-fallback.js
 node .generated/examples-dist/examples/docs/multi-pool-health-check.js
 node .generated/examples-dist/examples/docs/sync.js
 node .generated/examples-dist/examples/docs/sync-target-failure.js
+node .generated/examples-dist/examples/docs/vector-search.js
 
 # Legacy compatibility examples
 node .generated/examples-dist/examples/docs/function-cache.js

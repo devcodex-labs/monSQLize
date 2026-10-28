@@ -74,6 +74,7 @@ const exampleScripts = [
     '.generated/examples-dist/examples/docs/multi-pool-health-check.js',
     '.generated/examples-dist/examples/docs/sync.js',
     '.generated/examples-dist/examples/docs/sync-target-failure.js',
+    '.generated/examples-dist/examples/docs/vector-search.js',
 ];
 
 function runExample(script, env) {

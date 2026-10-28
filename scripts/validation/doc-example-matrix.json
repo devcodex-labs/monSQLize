@@ -25,16 +25,16 @@
     },
     {
       "doc": "search-indexes",
-      "kind": "doc-check",
-      "target": "docs/en/search-indexes.md",
-      "runner": "check:docs-examples",
+      "kind": "shared-example",
+      "target": "examples/docs/vector-search.ts",
+      "runner": "test:examples",
       "status": "covered"
     },
     {
       "doc": "vector-search",
-      "kind": "doc-check",
-      "target": "docs/en/vector-search.md",
-      "runner": "check:docs-examples",
+      "kind": "example",
+      "target": "examples/docs/vector-search.ts",
+      "runner": "test:examples",
       "status": "covered"
     },
     {

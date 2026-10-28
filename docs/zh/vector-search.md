@@ -4,9 +4,9 @@
 
 ## 前置条件
 
-该 API 需要支持 Vector Search 的 MongoDB 部署，以及一个已经创建好的 Vector Search 索引。从 v3.4.0 起可以使用 [Search 索引生命周期 API](search-indexes.md) 管理该索引。请保证索引配置中的向量维度、数值表示和索引字段路径与传入 API 的 embedding 一致。部署和索引要求请参考 [MongoDB `$vectorSearch` 文档](https://www.mongodb.com/docs/vector-search/query/aggregation-stages/vector-search-stage/)。
+该 API 需要支持 Vector Search 的 MongoDB 部署，以及一个已经创建好的 Search 索引（`vectorSearch` 类型）。**Search 索引**指 MongoDB Search 索引，类型为全文 `search` 或 `vectorSearch`。从 v3.4.0 起可以使用 [Search 索引生命周期 API](search-indexes.md) 管理该索引。请保证索引配置中的向量维度、数值表示和索引字段路径与传入 API 的 embedding 一致。部署和索引要求请参考 [MongoDB `$vectorSearch` 文档](https://www.mongodb.com/docs/vector-search/query/aggregation-stages/vector-search-stage/)。
 
-`$vectorSearch` 必须是聚合管道的第一个阶段；它也不能放在 `$lookup` 子管道或 `$facet` 中。因此应以集合级 API 作为检索入口，如需补充关联信息，再对命中文档做后续处理。
+`$vectorSearch` 必须是它所在管道的第一个阶段。当前 MongoDB 文档仍然不允许把它放进 `$lookup` 子管道或 `$facet` 阶段（[手册](https://www.mongodb.com/docs/manual/reference/operator/aggregation/vectorsearch/)、[Vector Search 阶段](https://www.mongodb.com/docs/vector-search/query/aggregation-stages/vector-search-stage/)）。请用 `vectorSearch()` 作为检索入口，需要补充关联信息时再处理命中文档。
 
 ## API
 
@@ -78,7 +78,7 @@ for (const { document, score } of hits) {
 }
 ```
 
-`filter` 是 Vector Search 的预过滤条件，不是后置 `$match`。依赖该条件前，需要先在 Vector Search 索引中配置相应的过滤字段。
+`filter` 是 Vector Search 的预过滤条件，不是后置 `$match`。依赖该条件前，需要先在 Search 索引（`vectorSearch` 类型）中配置相应的过滤字段。
 
 ## 精确最近邻查询（ENN）
 
@@ -129,10 +129,10 @@ await hits[0]?.document.populate('author');
 
 部署、索引或其他 MongoDB 执行失败会保留原始 driver 的 code 和 message 后重新抛出。错误对象可写时，monSQLize 会附加 `error.monsqlize.operation === 'vectorSearch'` 和目标 namespace，便于诊断。
 
-本版本同时在 `Collection` 和 `Model` 上提供向量查询；不会提供向量索引生命周期 API。
+Search 索引（含 `vectorSearch` 类型）的管理见 [Search 索引生命周期](search-indexes.md)：`createSearchIndex`、`updateSearchIndex`、`dropSearchIndex`、`listSearchIndexes`、`waitForSearchIndex`。
 
 ## 运行注意事项
 
-- 默认本地 `mongodb-memory-server` 不支持 Vector Search。单元测试覆盖管道构造和参数校验；端到端验证需要外部准备的兼容部署和索引。
+- 默认本地 `mongodb-memory-server` 不支持 Vector Search。单元测试覆盖管道构造和参数校验。端到端验证需要 Atlas、`mongodb/mongodb-atlas-local`，或带 `mongot` 的 Community / Enterprise 8.2+。可运行示例是 [`examples/docs/vector-search.ts`](../../examples/docs/vector-search.ts)。请设置 `MONSQLIZE_VECTOR_SEARCH_URI` 或 `MONSQLIZE_ATLAS_LOCAL_URI`。两者都未设置时，该示例不会调用 Search 并直接退出，因此 `npm run test:examples` 仍可以执行它。
 - 向量排序分数由 MongoDB 生成，monSQLize 只返回该分数，不会在本地二次排序。
 - 请让写入端和查询端使用一致的 embedding 模型、向量维度和索引配置。

@@ -10,7 +10,8 @@
 | Query（find / findOne / count / distinct） | `find.md` / `findOne.md` / `count.md` / `distinct.md` | `examples/docs/find.ts` / `find-one.ts` / `count.ts` / `distinct.ts` | `test/integration/mongodb/queries.test.ts` |
 | 分页 / 链式查询 | `findPage.md` / `chaining-api.md` | `examples/docs/find-page.ts` / `chaining-api.ts` | `test/integration/model/model-features.test.ts` + `npm run test:examples` |
 | 聚合 / 表达式 | `aggregate.md` / `expression-functions.md` | `examples/docs/aggregate.ts` / `aggregate-advanced.ts` / `expression-functions.ts` | `test/unit/expression/*.test.ts` |
-| Collection / Model 向量查询 | `vector-search.md` | 文档 API 示例；需要外部 Vector Search 部署和索引 | `test/unit/runtime/vector-search.test.ts` / `test/unit/runtime/model-relations-p0.test.ts` |
+| Collection / Model 向量查询 | `vector-search.md` | `examples/docs/vector-search.ts`（Atlas、atlas-local，或带 mongot 的 Community 8.2+；未设置 Search URI 时跳过） | `test/unit/runtime/vector-search.test.ts` / `test/unit/runtime/model-relations-p0.test.ts` |
+| Search 索引生命周期（`search` 与 `vectorSearch`） | `search-indexes.md` | `examples/docs/vector-search.ts` | `test/unit/search-indexes/` / `test/integration/search-indexes/` / `test/types/search-index-usage.test-d.ts` |
 | 写入扩展 / Batch | `write-operations.md` / `updateBatch.md` / `deleteBatch.md` | `examples/docs/update.ts` / `batch-operations.ts` | `test/unit/writes/batch.test.ts` + `test/integration/mongodb/writes-batch.test.ts` |
 | Collection 管理能力 | `collection-management.md` / `create-index.md` / `database-ops.md` | `examples/docs/collection-management.ts` | `test/integration/mongodb/management.test.ts` |
 | 生产数据任务 / 索引发布 | `production-data-migration.md` / `data-tasks.md` / `production-rollout.md` | `examples/docs/data-tasks.ts` | `test/unit/data-tasks/data-task-job-*.test.ts` / `test/integration/data-tasks/data-task-job-facade.test.ts` / `test/smoke/data-task-cli.test.ts` |

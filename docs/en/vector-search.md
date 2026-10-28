@@ -4,9 +4,9 @@
 
 ## Prerequisites
 
-This API requires a MongoDB deployment that supports Vector Search and a Vector Search index that already exists. Since v3.4.0 you can manage the index with the [Search index lifecycle API](search-indexes.md). Configure the index and make its vector dimensions, numeric representation, and indexed path match the embeddings you send to the API. See the [MongoDB `$vectorSearch` reference](https://www.mongodb.com/docs/vector-search/query/aggregation-stages/vector-search-stage/) for deployment and index requirements.
+This API requires a MongoDB deployment that supports Vector Search and a Search index of type `vectorSearch` that already exists. A **Search index** is a MongoDB Search index whose type is full-text `search` or `vectorSearch`. Since v3.4.0 you can manage that index with the [Search index lifecycle API](search-indexes.md). Configure the index and make its vector dimensions, numeric representation, and indexed path match the embeddings you send to the API. See the [MongoDB `$vectorSearch` reference](https://www.mongodb.com/docs/vector-search/query/aggregation-stages/vector-search-stage/) for deployment and index requirements.
 
-`$vectorSearch` must be the first aggregation stage. It is also not supported inside a `$lookup` sub-pipeline or `$facet`, so use this collection-level API as the search entry point and enrich the resulting documents afterwards when needed.
+`$vectorSearch` must be the first stage of any pipeline it appears in. Current MongoDB documentation still does not allow it inside a `$lookup` sub-pipeline or a `$facet` stage ([manual](https://www.mongodb.com/docs/manual/reference/operator/aggregation/vectorsearch/), [Vector Search stage](https://www.mongodb.com/docs/vector-search/query/aggregation-stages/vector-search-stage/)). Use `vectorSearch()` as the search entry point and enrich the resulting documents afterwards when needed.
 
 ## API
 
@@ -78,7 +78,7 @@ for (const { document, score } of hits) {
 }
 ```
 
-`filter` is a Vector Search pre-filter, not a later `$match` stage. Create the relevant filter fields in the Vector Search index before relying on them.
+`filter` is a Vector Search pre-filter, not a later `$match` stage. Create the relevant filter fields on the Search index (`vectorSearch` type) before relying on them.
 
 ## Exact nearest-neighbor search (ENN)
 
@@ -129,10 +129,10 @@ Invalid vector options throw `INVALID_VECTOR_SEARCH`, with field/reason details.
 
 Deployment, index, and other MongoDB execution failures are rethrown with their original driver code and message. When the error object is writable, monSQLize adds `error.monsqlize.operation === 'vectorSearch'` and the target namespace for diagnosis.
 
-This release exposes vector search on both `Collection` and `Model`; it does not add a vector-index lifecycle API.
+Index management for a Search index (including type `vectorSearch`) is on the [Search index lifecycle](search-indexes.md) page: `createSearchIndex`, `updateSearchIndex`, `dropSearchIndex`, `listSearchIndexes`, and `waitForSearchIndex`.
 
 ## Operational notes
 
-- A default local `mongodb-memory-server` instance does not provide Vector Search. Unit coverage verifies pipeline construction and validation; end-to-end verification needs a compatible externally provisioned deployment and index.
+- A default local `mongodb-memory-server` instance does not provide Vector Search. Unit coverage verifies pipeline construction and validation. End-to-end verification needs Atlas, `mongodb/mongodb-atlas-local`, or Community/Enterprise 8.2+ with `mongot`. The runnable walkthrough is [`examples/docs/vector-search.ts`](../../examples/docs/vector-search.ts). Set `MONSQLIZE_VECTOR_SEARCH_URI` or `MONSQLIZE_ATLAS_LOCAL_URI`. When neither is set, that example exits without calling Search so `npm run test:examples` can still invoke it.
 - Vector Search ranking is produced by MongoDB. monSQLize returns that score and does not re-rank results locally.
 - Keep the embedding model, vector dimensions, and index configuration synchronized across writers and readers.

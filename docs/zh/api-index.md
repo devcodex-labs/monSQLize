@@ -96,7 +96,7 @@
 |------|------|------|
 | [聚合管道查询](aggregate.md) | `aggregate()` | 聚合管道查询 |
 | [向量查询](vector-search.md) | Collection / Model `vectorSearch()` | MongoDB Vector Search 向量查询；Model 会应用软删除可见性 |
-| [Search 索引](search-indexes.md) | Collection / Model `createSearchIndex()` 等 | 创建、查看、更新、删除并等待 Search / Vector Search 索引 |
+| [Search 索引](search-indexes.md) | Collection / Model `createSearchIndex()` 等 | 创建、查看、更新、删除并等待 Search 索引（含 `vectorSearch` 类型） |
 | [GridFS](gridfs.md) | `msq.gridfs()` / Model `gridfs()` | 上传、下载和恢复 GridFS 文件 |
 
 ---
@@ -172,7 +172,7 @@
 
 - [聚合管道查询](aggregate.md) - 聚合管道
 - [向量查询](vector-search.md) - MongoDB Vector Search 向量查询
-- [Search 索引](search-indexes.md) - Search / Vector Search 索引生命周期
+- [Search 索引](search-indexes.md) - Search 索引生命周期（含 `vectorSearch` 类型）
 - [GridFS](gridfs.md) - GridFS 上传、下载与可恢复上传
 - [查询计划分析](explain.md) - 查询计划
 - [链式调用](chaining-api.md) - 链式调用

@@ -1,5 +1,7 @@
 # Upgrade from 3.3.1 to 3.3.2
 
+> **Later releases.** 3.4.0 adds the [Search index lifecycle API](./search-indexes.md) and 3.5.0 adds [GridFS](./gridfs.md). Those releases add capabilities and do not have a separate migration guide. This page covers only the 3.3.1 to 3.3.2 upgrade.
+
 Use this guide to upgrade an application from **3.3.1 to 3.3.2**. Treat an untagged checkout as a release candidate. Check `npm view monsqlize@3.3.2 version --registry=https://registry.npmjs.org/` and the immutable tag before installing that exact version; until it exists, qualify the candidate's packed artifact in staging. Preparing a candidate does not publish npm or update the stable site.
 
 The patch corrects BSON query/cache identity, Model cache invalidation, pagination, transactions, sync and resource cleanup. It retains public package entry points, Node.js `>=18`, direct runtime dependencies and build formats. Automatic cache invalidation remains disabled by default.

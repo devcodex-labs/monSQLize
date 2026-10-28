@@ -2,7 +2,7 @@
 
 文档站中的每个核心 API，都应尽量对应到**当前仓库内可直接运行的示例**。
 
-> 当前完整示例源列表见 [官方示例总览](https://github.com/devcodex-labs/monSQLize/blob/main/examples/README.md)，其中 `npm run test:examples` 会统一编译并执行当前 **58 个** TypeScript 示例；[`examples/helpers/bootstrap.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/helpers/bootstrap.ts) 是辅助模块，不单独执行。
+> 当前完整示例源列表见 [官方示例总览](https://github.com/devcodex-labs/monSQLize/blob/main/examples/README.md)，其中 `npm run test:examples` 会统一编译并执行当前 **59 个** TypeScript 示例；[`examples/helpers/bootstrap.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/helpers/bootstrap.ts) 是辅助模块，不单独执行。[`examples/docs/vector-search.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/vector-search.ts) 在未设置 `MONSQLIZE_VECTOR_SEARCH_URI` 和 `MONSQLIZE_ATLAS_LOCAL_URI` 时不会调用 Search 并直接退出。
 
 ## 运行方式
 
@@ -34,12 +34,16 @@ node .generated/examples-dist/examples/docs/find.js
 |------|------|
 | [`find.md`](./find.md) | [`examples/docs/find.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/find.ts) |
 | [`findOne.md`](./findOne.md) | [`examples/docs/find-one.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/find-one.ts) |
+| [`find-one-by-id.md`](./find-one-by-id.md) | [`examples/docs/find-one-by-id.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/find-one-by-id.ts) |
+| [`find-by-ids.md`](./find-by-ids.md) | [`examples/docs/find-by-ids.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/find-by-ids.ts) |
 | [`findPage.md`](./findPage.md) | [`examples/docs/find-page.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/find-page.ts) |
 | [`find-and-count.md`](./find-and-count.md) | [`examples/docs/find-and-count.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/find-and-count.ts) |
 | [`count.md`](./count.md) | [`examples/docs/count.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/count.ts) |
 | [`count-queue.md`](./count-queue.md) | [`examples/docs/count-queue.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/count-queue.ts) |
 | [`distinct.md`](./distinct.md) | [`examples/docs/distinct.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/distinct.ts) |
 | [`aggregate.md`](./aggregate.md) | [`examples/docs/aggregate.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/aggregate.ts) |
+| [`vector-search.md`](./vector-search.md) | [`examples/docs/vector-search.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/vector-search.ts) |
+| [`search-indexes.md`](./search-indexes.md) | [`examples/docs/vector-search.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/vector-search.ts) |
 | [`explain.md`](./explain.md) | [`examples/docs/explain.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/explain.ts) |
 | [`chaining-api.md`](./chaining-api.md) | [`examples/docs/chaining-api.ts`](https://github.com/devcodex-labs/monSQLize/blob/main/examples/docs/chaining-api.ts) |
 

@@ -22,6 +22,7 @@ monSQLize 是数据库原生的生产数据运行时增强层。当前稳定适�
 | Model | `msq.model()` / `MonSQLize.Model` | 支持 Model 注册、关系、虚拟字段、populate 与常用查询入口 |
 | write-path-policy | `writePathPolicy` | 可选的 Model-only 写入命名空间运行时护栏，包含 `gridfs` 类别 |
 | GridFS | `msq.gridfs()` / `model.gridfs()` | 上传、下载和第一阶段可恢复 GridFS 上传。见 [GridFS](./gridfs.md) |
+| Search 索引与向量查询 | `createSearchIndex()` / `vectorSearch()` | Search 索引生命周期（类型 `search` 与 `vectorSearch`），以及向量查询。见 [Search 索引](./search-indexes.md) 与 [vectorSearch()](./vector-search.md) |
 | cache | 查询 `cache` 选项 / `msq.cache` | 数据库查询缓存、多层缓存接入、缓存失效与统计 |
 | transaction | `startSession()` / `withTransaction()` | 支持 MongoDB 事务封装与事务统计 |
 | pool | `pools` / `pool()` / `ConnectionPoolManager` | 在构造函数中声明 `pools: PoolConfig[]`，通过 `pool()` 路由，底层管理器用于进阶状态查看与手动管理 |

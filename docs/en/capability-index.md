@@ -23,6 +23,7 @@ Principles:
 | Model | `msq.model()` / `MonSQLize.Model` | Supports model registration, relations, virtuals, populate, and common query entries |
 | write-path-policy | `writePathPolicy` | Optional runtime guard for Model-only write namespaces, including the `gridfs` category |
 | GridFS | `msq.gridfs()` / `model.gridfs()` | Upload, download, and phase-1 resumable GridFS upload. See [GridFS](./gridfs.md) |
+| Search index and vector search | `createSearchIndex()` / `vectorSearch()` | Search index lifecycle for types `search` and `vectorSearch`, then vector queries. See [Search indexes](./search-indexes.md) and [vectorSearch()](./vector-search.md) |
 | cache | Query `cache` options / `msq.cache` | Database query cache, multi-layer cache access, invalidation, and statistics |
 | transaction | `startSession()` / `withTransaction()` | Supports MongoDB transaction wrappers and transaction statistics |
 | pool | `pools` / `pool()` / `ConnectionPoolManager` | Declare `pools: PoolConfig[]` in the constructor, route with `pool()`, and use the low-level manager for advanced inspection or manual management |
