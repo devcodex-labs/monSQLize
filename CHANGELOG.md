@@ -7,6 +7,8 @@
 
 ## Unreleased
 
+GridFS and Search index fixes from the 2026-11-02 weekly scan (uploadStream id overwrite, download cursor leak, abort/append race, index latch after drop, pre-open stream failures, finalize cleanup failure, orphan chunks after session expiry, long `waitForSearchIndex` timeouts, appendChunks cost) are staged in the [unreleased log](./changelogs/unreleased.md).
+
 Vector search guidance, Search docs regrouping and the vector example are assigned to **3.5.2** ([versioned notes](./changelogs/v3.5.2.md)); README, docs-site share card and release tooling fixes are in [3.5.1](./changelogs/v3.5.1.md); GridFS buckets are in [3.5.0](./changelogs/v3.5.0.md); the Search index lifecycle API is in [3.4.0](./changelogs/v3.4.0.md); the weekly-scan cache-key, health-check and lockfile security fixes are in [3.3.4](./changelogs/v3.3.4.md); the schema-dsl 3.0.5 upgrade is in [3.3.3](./changelogs/v3.3.3.md); the audited 3.3.2 repairs are in its [versioned notes](./changelogs/v3.3.2.md) and the [next-change staging log](https://github.com/devcodex-labs/monSQLize/blob/main/changelogs/unreleased.md). Untagged checkouts remain release candidates.
 
 ## Version Overview

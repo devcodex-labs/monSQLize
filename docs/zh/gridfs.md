@@ -29,14 +29,14 @@ const modelBucket = model.gridfs(bucketName?: string, opts?: {
 | 方法 | 结果 |
 |------|------|
 | `upload(filename, data, opts?)` | 返回文件信息的 Promise。`data` 可以是 `Buffer`、`Uint8Array` 或 `Readable`。 |
-| `uploadStream(filename, opts?)` | 同步返回带 `id` 与 `done` 的 `Writable`。等待 `done` 取得文件信息或映射后的错误。 |
+| `uploadStream(filename, opts?)` | 同步返回带 `id` 与 `done` 的 `Writable`。等待 `done` 取得文件信息或映射后的错误。上传失败时，该 `Writable` 也会以同一错误销毁。`id` 已有文件时以 `GRIDFS_FILE_EXISTS` 拒绝，不写入任何数据。 |
 | `download(idOrName)` | 返回 `Buffer` 的 Promise。 |
 | `downloadStream(idOrName, range?)` | 同步返回 `Readable`。文件不存在和区间错误通过 `'error'` 事件发出。 |
 | `getFile(id)` | 文件信息；id 不存在时为 `null`。 |
 | `findFiles(filter?, opts?)` | 文件信息列表。`limit` 必须是正整数，`skip` 必须 `>= 0`，排序值只能是 `1` 或 `-1`。 |
 | `delete(id, opts?)` | 删除 files 文档及其 chunks。`ignoreMissing: true` 时，id 不存在也会成功。 |
 | `rename(id, filename)` | 重命名一个已可见文件。 |
-| `drop()` | 删除存在的 `<bucket>.files`、`<bucket>.chunks` 和 `<bucket>.uploads`。 |
+| `drop()` | 删除存在的 `<bucket>.files`、`<bucket>.chunks` 和 `<bucket>.uploads`。同一 bucket 之后的写入或 `ensureIndexes()` 会重建索引。 |
 | `ensureIndexes()` | 创建下文索引。可以重复调用。 |
 
 `idOrName` 是 `ObjectId` 或 `{ filename, revision? }`。`revision` 与驱动一致：`0` 是同名最旧文件，`-1`（默认）是最新文件。因此 `download({ filename })` 返回该文件名的最新文件。
@@ -92,9 +92,9 @@ await bucket.abortResumableUpload(session.uploadId);
 
 `finalizeResumableUpload` 要求分片从 0 连续、总长度等于会话长度，且 sha256 等于会话摘要。然后插入 files 文档、写入 `metadata.sha256`，并删除会话。缺少的分片序号抛出 `GRIDFS_UPLOAD_INCOMPLETE`，`details[0].missingChunks` 列出缺口。摘要不符或分片长度不对抛出 `GRIDFS_INTEGRITY_MISMATCH`。这些失败都不会插入 files 文档。
 
-`abortResumableUpload` 删除会话；如果还没有可见的 files 文档，同时删除该上传的 chunks。会话不存在或已经中止时直接成功。对已经可见的文件调用 abort 不会删除该文件的 chunks。
+`abortResumableUpload` 删除会话；如果还没有可见的 files 文档，同时删除该上传的 chunks。会话不存在或已经中止时直接成功，并且仍会删除该 id 下没有可见文件的残留 chunks。对已经可见的文件调用 abort 不会删除该文件的 chunks。
 
-`<bucket>.uploads` 在 `createdAt` 上有 TTL 索引，`expireAfterSeconds` 为 604800（7 天）。TTL 只删除上传会话文档，不删除 chunks。不再需要的会话应 abort 或 finalize。
+`<bucket>.uploads` 在 `createdAt` 上有 TTL 索引，`expireAfterSeconds` 为 604800（7 天）。TTL 只删除上传会话文档，不删除 chunks。不再需要的会话应 abort 或 finalize。会话过期后，`abortResumableUpload(uploadId)` 会清掉残留 chunks；用同一显式 `id` 调 `beginResumableUpload` 也会在新会话开始前清掉它们。
 
 ## 索引
 

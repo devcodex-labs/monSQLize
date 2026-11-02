@@ -29,14 +29,14 @@ Calling either method before `connect()` throws `NOT_CONNECTED`.
 | Method | Result |
 |--------|--------|
 | `upload(filename, data, opts?)` | Promise of file info. `data` is a `Buffer`, `Uint8Array`, or `Readable`. |
-| `uploadStream(filename, opts?)` | Synchronous `Writable` with `id` and `done`. Await `done` for file info or the mapped error. |
+| `uploadStream(filename, opts?)` | Synchronous `Writable` with `id` and `done`. Await `done` for file info or the mapped error. When the upload fails, the `Writable` is also destroyed with that error. An `id` that already has a file rejects with `GRIDFS_FILE_EXISTS` and writes nothing. |
 | `download(idOrName)` | Promise of a `Buffer`. |
 | `downloadStream(idOrName, range?)` | Synchronous `Readable`. Missing files and range errors arrive as `'error'` events. |
 | `getFile(id)` | File info, or `null` when the id is absent. |
 | `findFiles(filter?, opts?)` | File info documents. `limit` must be a positive integer. `skip` must be `>= 0`. Sort values are `1` or `-1`. |
 | `delete(id, opts?)` | Removes the files document and its chunks. `ignoreMissing: true` resolves when the id is absent. |
 | `rename(id, filename)` | Renames one visible file. |
-| `drop()` | Drops `<bucket>.files`, `<bucket>.chunks`, and `<bucket>.uploads` when they exist. |
+| `drop()` | Drops `<bucket>.files`, `<bucket>.chunks`, and `<bucket>.uploads` when they exist. The next write or `ensureIndexes()` on the same bucket recreates the indexes. |
 | `ensureIndexes()` | Creates the indexes below. Safe to call more than once. |
 
 `idOrName` is an `ObjectId` or `{ filename, revision? }`. `revision` follows the driver: `0` is the oldest file with that name, and `-1` (the default) is the newest. `download({ filename })` therefore returns the latest file with that name.
@@ -92,9 +92,9 @@ Chunk bytes must follow the session size:
 
 `finalizeResumableUpload` requires a contiguous prefix, a total length equal to the session length, and a sha256 equal to the session digest. It then inserts the files document, sets `metadata.sha256`, and deletes the session. Missing chunk indexes throw `GRIDFS_UPLOAD_INCOMPLETE` with `details[0].missingChunks`. A bad digest or a chunk of the wrong size throws `GRIDFS_INTEGRITY_MISMATCH`. The files document is not inserted in those cases.
 
-`abortResumableUpload` deletes the session and, when no files document is visible, that upload's chunks. A missing or already aborted session resolves. Aborting an id that already has a visible file does not delete that file's chunks.
+`abortResumableUpload` deletes the session and, when no files document is visible, that upload's chunks. A missing or already aborted session resolves, and any chunks left under that id without a visible file are still deleted. Aborting an id that already has a visible file does not delete that file's chunks.
 
-`<bucket>.uploads` has a TTL index on `createdAt` with `expireAfterSeconds: 604800` (7 days). The TTL deletes upload session documents only. It does not delete chunks. Abort or finalize sessions that are no longer needed.
+`<bucket>.uploads` has a TTL index on `createdAt` with `expireAfterSeconds: 604800` (7 days). The TTL deletes upload session documents only. It does not delete chunks. Abort or finalize sessions that are no longer needed. After a session expired, `abortResumableUpload(uploadId)` removes its leftover chunks, and `beginResumableUpload` with the same explicit `id` clears them before the new session starts.
 
 ## Indexes
 

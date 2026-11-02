@@ -2,7 +2,19 @@
 
 ## Changes after v3.5.2
 
-No changes have been staged after 3.5.2. The vector search guidance, Search docs regrouping and vector example are assigned to the [3.5.2 versioned notes](./v3.5.2.md); the README and docs-site share card are in [3.5.1](./v3.5.1.md). Publication is established by the npm registry and immutable tag, not this file.
+The vector search guidance, Search docs regrouping and vector example are assigned to the [3.5.2 versioned notes](./v3.5.2.md); the README and docs-site share card are in [3.5.1](./v3.5.1.md). Publication is established by the npm registry and immutable tag, not this file.
+
+GridFS and Search index fixes from the 2026-11-02 weekly scan:
+
+- `uploadStream` with an `id` that already has a file now rejects with `GRIDFS_FILE_EXISTS` before writing; a duplicate-key write failure no longer runs cleanup that deleted the original file's chunks and files document.
+- `downloadStream` closes the driver stream and its server cursor when the consumer destroys it early; `download` does the same on a read error.
+- `appendChunks` that loses a race with `abortResumableUpload` now rejects with `GRIDFS_FILE_NOT_FOUND` and removes the chunks it wrote.
+- `drop()` resets the bucket's index latch, so `ensureIndexes()` and later writes on the same bucket object recreate the indexes.
+- `uploadStream` failures before the driver stream opens now destroy the returned `Writable` with the mapped error; `upload` with an existing `id` releases a `Readable` source.
+- `finalizeResumableUpload` no longer fails after the files document is committed when only the session cleanup fails (logged as a warning; the TTL removes the session); post-insert reads and filename lookups map driver errors.
+- `abortResumableUpload` deletes leftover chunks even when the session expired; `beginResumableUpload` with a reused explicit `id` clears leftover chunks; `GRIDFS_RESUME_MISMATCH` details report the real `expectedNextChunk`.
+- `waitForSearchIndex` arms its deadline in segments, so `timeoutMs` above 2,147,483,647 ms no longer times out after 1 ms.
+- `appendChunks` reads only chunks at or after the session's `nextChunk`, restoring a near-constant cost per append (3,000 chunks of 1 KiB on a local memory server: the last 500 appends averaged 16.76 ms before and 3.69 ms after).
 
 ## Archived preparation notes for the 3.3.2 candidate
 
