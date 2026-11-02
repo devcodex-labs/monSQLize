@@ -92,6 +92,8 @@ await bucket.abortResumableUpload(session.uploadId);
 
 `finalizeResumableUpload` 要求分片从 0 连续、总长度等于会话长度，且 sha256 等于会话摘要。然后插入 files 文档、写入 `metadata.sha256`，并删除会话。缺少的分片序号抛出 `GRIDFS_UPLOAD_INCOMPLETE`，`details[0].missingChunks` 列出缺口。摘要不符或分片长度不对抛出 `GRIDFS_INTEGRITY_MISMATCH`。这些失败都不会插入 files 文档。
 
+会话仍在时，重试 `finalizeResumableUpload` 是幂等的：若同 id 的文件已可见，且其 `metadata.sha256` 与长度都和会话一致，调用直接返回该文件并删除会话。sha256 或长度不同的文件仍抛 `GRIDFS_FILE_EXISTS`。会话已不存在时（上一次 finalize 已完整成功、已 abort 或 TTL 过期），没有可比对的摘要，重试抛 `GRIDFS_FILE_NOT_FOUND`，可用 `getFile(uploadId)` 确认结果。
+
 `abortResumableUpload` 删除会话；如果还没有可见的 files 文档，同时删除该上传的 chunks。会话不存在或已经中止时直接成功，并且仍会删除该 id 下没有可见文件的残留 chunks。对已经可见的文件调用 abort 不会删除该文件的 chunks。
 
 `<bucket>.uploads` 在 `createdAt` 上有 TTL 索引，`expireAfterSeconds` 为 604800（7 天）。TTL 只删除上传会话文档，不删除 chunks。不再需要的会话应 abort 或 finalize。会话过期后，`abortResumableUpload(uploadId)` 会清掉残留 chunks；用同一显式 `id` 调 `beginResumableUpload` 也会在新会话开始前清掉它们。

@@ -92,6 +92,8 @@ Chunk bytes must follow the session size:
 
 `finalizeResumableUpload` requires a contiguous prefix, a total length equal to the session length, and a sha256 equal to the session digest. It then inserts the files document, sets `metadata.sha256`, and deletes the session. Missing chunk indexes throw `GRIDFS_UPLOAD_INCOMPLETE` with `details[0].missingChunks`. A bad digest or a chunk of the wrong size throws `GRIDFS_INTEGRITY_MISMATCH`. The files document is not inserted in those cases.
 
+Retrying `finalizeResumableUpload` is idempotent while the session still exists: if a file with the same id is already visible and its `metadata.sha256` and length match the session, the call returns that file and deletes the session. A file with a different sha256 or length still throws `GRIDFS_FILE_EXISTS`. Once the session is gone (a finalize that fully succeeded, an abort, or the TTL), there is no digest to compare, so a retry throws `GRIDFS_FILE_NOT_FOUND`; use `getFile(uploadId)` to check the result.
+
 `abortResumableUpload` deletes the session and, when no files document is visible, that upload's chunks. A missing or already aborted session resolves, and any chunks left under that id without a visible file are still deleted. Aborting an id that already has a visible file does not delete that file's chunks.
 
 `<bucket>.uploads` has a TTL index on `createdAt` with `expireAfterSeconds: 604800` (7 days). The TTL deletes upload session documents only. It does not delete chunks. Abort or finalize sessions that are no longer needed. After a session expired, `abortResumableUpload(uploadId)` removes its leftover chunks, and `beginResumableUpload` with the same explicit `id` clears them before the new session starts.

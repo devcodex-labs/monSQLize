@@ -122,9 +122,8 @@ export async function finalizeResumableUpload(ctx: GridFSContext, uploadId: Obje
     assertObjectId(uploadId, 'finalizeResumableUpload', 'uploadId');
     const session = await requirePending(ctx, uploadId, 'finalizeResumableUpload');
     const files = ctx.db.collection(filesCollectionName(ctx.bucketName));
-    if (await files.findOne({ _id: uploadId }, { projection: { _id: 1 } })) {
-        throw fileExists('finalizeResumableUpload', ctx, { id: uploadId, filename: session.filename, sha256: session.sha256 });
-    }
+    const committed = await committedFile(ctx, uploadId, session);
+    if (committed) return committed;
 
     const expected = chunkCount(session.length, session.chunkSizeBytes);
     const hash = createHash('sha256');
@@ -183,7 +182,8 @@ export async function finalizeResumableUpload(ctx: GridFSContext, uploadId: Obje
         });
     } catch (error) {
         if (isDuplicateKey(error)) {
-            throw fileExists('finalizeResumableUpload', ctx, { id: uploadId, filename: session.filename, sha256: session.sha256 });
+            const raced = await committedFile(ctx, uploadId, session);
+            if (raced) return raced;
         }
         throw mapDriverError(error, 'finalizeResumableUpload', ctx, { uploadId, filename: session.filename });
     }
@@ -216,6 +216,28 @@ export async function abortResumableUpload(ctx: GridFSContext, uploadId: ObjectI
         if (session) await uploads.deleteOne({ _id: uploadId });
     } catch (error) {
         throw mapDriverError(error, 'abortResumableUpload', ctx, { uploadId });
+    }
+}
+
+/**
+ * Resolve a finalize retry against an already visible file under `uploadId`.
+ * Returns null when no file exists. A file whose stored sha256 and length match the session is this upload's own
+ * earlier commit: delete the leftover session and return it. Any other file is a real conflict (GRIDFS_FILE_EXISTS).
+ */
+async function committedFile(ctx: GridFSContext, uploadId: ObjectId, session: GridFSUploadSession): Promise<GridFSFileInfo | null> {
+    const target = { uploadId, filename: session.filename };
+    try {
+        const doc = await ctx.db.collection(filesCollectionName(ctx.bucketName)).findOne({ _id: uploadId });
+        if (!doc) return null;
+        const info = toFileInfo(doc as Record<string, unknown>);
+        if (info.metadata?.sha256 !== session.sha256 || info.length !== session.length) {
+            throw fileExists('finalizeResumableUpload', ctx, { id: uploadId, filename: session.filename, sha256: session.sha256 });
+        }
+        await ctx.db.collection(uploadsCollectionName(ctx.bucketName)).deleteOne({ _id: uploadId, status: 'pending' });
+        return info;
+    } catch (error) {
+        // GridFS domain errors (the conflict above) pass through unchanged.
+        throw mapDriverError(error, 'finalizeResumableUpload', ctx, target);
     }
 }
 

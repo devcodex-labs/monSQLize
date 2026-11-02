@@ -176,6 +176,53 @@ describe('gridfs scan regressions (2026-11-02)', () => {
         });
     });
 
+    it('finalize retry returns the committed file when its sha256 matches the session', { timeout: 30_000 }, async () => {
+        await withRuntime('gridfs_scan_finalize_retry', async (runtime, db) => {
+            const bucket = runtime.gridfs('b', { chunkSizeBytes: 4 });
+            const data = Buffer.from('AAAABB');
+            const session = await bucket.beginResumableUpload('f.bin', { length: 6, sha256: sha(data) });
+            await bucket.appendChunks(session.uploadId, 0, data);
+            const first = await bucket.finalizeResumableUpload(session.uploadId);
+            // Simulate a first attempt whose session cleanup was lost: the file is committed, the session remains.
+            await db.collection('b.uploads').insertOne({
+                _id: session.uploadId, filename: 'f.bin', length: 6, sha256: sha(data), chunkSizeBytes: 4,
+                status: 'pending', nextChunk: 2, createdAt: new Date(), updatedAt: new Date(),
+            } as never);
+            const retried = await bucket.finalizeResumableUpload(session.uploadId);
+            assert.equal(String(retried.id), String(first.id));
+            assert.equal(retried.metadata?.sha256, sha(data));
+            assert.equal(await db.collection('b.uploads').countDocuments({ _id: session.uploadId }), 0);
+            assert.deepEqual(await bucket.download(session.uploadId), data);
+        });
+    });
+
+    it('finalize keeps GRIDFS_FILE_EXISTS when the existing file has a different sha256', { timeout: 30_000 }, async () => {
+        await withRuntime('gridfs_scan_finalize_conflict', async (runtime, db) => {
+            const bucket = runtime.gridfs('b', { chunkSizeBytes: 4 });
+            const id = new ObjectId();
+            await bucket.upload('other.bin', Buffer.from('other'), { id, sha256: sha(Buffer.from('other')) });
+            const data = Buffer.from('AAAABB');
+            await db.collection('b.uploads').insertOne({
+                _id: id, filename: 'f.bin', length: 6, sha256: sha(data), chunkSizeBytes: 4,
+                status: 'pending', nextChunk: 0, createdAt: new Date(), updatedAt: new Date(),
+            } as never);
+            await assert.rejects(bucket.finalizeResumableUpload(id), (error: unknown) => codeOf(error) === 'GRIDFS_FILE_EXISTS');
+            assert.equal(await db.collection('b.uploads').countDocuments({ _id: id }), 1);
+            assert.equal((await bucket.download(id)).toString(), 'other');
+        });
+    });
+
+    it('finalize after the session is gone still reports GRIDFS_FILE_NOT_FOUND', { timeout: 30_000 }, async () => {
+        await withRuntime('gridfs_scan_finalize_gone', async (runtime) => {
+            const bucket = runtime.gridfs('b', { chunkSizeBytes: 4 });
+            const data = Buffer.from('AAAABB');
+            const session = await bucket.beginResumableUpload('f.bin', { length: 6, sha256: sha(data) });
+            await bucket.appendChunks(session.uploadId, 0, data);
+            await bucket.finalizeResumableUpload(session.uploadId);
+            await assert.rejects(bucket.finalizeResumableUpload(session.uploadId), (error: unknown) => codeOf(error) === 'GRIDFS_FILE_NOT_FOUND');
+        });
+    });
+
     it('abort removes orphan chunks after the session expired', { timeout: 30_000 }, async () => {
         await withRuntime('gridfs_scan_orphan', async (runtime, db) => {
             const bucket = runtime.gridfs('b', { chunkSizeBytes: 4 });
