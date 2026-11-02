@@ -1,8 +1,8 @@
 {
-  "comment": "GridFS 3.5.0 stays in the main bundle: sync gridfs() cannot be split out of the single-file build. CJS 877000 and ESM 874000 cover driver-error mapping, write-path iid matching, and the 2026-11-02 scan fixes (GridFS cleanup/cursor/session repairs and segmented Search index wait timers).",
+  "comment": "GridFS 3.5.0 stays in the main bundle: sync gridfs() cannot be split out of the single-file build. CJS 881096 and ESM 878096 cover driver-error mapping, write-path iid matching, and the 2026-11-02 scan fixes (GridFS cleanup/cursor/session repairs and segmented Search index wait timers, idempotent finalize retries), plus 4 KiB of headroom each approved on 2026-11-02.",
   "artifacts": {
-    "dist/cjs/index.cjs": 877000,
-    "dist/esm/index.mjs": 874000,
+    "dist/cjs/index.cjs": 881096,
+    "dist/esm/index.mjs": 878096,
     "dist/cjs/cli/data-task.cjs": 50000
   }
 }
