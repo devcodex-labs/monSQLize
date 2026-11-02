@@ -63,6 +63,13 @@ export async function beginResumableUpload(ctx: GridFSContext, filename: string,
     } catch (error) {
         throw mapDriverError(error, 'beginResumableUpload', ctx, { uploadId, filename });
     }
+    // Chunks can outlive an expired session (the TTL only removes the session document). This call now owns
+    // the id and no file is visible, so leftovers would only break the new upload; remove them.
+    try {
+        await ctx.db.collection(chunksCollectionName(ctx.bucketName)).deleteMany({ files_id: uploadId });
+    } catch (error) {
+        throw mapDriverError(error, 'beginResumableUpload', ctx, { uploadId, filename });
+    }
     return { uploadId, nextChunk: 0, chunkSizeBytes };
 }
 
@@ -77,7 +84,7 @@ export async function appendChunks(
     const payload = await payloadBytes(data);
     if (payload.length === 0) throw badChunkSize();
     const session = await requirePending(ctx, uploadId, 'appendChunks');
-    const nextChunk = await contiguousNext(ctx, uploadId);
+    const nextChunk = await contiguousNext(ctx, uploadId, session.nextChunk);
     if (fromChunk > nextChunk) {
         throw resumeMismatch('appendChunks', ctx.bucketName, { uploadId, fromChunk, expectedNextChunk: nextChunk });
     }
@@ -88,15 +95,26 @@ export async function appendChunks(
         throw resumeMismatch('appendChunks', ctx.bucketName, { uploadId, fromChunk, expectedNextChunk: nextChunk });
     }
     for (const slice of slices) {
-        if (slice.index < nextChunk) await assertStoredChunk(ctx, uploadId, slice.index, slice.bytes);
-        else await writeChunk(ctx, uploadId, slice.index, slice.bytes);
+        if (slice.index < nextChunk) await assertStoredChunk(ctx, uploadId, slice.index, slice.bytes, nextChunk);
+        else await writeChunk(ctx, uploadId, slice.index, slice.bytes, nextChunk);
     }
 
-    const advanced = await contiguousNext(ctx, uploadId);
-    await ctx.db.collection(uploadsCollectionName(ctx.bucketName)).updateOne(
-        { _id: uploadId },
-        { $set: { nextChunk: advanced, updatedAt: new Date() } },
-    );
+    const advanced = await contiguousNext(ctx, uploadId, nextChunk);
+    let matched: number;
+    try {
+        const updated = await ctx.db.collection(uploadsCollectionName(ctx.bucketName)).updateOne(
+            { _id: uploadId, status: 'pending' },
+            { $max: { nextChunk: advanced }, $set: { updatedAt: new Date() } },
+        );
+        matched = updated.matchedCount;
+    } catch (error) {
+        throw mapDriverError(error, 'appendChunks', ctx, { uploadId });
+    }
+    if (matched === 0) {
+        // The session was aborted (or expired) while this call was writing; do not leave its chunks behind.
+        await removeInvisibleChunks(ctx, uploadId, 'appendChunks');
+        throw fileNotFound('appendChunks', ctx, { id: uploadId });
+    }
     return { nextChunk: advanced, bytesAccepted: payload.length };
 }
 
@@ -169,8 +187,19 @@ export async function finalizeResumableUpload(ctx: GridFSContext, uploadId: Obje
         }
         throw mapDriverError(error, 'finalizeResumableUpload', ctx, { uploadId, filename: session.filename });
     }
-    await ctx.db.collection(uploadsCollectionName(ctx.bucketName)).deleteOne({ _id: uploadId });
-    const info = await files.findOne({ _id: uploadId });
+    try {
+        await ctx.db.collection(uploadsCollectionName(ctx.bucketName)).deleteOne({ _id: uploadId });
+    } catch (error) {
+        // The files document is committed, so the upload succeeded. A leftover session cannot add chunks past
+        // the file length, abort keeps a visible file's chunks, and the TTL index removes it later.
+        ctx.logger?.warn?.('[gridfs] finalizeResumableUpload could not delete the upload session', { bucket: ctx.bucketName, uploadId: String(uploadId), error });
+    }
+    let info;
+    try {
+        info = await files.findOne({ _id: uploadId });
+    } catch (error) {
+        throw mapDriverError(error, 'finalizeResumableUpload', ctx, { uploadId, filename: session.filename });
+    }
     if (!info) throw fileNotFound('finalizeResumableUpload', ctx, { id: uploadId, filename: session.filename });
     return toFileInfo(info as Record<string, unknown>);
 }
@@ -180,17 +209,26 @@ export async function abortResumableUpload(ctx: GridFSContext, uploadId: ObjectI
     try {
         const uploads = ctx.db.collection(uploadsCollectionName(ctx.bucketName));
         const session = await uploads.findOne({ _id: uploadId });
-        if (!session || session.status === 'aborted' || session.status === 'finalized') return;
+        if (session?.status === 'finalized') return;
+        // A missing session (expired by the TTL, or aborted while an append was in flight) can still leave
+        // chunks; clear them as long as no file is visible under this id.
+        await removeInvisibleChunks(ctx, uploadId, 'abortResumableUpload');
+        if (session) await uploads.deleteOne({ _id: uploadId });
+    } catch (error) {
+        throw mapDriverError(error, 'abortResumableUpload', ctx, { uploadId });
+    }
+}
+
+/** Delete chunks stored under `uploadId` unless a visible files document owns them. */
+async function removeInvisibleChunks(ctx: GridFSContext, uploadId: ObjectId, operation: string): Promise<void> {
+    try {
         const visible = await ctx.db.collection(filesCollectionName(ctx.bucketName)).findOne(
             { _id: uploadId },
             { projection: { _id: 1 } },
         );
-        if (!visible) {
-            await ctx.db.collection(chunksCollectionName(ctx.bucketName)).deleteMany({ files_id: uploadId });
-        }
-        await uploads.deleteOne({ _id: uploadId });
+        if (!visible) await ctx.db.collection(chunksCollectionName(ctx.bucketName)).deleteMany({ files_id: uploadId });
     } catch (error) {
-        throw mapDriverError(error, 'abortResumableUpload', ctx, { uploadId });
+        throw mapDriverError(error, operation, ctx, { uploadId });
     }
 }
 
@@ -226,13 +264,23 @@ async function requirePending(ctx: GridFSContext, uploadId: ObjectId, operation:
     return doc as unknown as GridFSUploadSession;
 }
 
-async function contiguousNext(ctx: GridFSContext, uploadId: ObjectId): Promise<number> {
-    const docs = await ctx.db.collection(chunksCollectionName(ctx.bucketName))
-        .find({ files_id: uploadId })
-        .sort({ n: 1 })
-        .project({ n: 1 })
-        .toArray();
-    let expected = 0;
+/**
+ * Length of the contiguous chunk prefix. Chunks below the session's recorded `nextChunk` are already known to be
+ * contiguous, so only chunks at or after `from` are read; this keeps each append independent of the upload size.
+ */
+async function contiguousNext(ctx: GridFSContext, uploadId: ObjectId, from: number): Promise<number> {
+    const start = Number.isInteger(from) && from > 0 ? from : 0;
+    let docs;
+    try {
+        docs = await ctx.db.collection(chunksCollectionName(ctx.bucketName))
+            .find({ files_id: uploadId, n: { $gte: start } })
+            .sort({ n: 1 })
+            .project({ n: 1 })
+            .toArray();
+    } catch (error) {
+        throw mapDriverError(error, 'appendChunks', ctx, { uploadId });
+    }
+    let expected = start;
     for (const doc of docs) {
         if (doc.n !== expected) break;
         expected += 1;
@@ -240,18 +288,18 @@ async function contiguousNext(ctx: GridFSContext, uploadId: ObjectId): Promise<n
     return expected;
 }
 
-async function assertStoredChunk(ctx: GridFSContext, uploadId: ObjectId, n: number, slice: Buffer): Promise<void> {
+async function assertStoredChunk(ctx: GridFSContext, uploadId: ObjectId, n: number, slice: Buffer, expectedNextChunk: number): Promise<void> {
     const existing = await ctx.db.collection(chunksCollectionName(ctx.bucketName)).findOne({ files_id: uploadId, n });
     if (!existing || !sameBytes(binaryToBuffer(existing.data, 'appendChunks'), slice)) {
-        throw resumeMismatch('appendChunks', ctx.bucketName, { uploadId, fromChunk: n, expectedNextChunk: n });
+        throw resumeMismatch('appendChunks', ctx.bucketName, { uploadId, fromChunk: n, expectedNextChunk });
     }
 }
 
-async function writeChunk(ctx: GridFSContext, uploadId: ObjectId, n: number, slice: Buffer): Promise<void> {
+async function writeChunk(ctx: GridFSContext, uploadId: ObjectId, n: number, slice: Buffer, expectedNextChunk: number): Promise<void> {
     try {
         await ctx.db.collection(chunksCollectionName(ctx.bucketName)).insertOne({ files_id: uploadId, n, data: slice });
     } catch (error) {
         if (!isDuplicateKey(error)) throw mapDriverError(error, 'appendChunks', ctx, { uploadId });
-        await assertStoredChunk(ctx, uploadId, n, slice);
+        await assertStoredChunk(ctx, uploadId, n, slice, expectedNextChunk);
     }
 }

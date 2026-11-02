@@ -106,6 +106,7 @@ export interface GridFSDriver {
 
 export interface GridFSIndexLatch {
     ensure(): Promise<void>;
+    reset(): void;
 }
 
 export interface GridFSContext {

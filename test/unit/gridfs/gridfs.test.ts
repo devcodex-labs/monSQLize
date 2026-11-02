@@ -37,6 +37,9 @@ function matches(doc: Doc, filter: Doc): boolean {
         if (expected && typeof expected === 'object' && typeof (expected as { equals?: unknown }).equals === 'function') {
             return sameId(actual, expected);
         }
+        if (expected && typeof expected === 'object' && '$gte' in (expected as Doc)) {
+            return typeof actual === 'number' && actual >= (expected as { $gte: number }).$gte;
+        }
         return actual === expected;
     });
 }
@@ -58,6 +61,7 @@ function sortRows(rows: Doc[], spec?: Doc): Doc[] {
 class MemoryCollection {
     docs: Doc[] = [];
     indexes: Doc[] = [];
+    rowsRead = 0;
 
     private matched(filter: Doc): Doc[] {
         return this.docs.filter((doc) => matches(doc, filter));
@@ -70,12 +74,13 @@ class MemoryCollection {
 
     find(filter: Doc) {
         let rows = this.matched(filter);
+        const count = (out: Doc[]) => { this.rowsRead += out.length; return out; };
         const cursor = {
             sort: (spec: Doc) => { rows = sortRows(rows, spec); return cursor; },
             skip: (count: number) => { rows = rows.slice(count); return cursor; },
             limit: (count: number) => { rows = rows.slice(0, count); return cursor; },
             project: () => cursor,
-            toArray: async () => rows.map((row) => ({ ...row })),
+            toArray: async () => count(rows).map((row) => ({ ...row })),
             async *[Symbol.asyncIterator]() {
                 for (const row of rows) yield { ...row };
             },
@@ -96,10 +101,13 @@ class MemoryCollection {
         return { insertedId: doc._id };
     }
 
-    async updateOne(filter: Doc, update: { $set?: Doc }) {
+    async updateOne(filter: Doc, update: { $set?: Doc; $max?: Doc }) {
         const row = this.docs.find((doc) => matches(doc, filter));
         if (!row) return { matchedCount: 0 };
         Object.assign(row, update.$set ?? {});
+        for (const [key, value] of Object.entries(update.$max ?? {})) {
+            if (row[key] === undefined || (value as number) > row[key]) row[key] = value;
+        }
         return { matchedCount: 1 };
     }
 
@@ -379,6 +387,22 @@ describe('gridfs bucket', () => {
         assert.equal(replay.nextChunk, 2);
         const advanced = await bucket.appendChunks(started.uploadId, 2, payload.subarray(8));
         assert.equal(advanced.nextChunk, 3);
+    });
+
+    it('reads a bounded number of chunk rows per append regardless of stored chunks', async () => {
+        const { bucket, db } = bucketFor({ driver: false });
+        const total = 120;
+        const data = Buffer.alloc(total, 7);
+        const started = await bucket.beginResumableUpload('many.bin', { length: total, sha256: sha(data), chunkSizeBytes: 1 });
+        for (let n = 0; n < total - 1; n += 1) await bucket.appendChunks(started.uploadId, n, data.subarray(n, n + 1));
+        const chunks = db.collection('fs.chunks');
+        chunks.rowsRead = 0;
+        const last = await bucket.appendChunks(started.uploadId, total - 1, data.subarray(total - 1));
+        assert.equal(last.nextChunk, total);
+        assert.ok(chunks.rowsRead <= 4, `append read ${chunks.rowsRead} chunk rows`);
+        const replay = await bucket.appendChunks(started.uploadId, 0, data.subarray(0, 1));
+        assert.equal(replay.nextChunk, total);
+        assert.equal((await bucket.finalizeResumableUpload(started.uploadId)).length, total);
     });
 
     it('abort removes pending chunks and ensureIndexes is idempotent', async () => {

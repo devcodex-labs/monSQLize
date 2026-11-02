@@ -13,7 +13,7 @@ import type {
     GridFSUploadStreamOptions,
 } from './types';
 import { readReadable, releaseReadable } from './bytes';
-import { fileExists, fileNotFound, integrityMismatch, invalidArgument, isNamespaceNotFound, mapDriverError, targetOf } from './errors';
+import { fileExists, fileNotFound, integrityMismatch, invalidArgument, isDuplicateKey, isNamespaceNotFound, mapDriverError, targetOf } from './errors';
 import { chunksCollectionName, filesCollectionName, toFileInfo, uploadsCollectionName } from './normalize';
 import {
     assertChunkSize,
@@ -68,6 +68,7 @@ export async function uploadFile(
 
     await ctx.indexes.ensure();
     if (options.id && await getFile(ctx, options.id)) {
+        if (source) releaseReadable(source);
         throw fileExists('upload', ctx, { id: options.id, filename, sha256: options.sha256 });
     }
     if (ifExists !== 'duplicate') {
@@ -105,6 +106,11 @@ export function openUploadStream(ctx: GridFSContext, filename: string, opts?: Gr
         let target: GridFSDriverStream | undefined;
         try {
             await ctx.indexes.ensure();
+            // Refuse an id that already belongs to a file before writing anything (same rule as upload()),
+            // so failure cleanup can never delete data this call did not create.
+            if (await getFile(ctx, id)) {
+                throw fileExists('uploadStream', ctx, { id, filename, sha256: options.sha256 });
+            }
             target = ctx.driver.openUploadStream(id, filename, {
                 chunkSizeBytes,
                 metadata,
@@ -116,8 +122,11 @@ export function openUploadStream(ctx: GridFSContext, filename: string, opts?: Gr
             if (!info) throw fileNotFound('uploadStream', ctx, { id, filename });
             return info;
         } catch (error) {
-            if (target) await cleanupFailedWrite(ctx, id, target);
-            throw mapDriverError(error, 'uploadStream', ctx, { id, filename });
+            if (target) await cleanupFailedWrite(ctx, id, target, error);
+            const mapped = mapDriverError(error, 'uploadStream', ctx, { id, filename });
+            // Fail the returned Writable too, so an upstream pipe() stops instead of hanging on backpressure.
+            if (!input.destroyed) input.destroy(mapped);
+            throw mapped;
         }
     })();
     void done.catch(() => undefined);
@@ -131,6 +140,7 @@ export async function downloadFile(ctx: GridFSContext, idOrName: GridFSIdOrName)
     try {
         return await readReadable(source);
     } catch (error) {
+        abortDriverRead(source);
         throw mapDriverError(error, 'download', ctx, { id: file.id, filename: file.filename });
     }
 }
@@ -144,8 +154,14 @@ export function openDownloadStream(ctx: GridFSContext, idOrName: GridFSIdOrName,
                 const file = await resolveFile(ctx, idOrName, 'downloadStream');
                 if (!file) throw fileNotFound('downloadStream', ctx, targetOf(idOrName));
                 const bounds = rangeBounds(shape, file.length, 'downloadStream', ctx.bucketName);
+                // The consumer may have destroyed the stream while the file was being resolved.
+                if (output.destroyed) return;
                 const source = ctx.driver.openDownloadStream(file.id, bounds);
                 source.on('error', (error) => output.destroy(mapDriverError(error, 'downloadStream', ctx, { id: file.id, filename: file.filename })));
+                // pipe() does not propagate destroy upstream; close the server cursor when the consumer goes away early.
+                output.once('close', () => {
+                    if (!source.readableEnded) abortDriverRead(source);
+                });
                 source.pipe(output);
             } catch (error) {
                 output.destroy(mapDriverError(error, 'downloadStream', ctx, targetOf(idOrName)));
@@ -215,6 +231,8 @@ export async function dropBucket(ctx: GridFSContext): Promise<void> {
     await dropIfExists(ctx, chunksCollectionName(ctx.bucketName));
     await dropIfExists(ctx, filesCollectionName(ctx.bucketName));
     await dropIfExists(ctx, uploadsCollectionName(ctx.bucketName));
+    // The collections (and their indexes) are gone; let the next write or ensureIndexes() recreate them.
+    ctx.indexes.reset();
 }
 
 async function dropIfExists(ctx: GridFSContext, name: string): Promise<void> {
@@ -228,7 +246,12 @@ async function dropIfExists(ctx: GridFSContext, name: string): Promise<void> {
 async function findConflict(ctx: GridFSContext, filename: string, sha256: string | undefined): Promise<GridFSFileInfo | null> {
     const files = ctx.db.collection(filesCollectionName(ctx.bucketName));
     const filter = sha256 !== undefined ? { 'metadata.sha256': sha256 } : { filename };
-    const docs = await files.find(filter).sort({ uploadDate: -1 }).limit(1).toArray();
+    let docs;
+    try {
+        docs = await files.find(filter).sort({ uploadDate: -1 }).limit(1).toArray();
+    } catch (error) {
+        throw mapDriverError(error, 'upload', ctx, { filename });
+    }
     return docs[0] ? toFileInfo(docs[0] as Record<string, unknown>) : null;
 }
 
@@ -246,8 +269,23 @@ async function resolveFile(ctx: GridFSContext, idOrName: GridFSIdOrName, operati
     const cursor = revision >= 0
         ? files.find({ filename: idOrName.filename }).sort({ uploadDate: 1 }).skip(revision).limit(1)
         : files.find({ filename: idOrName.filename }).sort({ uploadDate: -1 }).skip(-revision - 1).limit(1);
-    const docs = await cursor.toArray();
+    let docs;
+    try {
+        docs = await cursor.toArray();
+    } catch (error) {
+        throw mapDriverError(error, operation, ctx, { filename: idOrName.filename });
+    }
     return docs[0] ? toFileInfo(docs[0] as Record<string, unknown>) : null;
+}
+
+/** Close the driver read stream and its server cursor; errors are irrelevant once the consumer has gone. */
+function abortDriverRead(source: Readable): void {
+    const abortable = source as Readable & { abort?: () => Promise<void> };
+    if (typeof abortable.abort === 'function') {
+        void abortable.abort().catch(() => undefined);
+    } else if (!source.destroyed) {
+        source.destroy();
+    }
 }
 
 async function writeBuffer(ctx: GridFSContext, id: ObjectId, filename: string, payload: Buffer, options: { chunkSizeBytes: number; metadata?: import('mongodb').Document; contentType?: string }): Promise<void> {
@@ -255,7 +293,7 @@ async function writeBuffer(ctx: GridFSContext, id: ObjectId, filename: string, p
     try {
         await endWritable(stream, payload);
     } catch (error) {
-        await cleanupFailedWrite(ctx, id, stream);
+        await cleanupFailedWrite(ctx, id, stream, error);
         throw mapDriverError(error, 'upload', ctx, { id, filename });
     }
 }
@@ -266,7 +304,7 @@ async function writeReadable(ctx: GridFSContext, id: ObjectId, filename: string,
         const { pipeline } = await import('node:stream/promises');
         await pipeline(source, stream);
     } catch (error) {
-        await cleanupFailedWrite(ctx, id, stream);
+        await cleanupFailedWrite(ctx, id, stream, error);
         throw mapDriverError(error, 'upload', ctx, { id, filename });
     }
 }
@@ -283,7 +321,10 @@ function endWritable(stream: Writable, payload: Buffer): Promise<void> {
     });
 }
 
-async function cleanupFailedWrite(ctx: GridFSContext, id: ObjectId, stream: GridFSDriverStream): Promise<void> {
+async function cleanupFailedWrite(ctx: GridFSContext, id: ObjectId, stream: GridFSDriverStream, cause: unknown): Promise<void> {
+    // A duplicate key means the id already had chunks or a files document written by someone else;
+    // abort() deletes by files_id and would destroy that data, so leave everything in place.
+    if (isDuplicateKey(cause)) return;
     try {
         if (typeof stream.abort === 'function') await stream.abort();
     } catch { /* A finished driver stream refuses abort; delete the visible file below. */ }

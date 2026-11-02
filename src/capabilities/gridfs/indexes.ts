@@ -10,19 +10,28 @@ import { UPLOADS_TTL_SECONDS } from './types';
 export class GridFSIndexLatch {
     private inflight: Promise<void> | null = null;
     private ready = false;
+    private generation = 0;
 
     constructor(private readonly db: Db, private readonly bucketName: string) {}
 
     ensure(): Promise<void> {
         if (this.ready) return Promise.resolve();
         if (!this.inflight) {
+            const generation = this.generation;
             this.inflight = this.create().then(() => {
-                this.ready = true;
+                // A reset() while this attempt was running means the collections may have been dropped since.
+                if (generation === this.generation) this.ready = true;
             }).finally(() => {
                 this.inflight = null;
             });
         }
         return this.inflight;
+    }
+
+    /** Forget a completed ensure, e.g. after the bucket collections were dropped, so the next call recreates indexes. */
+    reset(): void {
+        this.ready = false;
+        this.generation += 1;
     }
 
     private async create(): Promise<void> {
