@@ -1,8 +1,8 @@
 # Unreleased
 
-## Changes after v3.5.1
+## Changes after v3.5.2
 
-No changes have been staged after 3.5.1. The README, docs-site share card and release-candidate ancestry check are assigned to the [3.5.1 versioned notes](./v3.5.1.md); GridFS buckets are in [3.5.0](./v3.5.0.md). Publication is established by the npm registry and immutable tag, not this file.
+No changes have been staged after 3.5.2. The vector search guidance, Search docs regrouping and vector example are assigned to the [3.5.2 versioned notes](./v3.5.2.md); the README and docs-site share card are in [3.5.1](./v3.5.1.md). Publication is established by the npm registry and immutable tag, not this file.
 
 ## Archived preparation notes for the 3.3.2 candidate
 
