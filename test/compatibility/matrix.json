@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-11-02",
-  "packageVersion": "3.5.2",
+  "packageVersion": "3.5.3",
   "support": {
     "node": {
       "declared": ">=18.0.0",
