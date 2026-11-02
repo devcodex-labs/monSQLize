@@ -186,16 +186,28 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
     });
 }
 
+/** Largest delay setTimeout accepts without overflowing to 1 ms. */
+const MAX_TIMER_MS = 2_147_483_647;
+
 /** Poll-level abort controller linking the user signal and the remaining-time deadline. */
 function linkSignal(userSignal: AbortSignal | undefined, remainingMs: number): { signal: AbortSignal; timedOut: () => boolean; dispose: () => void; } {
     const controller = new AbortController();
     let expired = false;
     const onUserAbort = (): void => controller.abort(userSignal?.reason);
     userSignal?.addEventListener('abort', onUserAbort, { once: true });
-    const timer = setTimeout(() => {
-        expired = true;
-        controller.abort(new Error('search index wait deadline reached'));
-    }, Math.max(0, remainingMs));
+    let timer: ReturnType<typeof setTimeout>;
+    // setTimeout overflows above 2^31-1 ms and fires after 1 ms, so arm the deadline in bounded segments.
+    const arm = (ms: number): void => {
+        timer = setTimeout(() => {
+            if (ms > MAX_TIMER_MS) {
+                arm(ms - MAX_TIMER_MS);
+                return;
+            }
+            expired = true;
+            controller.abort(new Error('search index wait deadline reached'));
+        }, Math.min(ms, MAX_TIMER_MS));
+    };
+    arm(Math.max(0, remainingMs));
     return {
         signal: controller.signal,
         timedOut: () => expired,

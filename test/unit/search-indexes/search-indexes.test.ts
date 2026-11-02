@@ -281,6 +281,21 @@ describe('search indexes: waitForSearchIndex', () => {
         const { ctx } = fakeCollection({ lists: [[]] });
         await rejectsCode(waitForSearchIndexOp(ctx, 'v', { intervalMs: 100 }, stepClock(20_000)), 'SEARCH_INDEX_NOT_FOUND');
     });
+    it('waits past a timeoutMs larger than the 32-bit timer limit', async () => {
+        const statuses = ['BUILDING', 'BUILDING', 'READY'];
+        const collection = {
+            listSearchIndexes: (name: string, opts?: { signal?: AbortSignal }) => ({
+                toArray: () => new Promise<Doc[]>((resolve, reject) => {
+                    const status = statuses.shift() ?? 'READY';
+                    const timer = setTimeout(() => resolve([{ name, status, queryable: status === 'READY' }]), 20);
+                    opts?.signal?.addEventListener('abort', () => { clearTimeout(timer); reject(opts.signal?.reason); }, { once: true });
+                }),
+            }),
+        };
+        const ctx = { collection: collection as never, namespace: { db: 'app', collection: 'docs' } } as SearchIndexContext;
+        const info = await waitForSearchIndexOp(ctx, 'v', { intervalMs: 100, timeoutMs: 2_592_000_000 });
+        assert.equal(info.status, 'READY');
+    });
     it('times out with last info', async () => {
         const { ctx } = fakeCollection({ lists: [[{ name: 'v', status: 'BUILDING' }]] });
         const err = await rejectsCode(waitForSearchIndexOp(ctx, 'v', { intervalMs: 100, timeoutMs: 250 }), 'SEARCH_INDEX_WAIT_TIMEOUT');
