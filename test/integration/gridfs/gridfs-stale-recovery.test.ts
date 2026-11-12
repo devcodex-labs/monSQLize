@@ -497,4 +497,38 @@ describe('GridFS operator recovery: deterministic post-crash state and chunk saf
         });
     });
 
+    it('treats upload() metadata.sha256 without options.sha256 as an unverified claim', { timeout: 30_000 }, async () => {
+        await withRuntime(async (bucket, db) => {
+            const id = new ObjectId();
+            const actual = Buffer.from('EVIL');
+            const claimedSha256 = digest(Buffer.from('GOOD'));
+            const original = Collection.prototype.deleteOne;
+            let intercepted = false;
+            (Collection.prototype as any).deleteOne = async function (this: Collection, ...args: unknown[]) {
+                const filter = args[0] as Record<string, any>;
+                if (!intercepted && this.collectionName === 'b.uploads' &&
+                    filter?._id?.equals(id) && typeof filter?.ownerToken === 'string') {
+                    intercepted = true;
+                    throw new Error('simulated process interruption before owner release');
+                }
+                return (original as any).apply(this, args);
+            };
+            try {
+                await bucket.upload('metadata.bin', actual, { id, metadata: { sha256: claimedSha256 } });
+            } finally {
+                Collection.prototype.deleteOne = original;
+            }
+            const owner = await db.collection('b.uploads').findOne({ _id: id });
+            assert.equal(owner?.uploadMethod, 'upload');
+            assert.equal(owner?.sha256Verified, false);
+            assert.equal(owner?.claimedSha256, claimedSha256);
+            const receipt = await recover(db, id);
+            assert.equal(receipt.verification.sha256Policy, 'unverified-metadata');
+            assert.equal(receipt.verification.sha256Verified, false);
+            assert.deepEqual(receipt.verification.warnings, ['metadata_sha256_mismatch_unverified']);
+            assert.deepEqual(await bucket.download(id), actual);
+            assert.equal(await db.collection('b.uploads').countDocuments({ _id: id }), 0);
+        });
+    });
+
 });
