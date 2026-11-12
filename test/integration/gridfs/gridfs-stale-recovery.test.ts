@@ -3,6 +3,7 @@ import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { Collection, MongoClient, ObjectId, type Db } from 'mongodb';
 import { createMemoryServerBootstrap } from '../../bootstrap/memory-server';
+import { releaseOwner } from '../../../src/capabilities/gridfs/ownership';
 
 const MonSQLize = require('../../../dist/cjs/index.cjs');
 const { recoverGridFSOwnership } = require(process.cwd() + '/scripts/maintenance/gridfs-recover.cjs');
@@ -409,6 +410,27 @@ describe('GridFS operator recovery: deterministic post-crash state and chunk saf
             });
             await assert.rejects(recover(db, id), /no visible file/);
             assert.equal((await db.collection('b.uploads').findOne({ _id: id }))?.status, 'recovering');
+        });
+    });
+
+
+    it('does not let a stale original writer release an active recovery claim', async () => {
+        await withRuntime(async (_, db) => {
+            const id = new ObjectId();
+            const now = new Date();
+            await db.collection('b.uploads').insertOne({
+                _id: id, kind: 'direct', status: 'recovering',
+                ownerToken: 'original-writer', createdAt: now, updatedAt: now,
+                recovery: { token: 'active-recovery', fromStatus: 'uploading' },
+            });
+            const ctx = { db, bucketName: 'b' } as any;
+            await assert.rejects(
+                releaseOwner(ctx, { id, kind: 'direct', token: 'original-writer' }, 'upload'),
+                (error: unknown) => (error as { code?: string }).code === 'GRIDFS_UPLOAD_BUSY',
+            );
+            const owner = await db.collection('b.uploads').findOne({ _id: id });
+            assert.equal(owner?.status, 'recovering');
+            assert.equal(owner?.recovery?.token, 'active-recovery');
         });
     });
 
