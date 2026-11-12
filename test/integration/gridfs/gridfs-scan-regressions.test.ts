@@ -99,9 +99,12 @@ describe('gridfs scan regressions (2026-11-02)', () => {
             try {
                 const appending = bucket.appendChunks(session.uploadId, 0, data);
                 await hit;
-                await bucket.abortResumableUpload(session.uploadId);
+                // Abort cannot delete chunks while append owns the upload.
+                await assert.rejects(bucket.abortResumableUpload(session.uploadId),
+                    (error: unknown) => codeOf(error) === 'GRIDFS_UPLOAD_BUSY');
                 release();
-                await assert.rejects(appending, (error: unknown) => codeOf(error) === 'GRIDFS_FILE_NOT_FOUND');
+                await appending;
+                await bucket.abortResumableUpload(session.uploadId);
             } finally {
                 Collection.prototype.insertOne = original;
             }
@@ -117,7 +120,7 @@ describe('gridfs scan regressions (2026-11-02)', () => {
             await bucket.drop();
             await bucket.ensureIndexes();
             assert.deepEqual(await indexNames(db, 'b.chunks'), ['_id_', 'files_id_1_n_1']);
-            assert.deepEqual(await indexNames(db, 'b.uploads'), ['_id_', 'createdAt_1']);
+            assert.deepEqual(await indexNames(db, 'b.uploads'), ['_id_', 'expiresAt_1']);
         });
     });
 
