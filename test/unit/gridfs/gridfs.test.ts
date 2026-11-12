@@ -204,6 +204,7 @@ function bucketFor(options: {
     driver?: boolean;
     instanceId?: string;
     poolName?: string;
+    logger?: { warn: (...args: unknown[]) => void };
 } = {}) {
     const db = new MemoryDb();
     const calls: string[] = [];
@@ -267,6 +268,7 @@ function bucketFor(options: {
         source: options.source ?? 'db',
         policy: options.policy,
         driver: options.driver === false ? undefined : driver as never,
+        logger: options.logger,
     });
     return { bucket, db, calls, bytes };
 }
@@ -638,5 +640,122 @@ describe('gridfs bucket', () => {
             assert.equal((detailsOf(error).namespace as { iid?: string }).iid, 'node-a:archive:assets.photos.files');
             return true;
         });
+    });
+
+    it('does not delete a visible file\'s chunks when beginResumableUpload races after precheck', async () => {
+        const { bucket, db } = bucketFor({ driver: false });
+        const id = new ObjectId();
+        const payload = Buffer.from('ABCD');
+        const uploads = db.collection('fs.uploads');
+        const original = uploads.insertOne.bind(uploads);
+        uploads.insertOne = async (doc: Doc) => {
+            if (doc.kind === 'resumable' && sameId(doc._id, id)) {
+                await db.collection('fs.files').insertOne({
+                    _id: id, filename: 'visible.bin', length: 4, chunkSize: 4, uploadDate: new Date(),
+                });
+                await db.collection('fs.chunks').insertOne({ files_id: id, n: 0, data: payload });
+            }
+            return original(doc);
+        };
+        await assert.rejects(
+            () => bucket.beginResumableUpload('raced.bin', { id, length: 4, sha256: sha(payload), chunkSizeBytes: 4 }),
+            (error: unknown) => codeOf(error) === 'GRIDFS_FILE_EXISTS',
+        );
+        assert.equal((await db.collection('fs.chunks').find({ files_id: id }).toArray()).length, 1);
+        assert.ok(await db.collection('fs.files').findOne({ _id: id }));
+        assert.equal(await db.collection('fs.uploads').findOne({ _id: id }), null);
+    });
+
+    it('rolls finalizing back to pending after FILE_EXISTS or INTEGRITY_MISMATCH so abort works', async () => {
+        const { bucket, db } = bucketFor({ driver: false });
+        const payload = Buffer.from('abcd');
+        const conflict = await bucket.beginResumableUpload('conflict.bin', {
+            length: 4, sha256: sha(payload), chunkSizeBytes: 4,
+        });
+        await bucket.appendChunks(conflict.uploadId, 0, payload);
+        await db.collection('fs.files').insertOne({
+            _id: conflict.uploadId,
+            filename: 'other.bin',
+            length: 4,
+            chunkSize: 4,
+            uploadDate: new Date(),
+            metadata: { sha256: 'a'.repeat(64) },
+        });
+        await assert.rejects(
+            () => bucket.finalizeResumableUpload(conflict.uploadId),
+            (error: unknown) => codeOf(error) === 'GRIDFS_FILE_EXISTS',
+        );
+        assert.equal((await db.collection('fs.uploads').findOne({ _id: conflict.uploadId }))?.status, 'pending');
+        await bucket.abortResumableUpload(conflict.uploadId);
+        assert.equal(await db.collection('fs.uploads').findOne({ _id: conflict.uploadId }), null);
+        assert.ok(await db.collection('fs.files').findOne({ _id: conflict.uploadId }));
+        assert.equal((await db.collection('fs.chunks').find({ files_id: conflict.uploadId }).toArray()).length, 1);
+
+        const bad = await bucket.beginResumableUpload('bad.bin', {
+            length: 4, sha256: sha(Buffer.from('nope')), chunkSizeBytes: 4,
+        });
+        await bucket.appendChunks(bad.uploadId, 0, payload);
+        await assert.rejects(
+            () => bucket.finalizeResumableUpload(bad.uploadId),
+            (error: unknown) => codeOf(error) === 'GRIDFS_INTEGRITY_MISMATCH',
+        );
+        assert.equal((await db.collection('fs.uploads').findOne({ _id: bad.uploadId }))?.status, 'pending');
+        await bucket.abortResumableUpload(bad.uploadId);
+        assert.equal((await db.collection('fs.chunks').find({ files_id: bad.uploadId }).toArray()).length, 0);
+        assert.equal(await db.collection('fs.uploads').findOne({ _id: bad.uploadId }), null);
+    });
+
+    it('returns a successful rename even when reservation release fails, and keeps the original error otherwise', async () => {
+        const warnings: string[] = [];
+        const { bucket, db } = bucketFor({
+            logger: { warn: (message: unknown) => { warnings.push(String(message)); } },
+        });
+        const info = await bucket.upload('old.bin', Buffer.from('ok'));
+        const uploads = db.collection('fs.uploads');
+        const original = uploads.deleteOne.bind(uploads);
+        uploads.deleteOne = async (filter: Doc) => {
+            if (filter.kind === 'rename') return { deletedCount: 0 };
+            return original(filter);
+        };
+        await bucket.rename(info.id, 'new.bin');
+        assert.equal((await bucket.getFile(info.id))?.filename, 'new.bin');
+        assert.ok(warnings.some((message) => message.includes('rename committed but reservation cleanup failed')));
+
+        warnings.length = 0;
+        uploads.deleteOne = async () => {
+            throw driverFailure('release failed', 91);
+        };
+        const missing = new ObjectId();
+        await assert.rejects(
+            () => bucket.rename(missing, 'gone.bin'),
+            (error: unknown) => codeOf(error) === 'GRIDFS_FILE_NOT_FOUND',
+        );
+        assert.ok(warnings.some((message) => message.includes('rename reservation retained after cleanup failure')));
+        assert.ok(await db.collection('fs.uploads').findOne({ _id: missing, kind: 'rename' }));
+    });
+
+    it('streams Readable appends, rejects a trailing partial after writing complete chunks, and remains abortable', async () => {
+        const { bucket, db } = bucketFor({ driver: false });
+        const payload = Buffer.from('abcdefghijkl');
+        const started = await bucket.beginResumableUpload('stream.bin', {
+            length: payload.length, sha256: sha(payload), chunkSizeBytes: 4,
+        });
+        const first = await bucket.appendChunks(started.uploadId, 0, Readable.from([payload.subarray(0, 4), payload.subarray(4, 8)]));
+        assert.equal(first.nextChunk, 2);
+        await assert.rejects(
+            () => bucket.appendChunks(started.uploadId, 2, Readable.from([Buffer.from('ij')])),
+            (error: unknown) => codeOf(error) === 'INVALID_ARGUMENT',
+        );
+        assert.deepEqual(
+            (await db.collection('fs.chunks').find({ files_id: started.uploadId }).sort({ n: 1 }).toArray()).map((chunk) => chunk.n),
+            [0, 1],
+        );
+        assert.equal((await db.collection('fs.uploads').findOne({ _id: started.uploadId }))?.activeAppend, undefined);
+        const rest = await bucket.appendChunks(started.uploadId, 2, Readable.from([payload.subarray(8)]));
+        assert.equal(rest.nextChunk, 3);
+        const replay = await bucket.appendChunks(started.uploadId, 0, Readable.from([payload.subarray(0, 8)]));
+        assert.equal(replay.nextChunk, 3);
+        const info = await bucket.finalizeResumableUpload(started.uploadId);
+        assert.equal(info.length, payload.length);
     });
 });

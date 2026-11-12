@@ -291,9 +291,19 @@ export async function renameFile(ctx: GridFSContext, id: ObjectId, filename: str
         } catch (error) {
             throw mapDriverError(error, 'rename', ctx, { id, filename });
         }
-    } finally {
-        // Rename never removes chunks and is safe to unlock after driver settles.
-        await releaseOwner(ctx, owner, 'rename');
+        // A successful rename is committed even if removing its reservation fails.
+        try {
+            await releaseOwner(ctx, owner, 'rename');
+        } catch (error) {
+            ctx.logger?.warn?.('[gridfs] rename committed but reservation cleanup failed', { bucket: ctx.bucketName, id: String(id), error });
+        }
+    } catch (error) {
+        try {
+            await releaseOwner(ctx, owner, 'rename');
+        } catch (releaseError) {
+            ctx.logger?.warn?.('[gridfs] rename reservation retained after cleanup failure', { bucket: ctx.bucketName, id: String(id), error: releaseError });
+        }
+        throw error;
     }
 }
 

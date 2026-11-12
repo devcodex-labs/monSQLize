@@ -8,6 +8,16 @@
 
 任何强制恢复必须先从集群所有节点停止并排空旧版和新版 GridFS 写入进程、队列消费者、定时任务与自动重启，确认没有仍可恢复的旧写入。恢复脚本无法在 MongoDB 层直接阻止旧进程已发出的 chunks 写入；只有外部进程停机隔离后才安全。不得混用忽略 ownership 的旧版与新版本。
 
+dry-run 可以使用领取所有权之前的可见性快照；**apply 必须在独占 claim 之后重新读取 `files`**。若可见性已经变化，或在需要可见文件时 `verifyVisibleFile` 无法确认，脚本失败并保留 `recovering` 所有权。
+
+排查未知 ID 的残留 chunks 时，使用只读巡检脚本 `scripts/maintenance/gridfs-inspect-orphans.cjs`。它按已有 `{ files_id, n }` 索引分页扫描 `<bucket>.chunks`，在分类时重新核对 `files` 和 `uploads`，报告 `visible_file`、`owned` 或 `candidate_orphan`。没有 apply 模式，不会删除，也不会按文档年龄删除。它不是公开的 `GridFSBucket` API。
+
+```sh
+export MONSQLIZE_RECOVERY_MONGODB_URI='<从密钥管理系统读取的 MongoDB URI>'
+node scripts/maintenance/gridfs-inspect-orphans.cjs --db=database --bucket=fs --page-size=200
+```
+
+
 ## 上线和回滚步骤
 
 1. 冻结所有 GridFS 写入，禁止新请求和自动重启，核查所有旧版 Writer 已排空；保留相关运行实例、进程、队列、版本和时间证据。

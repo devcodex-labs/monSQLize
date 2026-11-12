@@ -6,7 +6,14 @@
 
 The ownership registry is the per-bucket `<bucket>.uploads` collection. A reservation excludes ordinary upload, uploadStream, resumable append/finalize/abort, delete, rename and orphan cleanup for the same ObjectId. A missing file document **does not** prove its chunks are orphaned: an ordinary upload may still be writing, or GridFS driver delete may have removed the files document before chunks. Recovering while an old writer can resume can destroy new data, even with a token-CAS. The maintenance process cannot prove cluster/process shutdown on its own.
 
-The script `scripts/maintenance/gridfs-recover.cjs` uses a default read-only preview, exact state/token/timestamp checks, a persisted `recovering` ownership claim, verified preservation of committed visible chunks, and an append-only-by-intent audit collection `<bucket>.ownership_recovery_audit`. It never performs a time-based lock steal.
+The script `scripts/maintenance/gridfs-recover.cjs` uses a default read-only preview, exact state/token/timestamp checks, a persisted `recovering` ownership claim, verified preservation of committed visible chunks, and an append-only-by-intent audit collection `<bucket>.ownership_recovery_audit`. It never performs a time-based lock steal. Dry-run plans may use a pre-claim visibility snapshot; **apply always re-reads `files` after the exclusive claim**. If visibility changed, or `verifyVisibleFile` cannot confirm a visible file that the plan required, the tool fails closed and leaves the `recovering` owner in place.
+
+To survey unknown-id leftover chunks without deleting anything, use the inspect-only reporter `scripts/maintenance/gridfs-inspect-orphans.cjs`. It walks `<bucket>.chunks` in index order with range pagination, re-checks `files` and `uploads` for each `files_id` at classification time, and reports `visible_file`, `owned`, or `candidate_orphan`. It has no apply mode, does not delete, and does not use document age as a deletion criterion. It is not part of the public `GridFSBucket` API.
+
+```sh
+export MONSQLIZE_RECOVERY_MONGODB_URI='<MongoDB URI from the secrets manager>'
+node scripts/maintenance/gridfs-inspect-orphans.cjs --db=my_database --bucket=fs --page-size=200
+```
 
 ## Deployment and rollback gates (required)
 

@@ -1,0 +1,139 @@
+import type { Readable } from 'node:stream';
+import { invalidArgument } from './errors';
+import { chunkCount, chunkLengthAt } from './validate';
+
+export interface StreamedChunk {
+    index: number;
+    bytes: Buffer;
+}
+
+function badChunkSize(): never {
+    throw invalidArgument('appendChunks', 'data', 'chunk payload must match the session chunk size');
+}
+
+/**
+ * Consume a Readable into GridFS-sized slices without buffering the whole payload.
+ * Retention is limited to a residual shorter than the next expected slice plus the
+ * current incoming `read()` buffer. The stream is not pulled again until the
+ * current complete slices have been awaited, so Node backpressure applies.
+ */
+export async function consumeReadableChunks(
+    source: Readable,
+    fromChunk: number,
+    length: number,
+    chunkSizeBytes: number,
+    onChunk: (slice: StreamedChunk) => Promise<void>,
+    onBufferedBytes?: (bytes: number) => void,
+): Promise<{ bytesAccepted: number }> {
+    const total = chunkCount(length, chunkSizeBytes);
+    let residual = Buffer.alloc(0);
+    let index = fromChunk;
+    let bytesAccepted = 0;
+    let ended = false;
+    let busy = false;
+    let settled = false;
+    let pending = false;
+
+    const report = (incoming = 0): void => {
+        onBufferedBytes?.(residual.length + incoming);
+    };
+
+    const emit = async (slice: StreamedChunk): Promise<void> => {
+        report();
+        await onChunk(slice);
+        bytesAccepted += slice.bytes.length;
+        index += 1;
+    };
+
+    const takeFrom = async (incoming: Buffer): Promise<void> => {
+        let offset = 0;
+        report(incoming.length);
+        while (index < total && offset < incoming.length) {
+            const want = chunkLengthAt(index, length, chunkSizeBytes);
+            const have = residual.length + (incoming.length - offset);
+            if (have < want) {
+                const rest = incoming.subarray(offset);
+                residual = residual.length === 0
+                    ? Buffer.from(rest)
+                    : Buffer.concat([residual, rest]);
+                report();
+                return;
+            }
+            let bytes: Buffer;
+            if (residual.length === 0) {
+                bytes = Buffer.from(incoming.subarray(offset, offset + want));
+                offset += want;
+            } else {
+                const need = want - residual.length;
+                bytes = Buffer.concat([residual, incoming.subarray(offset, offset + need)]);
+                residual = Buffer.alloc(0);
+                offset += need;
+            }
+            await emit({ index, bytes });
+        }
+        if (index >= total && offset < incoming.length) badChunkSize();
+        report();
+    };
+
+    await new Promise<void>((resolve, reject) => {
+        const finish = (error?: unknown): void => {
+            if (settled) return;
+            settled = true;
+            if (error) reject(error);
+            else resolve();
+        };
+
+        const pump = async (): Promise<void> => {
+            if (settled || busy) return;
+            busy = true;
+            try {
+                let incoming: Buffer | string | null;
+                while ((incoming = source.read() as Buffer | string | null) !== null) {
+                    await takeFrom(Buffer.isBuffer(incoming) ? incoming : Buffer.from(incoming));
+                }
+                if (ended || source.readableEnded) {
+                    ended = true;
+                    if (residual.length > 0) badChunkSize();
+                }
+            } finally {
+                busy = false;
+            }
+        };
+
+        const run = (): void => {
+            if (settled) return;
+            if (busy) {
+                pending = true;
+                return;
+            }
+            pump().then(() => {
+                if (settled) return;
+                if (pending) {
+                    pending = false;
+                    run();
+                    return;
+                }
+                // Only the pump that observed a clean end may resolve. A stale
+                // success handler must not hide a later residual/size failure.
+                if ((ended || source.readableEnded) && residual.length === 0) finish();
+            }, (error: unknown) => finish(error));
+        };
+
+        source.on('readable', run);
+        source.on('end', () => {
+            ended = true;
+            run();
+        });
+        source.on('error', (error) => finish(error));
+        run();
+        if (!ended && source.readableEnded) {
+            ended = true;
+            run();
+        }
+    }).finally(() => {
+        if (!source.destroyed && !source.readableEnded) source.destroy();
+    });
+
+    if (bytesAccepted === 0) badChunkSize();
+    return { bytesAccepted };
+}

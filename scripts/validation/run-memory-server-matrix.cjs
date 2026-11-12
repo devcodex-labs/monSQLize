@@ -49,6 +49,8 @@ const integrationSourceSuites = [
     'test/integration/gridfs/gridfs-scan-regressions.test.js',
     'test/integration/gridfs/gridfs-ownership-regressions.test.js',
     'test/integration/gridfs/gridfs-stale-recovery.test.js',
+    'test/integration/gridfs/gridfs-remaining-issues.test.js',
+    'test/integration/gridfs/gridfs-inspect-orphans.test.js',
 ];
 const integrationSuites = integrationSourceSuites.map((suite) => path.join(testDistRoot, suite));
 const compatibilitySuites = [

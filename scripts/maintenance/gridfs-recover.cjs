@@ -243,6 +243,13 @@ async function recoverGridFSOwnership(input) {
     try {
         const chunks = db.collection(bucket + '.chunks');
         const files = db.collection(bucket + '.files');
+        // Dry-run may use the pre-claim snapshot. Apply must re-read visibility
+        // after the exclusive claim and fail closed if it changed.
+        const visibleAfter = await files.findOne({ _id: id }, { projection: { _id: 1 } });
+        const visibleNow = !!visibleAfter;
+        if (visibleNow !== !!visible) {
+            fail('File visibility changed after recovery claim; preserve recovering ownership');
+        }
         if (sourceStatus === 'activeAppend') {
             const nextChunk = await contiguousChunkPrefix(db, bucket, id, doc);
             const changed = await uploads.updateOne(held, {
@@ -251,7 +258,7 @@ async function recoverGridFSOwnership(input) {
                 $unset: { activeAppend: '', recovery: '' },
             });
             if (changed.matchedCount !== 1) fail('Lost recovery claim while restoring append');
-        } else if (sourceStatus === 'finalizing' && !visible) {
+        } else if (sourceStatus === 'finalizing' && !visibleNow) {
             const changed = await uploads.updateOne(held, {
                 $set: { status: 'pending', updatedAt: new Date(),
                     expiresAt: new Date(Date.now() + TTL_MS) },
@@ -263,16 +270,18 @@ async function recoverGridFSOwnership(input) {
             // unless this is an explicitly quiesced, retained "deleting" owner.
             if (sourceStatus === 'finalizing') {
                 verification = await verifyVisibleFile(db, bucket, id, doc, doc);
-            } else if ((sourceStatus === 'uploading' || sourceStatus === 'renaming') && visible) {
+                if (!verification) fail('Visible file could not be verified after claim; preserve recovering ownership');
+            } else if ((sourceStatus === 'uploading' || sourceStatus === 'renaming') && visibleNow) {
                 verification = await verifyVisibleFile(db, bucket, id, null, doc);
-            } else if (sourceStatus === 'renaming' && !visible) {
+                if (!verification) fail('Visible file could not be verified after claim; preserve recovering ownership');
+            } else if (sourceStatus === 'renaming' && !visibleNow) {
                 fail('Renaming owner has no visible file; preserve ownership for manual inspection');
             }
             if (sourceStatus === 'deleting') {
                 await files.deleteOne({ _id: id });
                 await chunks.deleteMany({ files_id: id });
             } else if ((sourceStatus === 'uploading' || sourceStatus === 'cleaning' ||
-                        sourceStatus === 'aborting') && !visible) {
+                        sourceStatus === 'aborting') && !visibleNow) {
                 await chunks.deleteMany({ files_id: id });
             }
             const removed = await uploads.deleteOne(held);
