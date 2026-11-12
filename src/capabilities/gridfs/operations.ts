@@ -13,6 +13,7 @@ import type {
     GridFSUploadStreamOptions,
 } from './types';
 import { readReadable, releaseReadable } from './bytes';
+import { claimOwner, cleanupFailedDirect, releaseOwner } from './ownership';
 import { fileExists, fileNotFound, integrityMismatch, invalidArgument, isDuplicateKey, isNamespaceNotFound, mapDriverError, targetOf } from './errors';
 import { chunksCollectionName, filesCollectionName, toFileInfo, uploadsCollectionName } from './normalize';
 import {
@@ -81,12 +82,43 @@ export async function uploadFile(
     }
 
     const id = options.id ?? new ObjectId();
-    const writeOptions = { chunkSizeBytes, metadata, contentType: options.contentType };
-    if (payload) await writeBuffer(ctx, id, filename, payload, writeOptions);
-    else if (source) await writeReadable(ctx, id, filename, source, writeOptions);
-    const info = await getFile(ctx, id);
-    if (!info) throw fileNotFound('upload', ctx, { id, filename });
-    return info;
+    // One atomic reservation excludes all other GridFS writers/deleters under this ID.
+    // The visible-file preflight above is not sufficient across collections or processes.
+    let owner: Awaited<ReturnType<typeof claimOwner>>;
+    try {
+        owner = await claimOwner(ctx, id, 'direct', 'upload');
+    } catch (error) {
+        if (source) releaseReadable(source);
+        throw error;
+    }
+    try {
+        if (await getFile(ctx, id)) {
+            if (source) releaseReadable(source);
+            throw fileExists('upload', ctx, { id, filename, sha256: options.sha256 });
+        }
+        const writeOptions = { chunkSizeBytes, metadata, contentType: options.contentType };
+        if (payload) await writeBuffer(ctx, id, filename, payload, writeOptions);
+        else if (source) await writeReadable(ctx, id, filename, source, writeOptions);
+        const info = await getFile(ctx, id);
+        if (!info) throw fileNotFound('upload', ctx, { id, filename });
+        // A successful upload is committed even if removing its reservation fails.
+        // Keep the durable reservation for explicit recovery rather than deleting the file.
+        try {
+            await releaseOwner(ctx, owner, 'upload');
+        } catch (error) {
+            ctx.logger?.warn?.('[gridfs] upload committed but reservation cleanup failed', { bucket: ctx.bucketName, id: String(id), error });
+        }
+        return info;
+    } catch (error) {
+        // Never release ownership before cleaning this upload's incomplete chunks.
+        // A failed cleanup intentionally leaves a durable reservation behind.
+        try {
+            await cleanupFailedDirect(ctx, owner);
+        } catch (cleanupError) {
+            ctx.logger?.warn?.('[gridfs] upload reservation retained after cleanup failure', { bucket: ctx.bucketName, id: String(id), error: cleanupError });
+        }
+        throw error;
+    }
 }
 
 export function openUploadStream(ctx: GridFSContext, filename: string, opts?: GridFSUploadStreamOptions): Writable & { id: ObjectId; done: Promise<GridFSFileInfo> } {
@@ -104,10 +136,10 @@ export function openUploadStream(ctx: GridFSContext, filename: string, opts?: Gr
     input.on('error', () => undefined);
     const done = (async (): Promise<GridFSFileInfo> => {
         let target: GridFSDriverStream | undefined;
+        let owner: Awaited<ReturnType<typeof claimOwner>> | undefined;
         try {
-            await ctx.indexes.ensure();
-            // Refuse an id that already belongs to a file before writing anything (same rule as upload()),
-            // so failure cleanup can never delete data this call did not create.
+            owner = await claimOwner(ctx, id, 'direct', 'uploadStream');
+            // Check again after the ID is reserved, in case an older unreserved file exists.
             if (await getFile(ctx, id)) {
                 throw fileExists('uploadStream', ctx, { id, filename, sha256: options.sha256 });
             }
@@ -120,11 +152,22 @@ export function openUploadStream(ctx: GridFSContext, filename: string, opts?: Gr
             await pipeline(input, target);
             const info = await getFile(ctx, id);
             if (!info) throw fileNotFound('uploadStream', ctx, { id, filename });
+            try {
+                await releaseOwner(ctx, owner, 'uploadStream');
+            } catch (error) {
+                ctx.logger?.warn?.('[gridfs] uploadStream committed but reservation cleanup failed', { bucket: ctx.bucketName, id: String(id), error });
+            }
             return info;
         } catch (error) {
             if (target) await cleanupFailedWrite(ctx, id, target, error);
+            if (owner) {
+                try {
+                    await cleanupFailedDirect(ctx, owner);
+                } catch (cleanupError) {
+                    ctx.logger?.warn?.('[gridfs] uploadStream reservation retained after cleanup failure', { bucket: ctx.bucketName, id: String(id), error: cleanupError });
+                }
+            }
             const mapped = mapDriverError(error, 'uploadStream', ctx, { id, filename });
-            // Fail the returned Writable too, so an upstream pipe() stops instead of hanging on backpressure.
             if (!input.destroyed) input.destroy(mapped);
             throw mapped;
         }
@@ -198,27 +241,49 @@ export async function findFiles(ctx: GridFSContext, filter?: GridFSFindFilesFilt
 
 export async function deleteFile(ctx: GridFSContext, id: ObjectId, opts?: GridFSDeleteOptions): Promise<void> {
     assertObjectId(id, 'delete', 'id');
-    const existing = await getFile(ctx, id);
-    if (!existing) {
-        if (opts?.ignoreMissing) return;
-        throw fileNotFound('delete', ctx, { id });
-    }
+    const owner = await claimOwner(ctx, id, 'delete', 'delete');
+    let driverInvoked = false;
     try {
-        await ctx.driver.delete(id);
+        const existing = await getFile(ctx, id);
+        if (!existing) {
+            await releaseOwner(ctx, owner, 'delete');
+            if (opts?.ignoreMissing) return;
+            throw fileNotFound('delete', ctx, { id });
+        }
+        // Driver deletes files first, then chunks. Keep ownership until both finish;
+        // otherwise a replacement upload can lose its chunks to this old delete.
+        driverInvoked = true;
+        try {
+            await ctx.driver.delete(id);
+        } catch (error) {
+            throw mapDriverError(error, 'delete', ctx, { id, filename: existing.filename });
+        }
+        await releaseOwner(ctx, owner, 'delete');
     } catch (error) {
-        throw mapDriverError(error, 'delete', ctx, { id, filename: existing.filename });
+        // After driver invocation, an ambiguous partial deletion must retain the
+        // durable reservation for explicit recovery, never unlock a replacement.
+        if (!driverInvoked) {
+            try { await releaseOwner(ctx, owner, 'delete'); } catch { /* Preserve initial error. */ }
+        }
+        throw error;
     }
 }
 
 export async function renameFile(ctx: GridFSContext, id: ObjectId, filename: string): Promise<void> {
     assertObjectId(id, 'rename', 'id');
     assertFilename(filename, 'rename');
-    const existing = await getFile(ctx, id);
-    if (!existing) throw fileNotFound('rename', ctx, { id, filename });
+    const owner = await claimOwner(ctx, id, 'rename', 'rename');
     try {
-        await ctx.driver.rename(id, filename);
-    } catch (error) {
-        throw mapDriverError(error, 'rename', ctx, { id, filename });
+        const existing = await getFile(ctx, id);
+        if (!existing) throw fileNotFound('rename', ctx, { id, filename });
+        try {
+            await ctx.driver.rename(id, filename);
+        } catch (error) {
+            throw mapDriverError(error, 'rename', ctx, { id, filename });
+        }
+    } finally {
+        // Rename never removes chunks and is safe to unlock after driver settles.
+        await releaseOwner(ctx, owner, 'rename');
     }
 }
 

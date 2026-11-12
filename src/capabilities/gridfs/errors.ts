@@ -26,6 +26,7 @@ const GRIDFS_CODES = new Set<string>([
     ErrorCodes.GRIDFS_UPLOAD_INCOMPLETE,
     ErrorCodes.GRIDFS_RESUME_MISMATCH,
     ErrorCodes.GRIDFS_RANGE_INVALID,
+    ErrorCodes.GRIDFS_UPLOAD_BUSY,
     ErrorCodes.INVALID_ARGUMENT,
     ErrorCodes.INVALID_OPERATION,
     ErrorCodes.NOT_CONNECTED,
@@ -83,6 +84,12 @@ export function integrityMismatch(operation: string, bucket: string, fields: { u
         'GridFS content did not match the expected length or sha256',
         { operation, bucket, uploadId: fields.uploadId, expected: fields.expected, actual: fields.actual },
     );
+}
+
+export function uploadBusy(operation: string, ctx: Pick<GridFSContext, 'bucketName'>, uploadId: ObjectId): MonSQLizeError {
+    return gridfsError(ErrorCodes.GRIDFS_UPLOAD_BUSY, 'GridFS file id is owned by another operation', {
+        operation, bucket: ctx.bucketName, uploadId,
+    });
 }
 
 export function uploadIncomplete(bucket: string, uploadId: ObjectId, missingChunks: number[]): MonSQLizeError {

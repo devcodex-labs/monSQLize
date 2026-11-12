@@ -99,9 +99,12 @@ describe('gridfs scan regressions (2026-11-02)', () => {
             try {
                 const appending = bucket.appendChunks(session.uploadId, 0, data);
                 await hit;
-                await bucket.abortResumableUpload(session.uploadId);
+                // Abort cannot delete chunks while append owns the upload.
+                await assert.rejects(bucket.abortResumableUpload(session.uploadId),
+                    (error: unknown) => codeOf(error) === 'GRIDFS_UPLOAD_BUSY');
                 release();
-                await assert.rejects(appending, (error: unknown) => codeOf(error) === 'GRIDFS_FILE_NOT_FOUND');
+                await appending;
+                await bucket.abortResumableUpload(session.uploadId);
             } finally {
                 Collection.prototype.insertOne = original;
             }
@@ -117,14 +120,14 @@ describe('gridfs scan regressions (2026-11-02)', () => {
             await bucket.drop();
             await bucket.ensureIndexes();
             assert.deepEqual(await indexNames(db, 'b.chunks'), ['_id_', 'files_id_1_n_1']);
-            assert.deepEqual(await indexNames(db, 'b.uploads'), ['_id_', 'createdAt_1']);
+            assert.deepEqual(await indexNames(db, 'b.uploads'), ['_id_', 'expiresAt_1']);
         });
     });
 
     it('fails the uploadStream Writable when it fails before the driver stream opens', { timeout: 30_000 }, async () => {
         await withRuntime('gridfs_scan_preopen', async (runtime, db) => {
             // A conflicting TTL index makes ensureIndexes fail before any driver stream exists.
-            await db.collection('b.uploads').createIndex({ createdAt: 1 }, { expireAfterSeconds: 60 });
+            await db.collection('b.uploads').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 60 });
             const bucket = runtime.gridfs('b');
             const writable = bucket.uploadStream('x.bin');
             const errored = new Promise<unknown>((resolve) => writable.once('error', resolve));

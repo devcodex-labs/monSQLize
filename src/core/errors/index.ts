@@ -38,6 +38,7 @@ export const ErrorCodes = {
     GRIDFS_UPLOAD_INCOMPLETE: 'GRIDFS_UPLOAD_INCOMPLETE',
     GRIDFS_RESUME_MISMATCH: 'GRIDFS_RESUME_MISMATCH',
     GRIDFS_RANGE_INVALID: 'GRIDFS_RANGE_INVALID',
+    GRIDFS_UPLOAD_BUSY: 'GRIDFS_UPLOAD_BUSY',
     /** Relation select is outside the supported inclusion-only top-level contract. */
     INVALID_RELATION_SELECT: 'INVALID_RELATION_SELECT',
     /** A protected delete found declared Model relations that still reference its target. */

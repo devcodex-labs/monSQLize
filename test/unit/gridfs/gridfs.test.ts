@@ -40,6 +40,12 @@ function matches(doc: Doc, filter: Doc): boolean {
         if (expected && typeof expected === 'object' && '$gte' in (expected as Doc)) {
             return typeof actual === 'number' && actual >= (expected as { $gte: number }).$gte;
         }
+        if (expected && typeof expected === 'object' && '$exists' in (expected as Doc)) {
+            return (actual !== undefined) === (expected as { $exists: boolean }).$exists;
+        }
+        if (expected && typeof expected === 'object' && '$type' in (expected as Doc)) {
+            return (expected as { $type: string }).$type === 'date' && actual instanceof Date;
+        }
         return actual === expected;
     });
 }
@@ -101,14 +107,28 @@ class MemoryCollection {
         return { insertedId: doc._id };
     }
 
-    async updateOne(filter: Doc, update: { $set?: Doc; $max?: Doc }) {
+    async updateOne(filter: Doc, update: { $set?: Doc; $max?: Doc; $unset?: Doc }) {
         const row = this.docs.find((doc) => matches(doc, filter));
         if (!row) return { matchedCount: 0 };
         Object.assign(row, update.$set ?? {});
+        for (const key of Object.keys(update.$unset ?? {})) delete row[key];
         for (const [key, value] of Object.entries(update.$max ?? {})) {
             if (row[key] === undefined || (value as number) > row[key]) row[key] = value;
         }
         return { matchedCount: 1 };
+    }
+
+    async updateMany(filter: Doc, update: Doc | Doc[]) {
+        const rows = this.docs.filter((doc) => matches(doc, filter));
+        for (const row of rows) {
+            if (Array.isArray(update)) {
+                const start = row.updatedAt instanceof Date ? row.updatedAt : row.createdAt as Date;
+                row.expiresAt = new Date(start.getTime() + 604800 * 1000);
+            } else {
+                Object.assign(row, update.$set ?? {});
+            }
+        }
+        return { matchedCount: rows.length };
     }
 
     async deleteOne(filter: Doc) {
@@ -125,8 +145,15 @@ class MemoryCollection {
     }
 
     async createIndex(keys: Doc, options?: Doc) {
-        this.indexes.push({ key: keys, ...(options ?? {}) });
-        return 'index';
+        const name = Object.entries(keys).map(([key, direction]) => `${key}_${direction}`).join('_');
+        this.indexes.push({ name, key: keys, ...(options ?? {}) });
+        return name;
+    }
+
+    async dropIndex(name: string) {
+        const index = this.indexes.findIndex((entry) => entry.name === name);
+        if (index < 0) throw Object.assign(new Error('index not found'), { code: 27 });
+        this.indexes.splice(index, 1);
     }
 
     async drop() {
@@ -418,7 +445,7 @@ describe('gridfs bucket', () => {
         await bucket.ensureIndexes();
         const indexes = db.collection('fs.files').indexes.concat(db.collection('fs.chunks').indexes, db.collection('fs.uploads').indexes);
         assert.equal(indexes.length, 4);
-        assert.ok(indexes.some((index) => index.expireAfterSeconds === 604800));
+        assert.ok(indexes.some((index) => index.expireAfterSeconds === 0));
         assert.ok(indexes.some((index) => index.key?.['metadata.sha256'] === 1));
     });
 

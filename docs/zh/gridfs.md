@@ -1,6 +1,6 @@
 # GridFS
 
-实例和 Model 助手用于存取 MongoDB GridFS 文件。已发布的 npm 包仍是 3.4.0；本 API 位于该版本之后的源码中，还不是已发布的 3.5.0 包。
+实例和 Model 助手用于存取 MongoDB GridFS 文件。GridFS API 首次发布于 monSQLize v3.5.0。本文档描述当前源码检出版本；使用较新的生命周期行为前应核对实际安装的 npm 版本及其变更记录。
 
 GridFS 是普通集合上的客户端约定（`<bucket>.files` 与 `<bucket>.chunks`），不依赖 Search 或 Vector Search。集成测试使用 `mongodb-memory-server` 7.0.37。正式服务器矩阵仍是 MongoDB 7.x 与 8.x。更早的服务器（包括 4.x）未经验证。
 
@@ -86,6 +86,7 @@ await bucket.abortResumableUpload(session.uploadId);
 
 - `fromChunk` 超过从 0 开始的连续前缀时，抛出 `GRIDFS_RESUME_MISMATCH`，并带上 `expectedNextChunk`。
 - 用相同字节重放已写入的分片是幂等的，不会把 `nextChunk` 往回退。
+- 同一 uploadId 的并发 append 使用持久化所有权串行化；append、finalize 或 abort 遇到其他活跃操作时返回 `GRIDFS_UPLOAD_BUSY`。
 - 用不同字节重放已写入的分片会抛出 `GRIDFS_RESUME_MISMATCH`。
 - 只要 payload 含有新分片，`fromChunk` 就必须等于 `nextChunk`。从更早的序号开始会抛出 `GRIDFS_RESUME_MISMATCH`，并且不会写入。
 - `{ files_id, n }` 唯一索引冲突只有在已存字节相同的时候才算成功。
@@ -94,9 +95,11 @@ await bucket.abortResumableUpload(session.uploadId);
 
 会话仍在时，重试 `finalizeResumableUpload` 是幂等的：若同 id 的文件已可见，且其 `metadata.sha256` 与长度都和会话一致，调用直接返回该文件并删除会话。sha256 或长度不同的文件仍抛 `GRIDFS_FILE_EXISTS`。会话已不存在时（上一次 finalize 已完整成功、已 abort 或 TTL 过期），没有可比对的摘要，重试抛 `GRIDFS_FILE_NOT_FOUND`，可用 `getFile(uploadId)` 确认结果。
 
-`abortResumableUpload` 删除会话；如果还没有可见的 files 文档，同时删除该上传的 chunks。会话不存在或已经中止时直接成功，并且仍会删除该 id 下没有可见文件的残留 chunks。对已经可见的文件调用 abort 不会删除该文件的 chunks。
+`abortResumableUpload` 先原子取得 pending 会话的所有权；append 或 finalize 仍在执行时返回 `GRIDFS_UPLOAD_BUSY`，绝不删除其 chunks。取得所有权后删除会话；如果还没有可见的 files 文档，同时删除该上传的 chunks。会话不存在或已经中止时直接成功，并且仍会删除该 id 下没有可见文件的残留 chunks。对已经可见的文件调用 abort 不会删除该文件的 chunks。
 
-`<bucket>.uploads` 在 `createdAt` 上有 TTL 索引，`expireAfterSeconds` 为 604800（7 天）。TTL 只删除上传会话文档，不删除 chunks。不再需要的会话应 abort 或 finalize。会话过期后，`abortResumableUpload(uploadId)` 会清掉残留 chunks；用同一显式 `id` 调 `beginResumableUpload` 也会在新会话开始前清掉它们。
+`<bucket>.uploads` 使用 `{ expiresAt: 1 }` TTL 索引，`expireAfterSeconds: 0`。pending 续传会话在**连续 7 天没有成功 append**时过期，每次成功 append 会刷新过期时间；正在执行的 append/finalize/abort，以及普通上传或删除的所有权记录不设置 TTL，进程异常退出后需确认旧进程停止再显式恢复，不能自动释放导致旧写入复活。MongoDB TTL 是异步清理，且只删除 session，不级联 chunks。已知 uploadId 的孤儿块由 `abortResumableUpload(uploadId)` 在取得独占清理权后回收，或复用同一 id 重新开始续传时清理。旧 `createdAt` TTL 索引会迁移为 `expiresAt`；迁移前必须停止/排空旧版 GridFS 写进程，新旧写入协议混跑不安全。
+
+**故障恢复与迁移：**参阅[运维恢复规程](./gridfs-recovery.md)。恢复默认只预览，必须在全部写入进程确实排空后，核对精确状态/令牌并留下审计记录；禁止直接删除看似过期的所有权。
 
 ## 索引
 
@@ -107,9 +110,9 @@ await bucket.abortResumableUpload(session.uploadId);
 | `<bucket>.files` | `{ filename: 1, uploadDate: 1 }` | |
 | `<bucket>.files` | `{ 'metadata.sha256': 1 }` | 非唯一 |
 | `<bucket>.chunks` | `{ files_id: 1, n: 1 }` | 唯一 |
-| `<bucket>.uploads` | `{ createdAt: 1 }` | `expireAfterSeconds: 604800` |
+| `<bucket>.uploads` | `{ expiresAt: 1 }` | `expireAfterSeconds: 0`；pending 会话空闲 7 天过期 |
 
-读取不会创建索引。被 `writePathPolicy` 拒绝的写入也不会创建。
+读取不会创建索引。被 `writePathPolicy` 拒绝的写入也不会创建。upload、uploadStream、rename、delete 会在 `<bucket>.uploads` 为同一文件 ID 原子取得所有权；其他操作占用 ID 时返回 `GRIDFS_UPLOAD_BUSY`。`drop()` 是整个 bucket 的破坏性维护操作：必须先停止或排空写入，单文件 ID 所有权不能保证与整个 bucket 的 drop 并发安全。
 
 ## writePathPolicy
 
@@ -135,6 +138,7 @@ GridFS 写入的类别是 `gridfs`。命名空间是 `<bucket>.files`，匹配�
 | `GRIDFS_INTEGRITY_MISMATCH` | 字节与 `sha256` 不符，或 finalize 时分片长度不对 |
 | `GRIDFS_UPLOAD_INCOMPLETE` | finalize 发现缺口。`details[0].missingChunks` 列出缺少的序号 |
 | `GRIDFS_RESUME_MISMATCH` | `fromChunk` 超前于连续前缀，或重放的分片内容不同 |
+| `GRIDFS_UPLOAD_BUSY` | 其他 append/finalize/abort/upload/delete 操作正在占用该 ID，必须等待完成或在确认旧进程停止后显式恢复 |
 | `GRIDFS_RANGE_INVALID` | `start` / `end` 不是合法的半开区间 |
 | `INVALID_ARGUMENT` | 文件名、bucket 名、分片大小、摘要、metadata 键或分片 payload 不合法 |
 | `INVALID_OPERATION` | `writePathPolicy` 阻断了调用 |

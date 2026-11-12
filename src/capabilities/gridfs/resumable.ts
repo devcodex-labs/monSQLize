@@ -1,8 +1,9 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Readable } from 'node:stream';
 import { ObjectId } from 'mongodb';
 import type { AppendChunksResult, BeginResumableUploadOptions, BeginResumableUploadResult, GridFSContext, GridFSFileInfo, GridFSUploadSession } from './types';
-import { fileExists, fileNotFound, integrityMismatch, invalidArgument, isDuplicateKey, mapDriverError, resumeMismatch, uploadIncomplete } from './errors';
+import { fileExists, fileNotFound, integrityMismatch, invalidArgument, isDuplicateKey, mapDriverError, resumeMismatch, uploadBusy, uploadIncomplete } from './errors';
+import { cleanupOrphanById } from './ownership';
 import { binaryToBuffer, chunksCollectionName, filesCollectionName, sameBytes, toFileInfo, uploadsCollectionName } from './normalize';
 import {
     assertChunkSize,
@@ -55,10 +56,12 @@ export async function beginResumableUpload(ctx: GridFSContext, filename: string,
             chunkSizeBytes,
             ...(metadata ? { metadata } : {}),
             ...(opts.contentType !== undefined ? { contentType: opts.contentType } : {}),
+            kind: 'resumable',
             status: 'pending',
             nextChunk: 0,
             createdAt: now,
             updatedAt: now,
+            expiresAt: new Date(now.getTime() + 604800 * 1000),
         });
     } catch (error) {
         throw mapDriverError(error, 'beginResumableUpload', ctx, { uploadId, filename });
@@ -83,88 +86,140 @@ export async function appendChunks(
     assertNonNegativeInteger(fromChunk, 'appendChunks', 'fromChunk');
     const payload = await payloadBytes(data);
     if (payload.length === 0) throw badChunkSize();
-    const session = await requirePending(ctx, uploadId, 'appendChunks');
-    const nextChunk = await contiguousNext(ctx, uploadId, session.nextChunk);
-    if (fromChunk > nextChunk) {
-        throw resumeMismatch('appendChunks', ctx.bucketName, { uploadId, fromChunk, expectedNextChunk: nextChunk });
-    }
-
-    const slices = planChunkSlices(payload, fromChunk, session.length, session.chunkSizeBytes);
-    const lastIndex = slices[slices.length - 1].index;
-    if (lastIndex >= nextChunk && fromChunk !== nextChunk) {
-        throw resumeMismatch('appendChunks', ctx.bucketName, { uploadId, fromChunk, expectedNextChunk: nextChunk });
-    }
-    for (const slice of slices) {
-        if (slice.index < nextChunk) await assertStoredChunk(ctx, uploadId, slice.index, slice.bytes, nextChunk);
-        else await writeChunk(ctx, uploadId, slice.index, slice.bytes, nextChunk);
-    }
-
-    const advanced = await contiguousNext(ctx, uploadId, nextChunk);
-    let matched: number;
+    const uploads = ctx.db.collection(uploadsCollectionName(ctx.bucketName));
+    const token = randomUUID();
+    // A durable single-append claim excludes finalize, abort, and concurrent
+    // appenders. Remove the expiry while this process is actively writing.
+    let claimed: number;
     try {
-        const updated = await ctx.db.collection(uploadsCollectionName(ctx.bucketName)).updateOne(
-            { _id: uploadId, status: 'pending' },
-            { $max: { nextChunk: advanced }, $set: { updatedAt: new Date() } },
+        const update = await uploads.updateOne(
+            { _id: uploadId, status: 'pending', activeAppend: { $exists: false } },
+            { $set: { activeAppend: { token, startedAt: new Date() }, updatedAt: new Date() }, $unset: { expiresAt: '' } },
         );
-        matched = updated.matchedCount;
+        claimed = update.matchedCount;
     } catch (error) {
         throw mapDriverError(error, 'appendChunks', ctx, { uploadId });
     }
-    if (matched === 0) {
-        // The session was aborted (or expired) while this call was writing; do not leave its chunks behind.
-        await removeInvisibleChunks(ctx, uploadId, 'appendChunks');
-        throw fileNotFound('appendChunks', ctx, { id: uploadId });
+    if (!claimed) {
+        const existing = await uploads.findOne({ _id: uploadId });
+        if (!existing) throw fileNotFound('appendChunks', ctx, { id: uploadId });
+        throw uploadBusy('appendChunks', ctx, uploadId);
     }
-    return { nextChunk: advanced, bytesAccepted: payload.length };
+    try {
+        const session = await requireSession(ctx, uploadId, 'appendChunks');
+        const nextChunk = await contiguousNext(ctx, uploadId, session.nextChunk);
+        if (fromChunk > nextChunk) {
+            throw resumeMismatch('appendChunks', ctx.bucketName, { uploadId, fromChunk, expectedNextChunk: nextChunk });
+        }
+        const slices = planChunkSlices(payload, fromChunk, session.length, session.chunkSizeBytes);
+        const lastIndex = slices[slices.length - 1].index;
+        if (lastIndex >= nextChunk && fromChunk !== nextChunk) {
+            throw resumeMismatch('appendChunks', ctx.bucketName, { uploadId, fromChunk, expectedNextChunk: nextChunk });
+        }
+        for (const slice of slices) {
+            if (slice.index < nextChunk) await assertStoredChunk(ctx, uploadId, slice.index, slice.bytes, nextChunk);
+            else await writeChunk(ctx, uploadId, slice.index, slice.bytes, nextChunk);
+        }
+        const advanced = await contiguousNext(ctx, uploadId, nextChunk);
+        const completed = await uploads.updateOne(
+            { _id: uploadId, status: 'pending', 'activeAppend.token': token },
+            {
+                $max: { nextChunk: advanced },
+                $set: { updatedAt: new Date(), expiresAt: new Date(Date.now() + 604800 * 1000) },
+                $unset: { activeAppend: '' },
+            },
+        );
+        if (!completed.matchedCount) throw uploadBusy('appendChunks', ctx, uploadId);
+        return { nextChunk: advanced, bytesAccepted: payload.length };
+    } catch (error) {
+        // The worker has stopped writing. Releasing only its own token allows
+        // the next append to reconcile partial chunks idempotently. If release
+        // itself fails the persistent claim remains for explicit recovery.
+        try {
+            await uploads.updateOne(
+                { _id: uploadId, status: 'pending', 'activeAppend.token': token },
+                { $unset: { activeAppend: '' }, $set: { updatedAt: new Date(), expiresAt: new Date(Date.now() + 604800 * 1000) } },
+            );
+        } catch { /* Preserve the original failure; do not remove ownership by ID alone. */ }
+        throw error;
+    }
 }
 
 export async function finalizeResumableUpload(ctx: GridFSContext, uploadId: ObjectId): Promise<GridFSFileInfo> {
     assertObjectId(uploadId, 'finalizeResumableUpload', 'uploadId');
-    const session = await requirePending(ctx, uploadId, 'finalizeResumableUpload');
+    const uploads = ctx.db.collection(uploadsCollectionName(ctx.bucketName));
+    let session = await uploads.findOne({ _id: uploadId }) as unknown as GridFSUploadSession | null;
+    if (!session || (session.kind && session.kind !== 'resumable')) {
+        throw fileNotFound('finalizeResumableUpload', ctx, { id: uploadId });
+    }
+    // An interrupted finalize can be retried when its file is already visible.
+    // A second in-flight finalize is not allowed to race the first.
+    if (session.status === 'finalizing') {
+        const committed = await committedFile(ctx, uploadId, session);
+        if (committed) return committed;
+        throw uploadBusy('finalizeResumableUpload', ctx, uploadId);
+    }
+    if (session.status !== 'pending') throw uploadBusy('finalizeResumableUpload', ctx, uploadId);
+    const transitioned = await uploads.updateOne(
+        { _id: uploadId, status: 'pending', activeAppend: { $exists: false } },
+        { $set: { status: 'finalizing', updatedAt: new Date() }, $unset: { expiresAt: '' } },
+    );
+    if (!transitioned.matchedCount) throw uploadBusy('finalizeResumableUpload', ctx, uploadId);
+    // Only the winner of this CAS may inspect/commit files. Abort will now
+    // fail its pending -> aborting CAS instead of deleting validated chunks.
+    session = await requireSession(ctx, uploadId, 'finalizeResumableUpload');
     const files = ctx.db.collection(filesCollectionName(ctx.bucketName));
     const committed = await committedFile(ctx, uploadId, session);
     if (committed) return committed;
 
-    const expected = chunkCount(session.length, session.chunkSizeBytes);
-    const hash = createHash('sha256');
-    let total = 0;
-    const missing: number[] = [];
-    const cursor = ctx.db.collection(chunksCollectionName(ctx.bucketName)).find({ files_id: uploadId }).sort({ n: 1 });
-    let seen = 0;
-    for await (const doc of cursor) {
-        const n = typeof doc.n === 'number' ? doc.n : -1;
-        while (seen < n && seen < expected) {
+    try {
+        const expected = chunkCount(session.length, session.chunkSizeBytes);
+        const hash = createHash('sha256');
+        let total = 0;
+        const missing: number[] = [];
+        const cursor = ctx.db.collection(chunksCollectionName(ctx.bucketName)).find({ files_id: uploadId }).sort({ n: 1 });
+        let seen = 0;
+        for await (const doc of cursor) {
+            const n = typeof doc.n === 'number' ? doc.n : -1;
+            while (seen < n && seen < expected) {
+                missing.push(seen);
+                seen += 1;
+            }
+            if (n !== seen || n < 0 || n >= expected) {
+                if (n >= 0) missing.push(n);
+                continue;
+            }
+            const bytes = binaryToBuffer(doc.data, 'finalizeResumableUpload');
+            const want = chunkLengthAt(n, session.length, session.chunkSizeBytes);
+            if (bytes.length !== want) {
+                throw integrityMismatch('finalizeResumableUpload', ctx.bucketName, { uploadId, expected: want, actual: bytes.length });
+            }
+            hash.update(bytes);
+            total += bytes.length;
+            seen += 1;
+        }
+        while (seen < expected) {
             missing.push(seen);
             seen += 1;
         }
-        if (n !== seen || n < 0 || n >= expected) {
-            if (n >= 0) missing.push(n);
-            continue;
+        if (missing.length > 0) throw uploadIncomplete(ctx.bucketName, uploadId, missing);
+        if (total !== session.length) {
+            throw integrityMismatch('finalizeResumableUpload', ctx.bucketName, { uploadId, expected: session.length, actual: total });
         }
-        const bytes = binaryToBuffer(doc.data, 'finalizeResumableUpload');
-        const want = chunkLengthAt(n, session.length, session.chunkSizeBytes);
-        if (bytes.length !== want) {
-            throw integrityMismatch('finalizeResumableUpload', ctx.bucketName, {
-                uploadId,
-                expected: want,
-                actual: bytes.length,
-            });
+        const actual = hash.digest('hex');
+        if (actual !== session.sha256) {
+            throw integrityMismatch('finalizeResumableUpload', ctx.bucketName, { uploadId, expected: session.sha256, actual });
         }
-        hash.update(bytes);
-        total += bytes.length;
-        seen += 1;
-    }
-    while (seen < expected) {
-        missing.push(seen);
-        seen += 1;
-    }
-    if (missing.length > 0) throw uploadIncomplete(ctx.bucketName, uploadId, missing);
-    if (total !== session.length) {
-        throw integrityMismatch('finalizeResumableUpload', ctx.bucketName, { uploadId, expected: session.length, actual: total });
-    }
-    const actual = hash.digest('hex');
-    if (actual !== session.sha256) {
-        throw integrityMismatch('finalizeResumableUpload', ctx.bucketName, { uploadId, expected: session.sha256, actual });
+    } catch (error) {
+        // Validation failed before any files insert. Return to pending so the
+        // caller can supply missing/correct chunks; do not erase those chunks.
+        try {
+            await uploads.updateOne(
+                { _id: uploadId, status: 'finalizing' },
+                { $set: { status: 'pending', updatedAt: new Date(), expiresAt: new Date(Date.now() + 604800 * 1000) } },
+            );
+        } catch { /* The retained finalizing state must be recovered explicitly. */ }
+        throw error;
     }
 
     const metadata = withContentType(
@@ -185,13 +240,13 @@ export async function finalizeResumableUpload(ctx: GridFSContext, uploadId: Obje
             const raced = await committedFile(ctx, uploadId, session);
             if (raced) return raced;
         }
+        // Commit outcome may be ambiguous; hold finalizing ownership rather than
+        // allowing an abort or another writer to delete/reuse the same chunks.
         throw mapDriverError(error, 'finalizeResumableUpload', ctx, { uploadId, filename: session.filename });
     }
     try {
-        await ctx.db.collection(uploadsCollectionName(ctx.bucketName)).deleteOne({ _id: uploadId });
+        await uploads.deleteOne({ _id: uploadId, status: 'finalizing' });
     } catch (error) {
-        // The files document is committed, so the upload succeeded. A leftover session cannot add chunks past
-        // the file length, abort keeps a visible file's chunks, and the TTL index removes it later.
         ctx.logger?.warn?.('[gridfs] finalizeResumableUpload could not delete the upload session', { bucket: ctx.bucketName, uploadId: String(uploadId), error });
     }
     let info;
@@ -206,14 +261,32 @@ export async function finalizeResumableUpload(ctx: GridFSContext, uploadId: Obje
 
 export async function abortResumableUpload(ctx: GridFSContext, uploadId: ObjectId): Promise<void> {
     assertObjectId(uploadId, 'abortResumableUpload', 'uploadId');
+    const uploads = ctx.db.collection(uploadsCollectionName(ctx.bucketName));
+    let session: GridFSUploadSession | null;
     try {
-        const uploads = ctx.db.collection(uploadsCollectionName(ctx.bucketName));
-        const session = await uploads.findOne({ _id: uploadId });
-        if (session?.status === 'finalized') return;
-        // A missing session (expired by the TTL, or aborted while an append was in flight) can still leave
-        // chunks; clear them as long as no file is visible under this id.
+        session = await uploads.findOne({ _id: uploadId }) as unknown as GridFSUploadSession | null;
+    } catch (error) {
+        throw mapDriverError(error, 'abortResumableUpload', ctx, { uploadId });
+    }
+    if (!session) {
+        // A TTL-expired session can leave chunks. Take the same exclusive ID
+        // claim as all writers before deleting an orphan.
+        await cleanupOrphanById(ctx, uploadId);
+        return;
+    }
+    if (session.kind && session.kind !== 'resumable') throw uploadBusy('abortResumableUpload', ctx, uploadId);
+    if (session.status === 'finalized') return;
+    if (session.status !== 'pending') throw uploadBusy('abortResumableUpload', ctx, uploadId);
+    const transitioned = await uploads.updateOne(
+        { _id: uploadId, status: 'pending', activeAppend: { $exists: false } },
+        { $set: { status: 'aborting', updatedAt: new Date() }, $unset: { expiresAt: '' } },
+    );
+    if (!transitioned.matchedCount) throw uploadBusy('abortResumableUpload', ctx, uploadId);
+    // Keep the ID locked during both cleanup steps. A failed delete leaves an
+    // aborting record that prevents a second writer from claiming this ID.
+    try {
         await removeInvisibleChunks(ctx, uploadId, 'abortResumableUpload');
-        if (session) await uploads.deleteOne({ _id: uploadId });
+        await uploads.deleteOne({ _id: uploadId, status: 'aborting' });
     } catch (error) {
         throw mapDriverError(error, 'abortResumableUpload', ctx, { uploadId });
     }
@@ -233,7 +306,26 @@ async function committedFile(ctx: GridFSContext, uploadId: ObjectId, session: Gr
         if (info.metadata?.sha256 !== session.sha256 || info.length !== session.length) {
             throw fileExists('finalizeResumableUpload', ctx, { id: uploadId, filename: session.filename, sha256: session.sha256 });
         }
-        await ctx.db.collection(uploadsCollectionName(ctx.bucketName)).deleteOne({ _id: uploadId, status: 'pending' });
+        // Metadata-only SHA can be forged by uploadStream(). Never treat it as
+        // proof of a previous resumable commit without verifying actual chunks.
+        const hash = createHash('sha256');
+        let total = 0;
+        let index = 0;
+        for await (const chunk of ctx.db.collection(chunksCollectionName(ctx.bucketName))
+            .find({ files_id: uploadId }).sort({ n: 1 })) {
+            const bytes = binaryToBuffer(chunk.data, 'finalizeResumableUpload');
+            const expectedSize = chunkLengthAt(index, session.length, session.chunkSizeBytes);
+            if (chunk.n !== index || bytes.length !== expectedSize) {
+                throw integrityMismatch('finalizeResumableUpload', ctx.bucketName, { uploadId, expected: expectedSize, actual: bytes.length });
+            }
+            hash.update(bytes);
+            total += bytes.length;
+            index += 1;
+        }
+        if (index !== chunkCount(session.length, session.chunkSizeBytes) || total !== session.length || hash.digest('hex') !== session.sha256) {
+            throw integrityMismatch('finalizeResumableUpload', ctx.bucketName, { uploadId, expected: session.sha256, actual: 'committed chunks do not match' });
+        }
+        await ctx.db.collection(uploadsCollectionName(ctx.bucketName)).deleteOne({ _id: uploadId, status: 'finalizing' });
         return info;
     } catch (error) {
         // GridFS domain errors (the conflict above) pass through unchanged.
@@ -280,9 +372,9 @@ function planChunkSlices(payload: Buffer, fromChunk: number, length: number, chu
     return slices;
 }
 
-async function requirePending(ctx: GridFSContext, uploadId: ObjectId, operation: string): Promise<GridFSUploadSession> {
+async function requireSession(ctx: GridFSContext, uploadId: ObjectId, operation: string): Promise<GridFSUploadSession> {
     const doc = await ctx.db.collection(uploadsCollectionName(ctx.bucketName)).findOne({ _id: uploadId });
-    if (!doc || doc.status !== 'pending') throw fileNotFound(operation, ctx, { id: uploadId });
+    if (!doc || (doc.kind && doc.kind !== 'resumable')) throw fileNotFound(operation, ctx, { id: uploadId });
     return doc as unknown as GridFSUploadSession;
 }
 

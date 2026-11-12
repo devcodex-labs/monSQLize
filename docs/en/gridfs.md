@@ -1,6 +1,6 @@
 # GridFS
 
-Instance and Model helpers store and read MongoDB GridFS files. The published npm package is still 3.4.0; this API is staged in the source after that release and is not a published 3.5.0 package.
+Instance and Model helpers store and read MongoDB GridFS files. GridFS was introduced in monSQLize v3.5.0. This document describes the source checkout; verify the installed npm version and its changelog before relying on newer lifecycle behavior.
 
 GridFS is a client convention on ordinary collections (`<bucket>.files` and `<bucket>.chunks`). It does not require a Search or Vector Search deployment. Integration coverage uses `mongodb-memory-server` 7.0.37. The formal server matrix remains MongoDB 7.x and 8.x. Older servers, including 4.x, are unverified.
 
@@ -86,6 +86,7 @@ Chunk bytes must follow the session size:
 
 - `fromChunk` past the contiguous prefix throws `GRIDFS_RESUME_MISMATCH` with `expectedNextChunk`.
 - Replaying already stored chunks with the same bytes is idempotent and does not move `nextChunk` backward.
+- Concurrent appends to one uploadId are serialized by a durable session claim. A competing append, finalize, or abort fails with `GRIDFS_UPLOAD_BUSY` while another operation owns the session.
 - Replaying an earlier chunk with different bytes throws `GRIDFS_RESUME_MISMATCH`.
 - A payload that contains any new chunk must start at `nextChunk`. Starting earlier throws `GRIDFS_RESUME_MISMATCH` and writes nothing.
 - A duplicate `{ files_id, n }` insert is accepted only when the stored bytes match.
@@ -94,9 +95,11 @@ Chunk bytes must follow the session size:
 
 Retrying `finalizeResumableUpload` is idempotent while the session still exists: if a file with the same id is already visible and its `metadata.sha256` and length match the session, the call returns that file and deletes the session. A file with a different sha256 or length still throws `GRIDFS_FILE_EXISTS`. Once the session is gone (a finalize that fully succeeded, an abort, or the TTL), there is no digest to compare, so a retry throws `GRIDFS_FILE_NOT_FOUND`; use `getFile(uploadId)` to check the result.
 
-`abortResumableUpload` deletes the session and, when no files document is visible, that upload's chunks. A missing or already aborted session resolves, and any chunks left under that id without a visible file are still deleted. Aborting an id that already has a visible file does not delete that file's chunks.
+`abortResumableUpload` atomically claims a pending session before deleting chunks. It fails with `GRIDFS_UPLOAD_BUSY` while append or finalize owns the session. It deletes the session and, when no files document is visible, that upload's chunks. A missing or already aborted session resolves, and any chunks left under that id without a visible file are still deleted. Aborting an id that already has a visible file does not delete that file's chunks.
 
-`<bucket>.uploads` has a TTL index on `createdAt` with `expireAfterSeconds: 604800` (7 days). The TTL deletes upload session documents only. It does not delete chunks. Abort or finalize sessions that are no longer needed. After a session expired, `abortResumableUpload(uploadId)` removes its leftover chunks, and `beginResumableUpload` with the same explicit `id` clears them before the new session starts.
+`<bucket>.uploads` uses an `expiresAt` TTL index (`expireAfterSeconds: 0`). Pending resumable sessions expire after **7 days without a successful append**; a successful append refreshes their expiry. Active append/finalize/abort claims and direct upload/delete reservations have no TTL and must be recovered explicitly after a crash, otherwise a stale writer could resume after its lock expires. MongoDB TTL deletion is asynchronous and removes only the session document, not chunks. Known orphan chunks can be cleaned with `abortResumableUpload(uploadId)` after an exclusive cleanup claim, or by starting a new resumable upload with the same ID. Existing `createdAt` TTL indexes are migrated to `expiresAt`; legacy pending expiry is derived from their last update. The migration requires stopping/draining old GridFS writers; mixing old and new writer versions is unsafe.
+
+**Crash and migration recovery:** see [the operator runbook](./gridfs-recovery.md). Recovery is dry-run by default and requires verified process quiescence, an exact state/token check and an audit record; do not delete stale-looking reservations manually.
 
 ## Indexes
 
@@ -107,9 +110,9 @@ Retrying `finalizeResumableUpload` is idempotent while the session still exists:
 | `<bucket>.files` | `{ filename: 1, uploadDate: 1 }` | |
 | `<bucket>.files` | `{ 'metadata.sha256': 1 }` | not unique |
 | `<bucket>.chunks` | `{ files_id: 1, n: 1 }` | unique |
-| `<bucket>.uploads` | `{ createdAt: 1 }` | `expireAfterSeconds: 604800` |
+| `<bucket>.uploads` | `{ expiresAt: 1 }` | `expireAfterSeconds: 0`; pending resumable sessions set expiry for seven idle days |
 
-Reads do not create indexes. A write rejected by `writePathPolicy` does not create them either.
+Reads do not create indexes. A write rejected by `writePathPolicy` does not create them either. Every file ID is reserved atomically in `<bucket>.uploads` during upload, uploadStream, rename, and delete. A different operation using the same ID receives `GRIDFS_UPLOAD_BUSY`. `drop()` remains a bucket-wide destructive maintenance operation: stop/drain writers before calling it; the per-ID reservations do not coordinate bucket-wide drop.
 
 ## writePathPolicy
 
@@ -135,6 +138,7 @@ A blocked call throws `INVALID_OPERATION` before any GridFS write. `details[0]` 
 | `GRIDFS_INTEGRITY_MISMATCH` | Bytes do not match `sha256`, or a finalized chunk has the wrong size |
 | `GRIDFS_UPLOAD_INCOMPLETE` | Finalize found gaps. `details[0].missingChunks` lists them |
 | `GRIDFS_RESUME_MISMATCH` | `fromChunk` is ahead of the contiguous prefix, or a replayed chunk differs |
+| `GRIDFS_UPLOAD_BUSY` | Another append/finalize/abort/upload/delete operation owns the ID; do not retry until it finishes or is explicitly recovered |
 | `GRIDFS_RANGE_INVALID` | `start` / `end` is not a legal half-open range |
 | `INVALID_ARGUMENT` | Filename, bucket name, chunk size, digest, metadata key, or chunk payload is invalid |
 | `INVALID_OPERATION` | `writePathPolicy` blocked the call |

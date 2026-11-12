@@ -1,0 +1,48 @@
+name: GridFS Ownership Safety Validation
+
+on:
+  pull_request:
+    branches: [main, 'fix/gridfs-id-ownership-v01']
+
+concurrency:
+  group: gridfs-safety-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gridfs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        mongo-version: ['7.0.37', '8.0.26']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup Node 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22.x'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Cache MongoDB binaries
+        uses: actions/cache@v5
+        with:
+          path: .cache/mongodb-memory-server/binaries
+          key: mongodb-memory-server-${{ runner.os }}-${{ runner.arch }}-gridfs
+      - name: Build
+        run: npm run build && npm run build:tests
+      - name: Execute GridFS safety and compatibility cases
+        env:
+          MONSQLIZE_MEMORY_MONGO_BINARY_VERSION: ${{ matrix.mongo-version }}
+        run: |
+          node --test --test-concurrency=1 \
+            .generated/test-dist/test/unit/gridfs/gridfs.test.js \
+            .generated/test-dist/test/integration/gridfs/gridfs.test.js \
+            .generated/test-dist/test/integration/gridfs/gridfs-scan-regressions.test.js \
+            .generated/test-dist/test/integration/gridfs/gridfs-ownership-regressions.test.js \
+            .generated/test-dist/test/integration/gridfs/gridfs-stale-recovery.test.js

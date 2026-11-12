@@ -82,7 +82,10 @@ export interface GridFSUploadSession {
     chunkSizeBytes: number;
     metadata?: Record<string, unknown>;
     contentType?: string;
-    status: 'pending' | 'aborted';
+    kind?: 'resumable';
+    status: 'pending' | 'finalizing' | 'aborting' | 'finalized' | 'aborted';
+    activeAppend?: { token: string; startedAt: Date };
+    expiresAt?: Date;
     nextChunk: number;
     createdAt: Date;
     updatedAt: Date;
