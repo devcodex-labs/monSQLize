@@ -11,6 +11,18 @@ function sha(data: Buffer): string {
     return createHash('sha256').update(data).digest('hex');
 }
 
+/**
+ * GridFS Driver 6 deletes chunks with { files_id: id }, while Driver 7.8+
+ * uses { files_id: { $eq: id } } for an exact ID match. Match both without
+ * interpreting arbitrary filter objects as valid IDs.
+ */
+function matchesDeletedFileId(value: unknown, expected: ObjectId): boolean {
+    const candidate = value && typeof value === 'object' && '$eq' in value
+        ? (value as { $eq: unknown }).$eq
+        : value;
+    return candidate instanceof ObjectId && candidate.equals(expected);
+}
+
 
 /**
  * Deterministic regression tests for MZ-15 / MZ-16 / MZ-18.
@@ -181,6 +193,17 @@ describe('GridFS MZ-15 / MZ-16 / MZ-18 ownership regressions', () => {
         });
     });
 
+    it('recognizes Driver 6 bare and Driver 7.8 exact-$eq chunk deletion filters', () => {
+        const id = new ObjectId();
+        const other = new ObjectId();
+        assert.equal(matchesDeletedFileId(id, id), true);
+        assert.equal(matchesDeletedFileId({ $eq: id }, id), true);
+        assert.equal(matchesDeletedFileId(other, id), false);
+        assert.equal(matchesDeletedFileId({ $eq: other }, id), false);
+        assert.equal(matchesDeletedFileId({ $in: [id] }, id), false);
+        assert.equal(matchesDeletedFileId(undefined, id), false);
+    });
+
     it('MZ-18 prevents delete removing chunks from a replacement upload with the same id', { timeout: 30_000 }, async () => {
         await withRuntime('gridfs_mz18_delete_upload_race', async (runtime, db) => {
             const bucket = runtime.gridfs('b', { chunkSizeBytes: 4 });
@@ -201,8 +224,8 @@ describe('GridFS MZ-15 / MZ-16 / MZ-18 ownership regressions', () => {
 
             (Collection.prototype as any).deleteMany = async function (this: Collection, ...args: unknown[]) {
                 const filter = args[0] as Record<string, unknown>;
-                const filesId = filter.files_id as ObjectId | undefined;
-                if (armed && this.collectionName === 'b.chunks' && filesId?.equals(id)) {
+                if (armed && this.collectionName === 'b.chunks' &&
+                    matchesDeletedFileId(filter.files_id, id)) {
                     armed = false;
                     reached();
                     await gate;
@@ -214,7 +237,15 @@ describe('GridFS MZ-15 / MZ-16 / MZ-18 ownership regressions', () => {
             try {
                 // GridFSBucket.delete removes files first, then deletes chunks.
                 deleting = bucket.delete(id);
-                await hit;
+                // Fail immediately if the driver completes without reaching the
+                // chunk-delete barrier. Never await a gate that cannot fire.
+                await Promise.race([
+                    hit,
+                    deleting.then(() => {
+                        throw new Error('GridFS delete completed without reaching the exact-ID chunks barrier');
+                    }),
+                ]);
+                assert.equal(armed, false, 'the delete must be paused at the chunk-delete barrier');
                 assert.equal(await bucket.getFile(id), null);
 
                 // The delete owns the ID until both files and chunks have gone.
