@@ -51,10 +51,10 @@ Every apply attempt includes an audit entry. A crash can leave a `status: recove
 
 | Observed owner | After proven quiescence | Critical preservation rule |
 |---|---|---|
-| `kind:direct,status:uploading` | When a file is visible, verify every chunk and release ownership; otherwise delete orphan chunks and release | Visible-file chunks are never deleted |
+| `kind:direct,status:uploading` | When a file is visible, verify every chunk, length and any claimed SHA before releasing ownership; otherwise delete orphan chunks and release | A mismatched caller-supplied metadata SHA blocks recovery; visible-file chunks are never deleted |
 | `kind:delete,status:deleting` | Complete the interrupted delete of file and chunks before releasing ownership | No new upload may claim the same ID until both steps finish |
 | `kind:cleanup,status:cleaning` | Check visible file; delete chunks only if no file exists; release | Never delete a visible file's chunks |
-| `kind:rename,status:renaming` | Release only after inspecting the resulting filename and intended rename | The tool does not choose or replay a rename target |
+| `kind:rename,status:renaming` | Verify the resulting visible file has complete chunks, then release; missing or corrupt files remain locked | The tool does not choose or replay a rename target; the operator must inspect the intended filename |
 | `status:pending,activeAppend` | Recompute the contiguous chunk prefix, clear only the observed append claim, restore seven-day idle expiry | Existing chunks are preserved; caller replays/checks the data |
 | `status:finalizing` without file | Restore pending with expiry; retry normal finalize, which revalidates bytes | Never discard chunks to unlock finalize |
 | `status:finalizing` with file | Re-hash the **actual** ordered chunks and check expected file length, chunk size and digest before releasing session | Forged metadata SHA is not sufficient |

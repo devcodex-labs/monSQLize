@@ -363,4 +363,53 @@ describe('GridFS operator recovery: deterministic post-crash state and chunk saf
         });
     });
 
+
+    it('does not release a visible direct upload with inconsistent claimed SHA', async () => {
+        await withRuntime(async (bucket, db) => {
+            const id = new ObjectId();
+            const actual = Buffer.from('EVIL');
+            await bucket.upload('direct.bin', actual, { id });
+            await db.collection('b.files').updateOne({ _id: id }, {
+                $set: { 'metadata.sha256': digest(Buffer.from('GOOD')) },
+            });
+            const now = new Date();
+            await db.collection('b.uploads').insertOne({
+                _id: id, kind: 'direct', status: 'uploading', ownerToken: 'crash',
+                createdAt: now, updatedAt: now,
+            });
+            await assert.rejects(recover(db, id), /metadata SHA mismatch/);
+            assert.equal((await db.collection('b.uploads').findOne({ _id: id }))?.status, 'recovering');
+            assert.deepEqual(await bucket.download(id), actual);
+        });
+    });
+
+    it('releases a quiesced rename only after checking a visible complete file', async () => {
+        await withRuntime(async (bucket, db) => {
+            const id = new ObjectId();
+            const payload = Buffer.from('GOODGOOD');
+            await bucket.upload('already-renamed.bin', payload, { id });
+            const now = new Date();
+            await db.collection('b.uploads').insertOne({
+                _id: id, kind: 'rename', status: 'renaming', ownerToken: 'rename-crash',
+                createdAt: now, updatedAt: now,
+            });
+            await recover(db, id);
+            assert.equal(await db.collection('b.uploads').countDocuments({ _id: id }), 0);
+            assert.deepEqual(await bucket.download(id), payload);
+        });
+    });
+
+    it('keeps a missing-file rename fenced pending manual inspection', async () => {
+        await withRuntime(async (_, db) => {
+            const id = new ObjectId();
+            const now = new Date();
+            await db.collection('b.uploads').insertOne({
+                _id: id, kind: 'rename', status: 'renaming', ownerToken: 'rename-crash',
+                createdAt: now, updatedAt: now,
+            });
+            await assert.rejects(recover(db, id), /no visible file/);
+            assert.equal((await db.collection('b.uploads').findOne({ _id: id }))?.status, 'recovering');
+        });
+    });
+
 });

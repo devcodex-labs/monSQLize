@@ -52,11 +52,19 @@ async function verifyVisibleFile(db, bucket, id, session) {
     if (length !== doc.length || n !== totalChunks) {
         fail('Visible file is incomplete; preserve ownership and chunks');
     }
+    const actualSha = digest.digest('hex');
     if (session) {
         if (session.length !== doc.length || session.chunkSizeBytes !== doc.chunkSize ||
-            doc.metadata?.sha256 !== session.sha256 ||
-            digest.digest('hex') !== session.sha256) {
+            doc.metadata?.sha256 !== session.sha256 || actualSha !== session.sha256) {
             fail('Finalizing session and visible bytes mismatch; preserve ownership and chunks');
+        }
+    } else if (typeof doc.metadata?.sha256 === 'string') {
+        // UploadStream SHA is caller-supplied metadata, not proof of integrity.
+        // A mismatched claimed hash is nevertheless evidence of inconsistency:
+        // do not unlock an anomalous direct upload as if it had been verified.
+        if (!/^[0-9a-f]{64}$/i.test(doc.metadata.sha256) ||
+            actualSha !== doc.metadata.sha256.toLowerCase()) {
+            fail('Visible direct upload metadata SHA mismatch; preserve ownership and chunks');
         }
     }
     return true;
@@ -226,8 +234,10 @@ async function recoverGridFSOwnership(input) {
             // unless this is an explicitly quiesced, retained "deleting" owner.
             if (sourceStatus === 'finalizing') {
                 await verifyVisibleFile(db, bucket, id, doc);
-            } else if (sourceStatus === 'uploading' && visible) {
+            } else if ((sourceStatus === 'uploading' || sourceStatus === 'renaming') && visible) {
                 await verifyVisibleFile(db, bucket, id, null);
+            } else if (sourceStatus === 'renaming' && !visible) {
+                fail('Renaming owner has no visible file; preserve ownership for manual inspection');
             }
             if (sourceStatus === 'deleting') {
                 await files.deleteOne({ _id: id });

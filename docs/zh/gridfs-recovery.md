@@ -46,10 +46,10 @@ node scripts/maintenance/gridfs-recover.cjs \
 
 | 状态 | 恢复动作 | 数据保护 |
 |---|---|---|
-| direct/uploading | 可见文件先验证 chunks 完整性再解锁；没有 files 才清理孤儿 chunks | 不删除可见文件 chunks |
+| direct/uploading | 可见文件先验证 chunks 完整性及声明的 SHA 再解锁；没有 files 才清理孤儿 chunks | SHA 元数据不可信，但一旦与实际 bytes 不符就阻断；绝不删除可见文件 chunks |
 | delete/deleting | 继续删除 files 和 chunks，之后才释放同 ID 的所有权 | 删除未完成时禁止替换上传 |
 | cleanup/cleaning | 可见文件保留 chunks，否则清理孤儿 chunks | 先查 files |
-| rename/renaming | 检查目标文件名与重命名结果后解锁 | 工具不猜测重命名目标 |
+| rename/renaming | 先核验可见文件及完整 chunks，缺失或损坏时保留锁；运维核查文件名 | 工具不猜测目标或重新执行 rename |
 | pending + activeAppend | 根据 chunks 的连续前缀恢复 nextChunk，清除中断令牌，重新设置七天闲置过期 | 保留已写 chunks，后续需验证重传 |
 | finalizing，文件不可见 | 退回 pending，正常 finalize 重新校验 | 不删已有 chunks |
 | finalizing，文件可见 | 核对文件长度、chunk size、实际 SHA 和元数据，再清理遗留会话 | 不信任单独的元数据 SHA |
