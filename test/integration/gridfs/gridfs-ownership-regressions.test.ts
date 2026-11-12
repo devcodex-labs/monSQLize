@@ -241,4 +241,133 @@ describe('GridFS MZ-15 / MZ-16 / MZ-18 ownership regressions', () => {
         });
     });
 
+
+    it('MZ-04 migrates legacy createdAt TTL to seven-day idle expiresAt', { timeout: 30_000 }, async () => {
+        await withRuntime('gridfs_mz04_migrate', async (runtime, db) => {
+            const id = new ObjectId();
+            const createdAt = new Date(Date.now() - 2 * 86400_000);
+            const updatedAt = new Date(Date.now() - 30 * 60_000);
+            await db.collection('b.uploads').insertOne({
+                _id: id, filename: 'legacy.bin', length: 4,
+                sha256: sha(Buffer.from('GOOD')), chunkSizeBytes: 4,
+                status: 'pending', nextChunk: 0, createdAt, updatedAt,
+            });
+            await db.collection('b.uploads').createIndex({ createdAt: 1 }, { expireAfterSeconds: 604800 });
+            const bucket = runtime.gridfs('b', { chunkSizeBytes: 4 });
+            await bucket.ensureIndexes();
+            const indexes = await db.collection('b.uploads').indexes();
+            assert.equal(indexes.some((i) => i.name === 'createdAt_1'), false);
+            assert.equal(indexes.find((i) => i.name === 'expiresAt_1')?.expireAfterSeconds, 0);
+            const migrated = await db.collection('b.uploads').findOne({ _id: id });
+            assert.ok(migrated?.expiresAt instanceof Date);
+            assert.ok(Math.abs(migrated.expiresAt.getTime() - (updatedAt.getTime() + 604800_000)) < 1000);
+            await bucket.abortResumableUpload(id);
+        });
+    });
+
+    it('MZ-04 does not reinstall TTL while an append is actively writing', { timeout: 30_000 }, async () => {
+        await withRuntime('gridfs_mz04_active_append', async (runtime, db) => {
+            const bucket = runtime.gridfs('b', { chunkSizeBytes: 4 });
+            const id = (await bucket.beginResumableUpload('active.bin', {
+                length: 4, sha256: sha(Buffer.from('GOOD')),
+            })).uploadId;
+            const original = Collection.prototype.insertOne;
+            let release!: () => void;
+            const gate = new Promise<void>((resolve) => { release = resolve; });
+            let reached!: () => void;
+            const hit = new Promise<void>((resolve) => { reached = resolve; });
+            let armed = true;
+            (Collection.prototype as any).insertOne = async function (this: Collection, ...args: unknown[]) {
+                const doc = args[0] as { files_id?: ObjectId };
+                if (armed && this.collectionName === 'b.chunks' && doc.files_id?.equals(id)) {
+                    armed = false;
+                    reached();
+                    await gate;
+                }
+                return (original as any).apply(this, args);
+            };
+            let appending: Promise<unknown> | undefined;
+            try {
+                appending = bucket.appendChunks(id, 0, Buffer.from('GOOD'));
+                await hit;
+                const active = await db.collection('b.uploads').findOne({ _id: id });
+                assert.ok(active?.activeAppend);
+                assert.equal(active?.expiresAt, undefined);
+                await runtime.gridfs('b').ensureIndexes();
+                const during = await db.collection('b.uploads').findOne({ _id: id });
+                assert.equal(during?.expiresAt, undefined, 'index initialization must not re-arm expiry during append');
+                release();
+                await appending;
+                const finished = await db.collection('b.uploads').findOne({ _id: id });
+                assert.equal(finished?.activeAppend, undefined);
+                assert.ok(finished?.expiresAt instanceof Date);
+                await bucket.abortResumableUpload(id);
+            } finally {
+                release();
+                Collection.prototype.insertOne = original;
+                if (appending) await appending.catch(() => undefined);
+            }
+        });
+    });
+
+    it('MZ-15 blocks finalize while append owns the session', { timeout: 30_000 }, async () => {
+        await withRuntime('gridfs_mz15_append_finalize', async (runtime) => {
+            const bucket = runtime.gridfs('b', { chunkSizeBytes: 4 });
+            const payload = Buffer.from('AAAABBBB');
+            const id = (await bucket.beginResumableUpload('append.bin', {
+                length: payload.length, sha256: sha(payload),
+            })).uploadId;
+            const original = Collection.prototype.insertOne;
+            let release!: () => void;
+            const gate = new Promise<void>((resolve) => { release = resolve; });
+            let reached!: () => void;
+            const hit = new Promise<void>((resolve) => { reached = resolve; });
+            let armed = true;
+            (Collection.prototype as any).insertOne = async function (this: Collection, ...args: unknown[]) {
+                const doc = args[0] as { files_id?: ObjectId };
+                if (armed && this.collectionName === 'b.chunks' && doc.files_id?.equals(id)) {
+                    armed = false;
+                    reached();
+                    await gate;
+                }
+                return (original as any).apply(this, args);
+            };
+            let appending: Promise<unknown> | undefined;
+            try {
+                appending = bucket.appendChunks(id, 0, payload);
+                await hit;
+                await assert.rejects(bucket.finalizeResumableUpload(id),
+                    (error: unknown) => (error as { code?: string }).code === 'GRIDFS_UPLOAD_BUSY');
+                release();
+                await appending;
+                await bucket.finalizeResumableUpload(id);
+                assert.deepEqual(await bucket.download(id), payload);
+            } finally {
+                release();
+                Collection.prototype.insertOne = original;
+                if (appending) await appending.catch(() => undefined);
+            }
+        });
+    });
+
+    it('MZ-16 rechecks stored chunk bytes before accepting an ambiguous legacy finalize retry', { timeout: 30_000 }, async () => {
+        await withRuntime('gridfs_mz16_bad_legacy_hash', async (runtime, db) => {
+            const bucket = runtime.gridfs('b', { chunkSizeBytes: 4 });
+            const id = new ObjectId();
+            const actual = Buffer.from('EVIL');
+            const expected = Buffer.from('GOOD');
+            await bucket.upload('actual.bin', actual, { id, sha256: sha(actual) });
+            await db.collection('b.files').updateOne({ _id: id }, { $set: { 'metadata.sha256': sha(expected) } });
+            await db.collection('b.uploads').insertOne({
+                _id: id, filename: 'expected.bin', length: expected.length,
+                sha256: sha(expected), chunkSizeBytes: 4,
+                status: 'pending', nextChunk: 1,
+                createdAt: new Date(), updatedAt: new Date(),
+            });
+            await assert.rejects(bucket.finalizeResumableUpload(id),
+                (error: unknown) => (error as { code?: string }).code === 'GRIDFS_INTEGRITY_MISMATCH');
+            assert.deepEqual(await bucket.download(id), actual);
+        });
+    });
+
 });
