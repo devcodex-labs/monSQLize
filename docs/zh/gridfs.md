@@ -99,6 +99,8 @@ await bucket.abortResumableUpload(session.uploadId);
 
 `<bucket>.uploads` 使用 `{ expiresAt: 1 }` TTL 索引，`expireAfterSeconds: 0`。pending 续传会话在**连续 7 天没有成功 append**时过期，每次成功 append 会刷新过期时间；正在执行的 append/finalize/abort，以及普通上传或删除的所有权记录不设置 TTL，进程异常退出后需确认旧进程停止再显式恢复，不能自动释放导致旧写入复活。MongoDB TTL 是异步清理，且只删除 session，不级联 chunks。已知 uploadId 的孤儿块由 `abortResumableUpload(uploadId)` 在取得独占清理权后回收，或复用同一 id 重新开始续传时清理。旧 `createdAt` TTL 索引会迁移为 `expiresAt`；迁移前必须停止/排空旧版 GridFS 写进程，新旧写入协议混跑不安全。
 
+**故障恢复与迁移：**参阅[运维恢复规程](./gridfs-recovery.md)。恢复默认只预览，必须在全部写入进程确实排空后，核对精确状态/令牌并留下审计记录；禁止直接删除看似过期的所有权。
+
 ## 索引
 
 `upload`、`uploadStream`（打开驱动流之前）、`beginResumableUpload` 和 `ensureIndexes` 会创建：
