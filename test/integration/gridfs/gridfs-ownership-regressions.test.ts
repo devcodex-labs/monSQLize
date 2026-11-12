@@ -236,12 +236,13 @@ describe('GridFS MZ-15 / MZ-16 / MZ-18 ownership regressions', () => {
             let deleting: Promise<void> | undefined;
             try {
                 // GridFSBucket.delete removes files first, then deletes chunks.
-                deleting = bucket.delete(id);
+                const pendingDelete: Promise<void> = bucket.delete(id);
+                deleting = pendingDelete;
                 // Fail immediately if the driver completes without reaching the
                 // chunk-delete barrier. Never await a gate that cannot fire.
                 await Promise.race([
                     hit,
-                    deleting.then(() => {
+                    pendingDelete.then(() => {
                         throw new Error('GridFS delete completed without reaching the exact-ID chunks barrier');
                     }),
                 ]);
