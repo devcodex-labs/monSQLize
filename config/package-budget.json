@@ -1,8 +1,8 @@
 {
-  "comment": "The 3.5.3 bundle ceilings were 881096 CJS and 878096 ESM. The GridFS cross-operation ownership, durable session CAS/abort fencing, delete protection and idle-TTL migration add ~4.4/4.7 KiB over that ceiling (CI build 2026-11-12: 885536 CJS / 882819 ESM). Raise to 890000 / 887000, keeping ~4 KiB reviewed headroom; no dependency change. Enforce these ceilings in release preflight.",
+  "comment": "The previous 890000 / 887000 ceilings were exceeded by the GridFS remaining-issue fix (local 2026-11-12 build: 892639 CJS / 889922 ESM). The added bytes are the incremental Readable append consumer, beginResumableUpload post-insert files re-check, finalize pending rollback, and rename release-owner alignment — no dependency change. Raise to 896000 / 893000, keeping ~3 KiB reviewed headroom. Enforce these ceilings in release preflight.",
   "artifacts": {
-    "dist/cjs/index.cjs": 890000,
-    "dist/esm/index.mjs": 887000,
+    "dist/cjs/index.cjs": 896000,
+    "dist/esm/index.mjs": 893000,
     "dist/cjs/cli/data-task.cjs": 50000
   }
 }
