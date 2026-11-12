@@ -137,6 +137,27 @@ describe('GridFS operator recovery: deterministic post-crash state and chunk saf
         });
     });
 
+    it('keeps interrupted append fenced when an existing chunk is malformed', async () => {
+        await withRuntime(async (bucket, db) => {
+            const body = Buffer.from('AAAABBBB');
+            const id = (await bucket.beginResumableUpload('corrupt-append.bin',
+                { length: body.length, sha256: digest(body) })).uploadId;
+            await db.collection('b.chunks').insertOne({
+                files_id: id, n: 0, data: Buffer.from('A'),
+            });
+            await db.collection('b.uploads').updateOne({ _id: id }, {
+                $set: { activeAppend: { token: 'corrupt-append', startedAt: new Date() },
+                    updatedAt: new Date() },
+                $unset: { expiresAt: '' },
+            });
+            await assert.rejects(recover(db, id), /malformed chunk/);
+            const owner = await db.collection('b.uploads').findOne({ _id: id });
+            assert.equal(owner?.status, 'recovering');
+            assert.equal(await db.collection('b.chunks').countDocuments({ files_id: id }), 1);
+            assert.equal((await db.collection('b.chunks').findOne({ files_id: id }))?.n, 0);
+        });
+    });
+
     it('recovers pre-commit finalizing without deleting verified chunks', async () => {
         await withRuntime(async (bucket, db) => {
             const body = Buffer.from('AAAABBBB');
