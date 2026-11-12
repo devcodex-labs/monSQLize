@@ -86,7 +86,12 @@ export async function uploadFile(
     // The visible-file preflight above is not sufficient across collections or processes.
     let owner: Awaited<ReturnType<typeof claimOwner>>;
     try {
-        owner = await claimOwner(ctx, id, 'direct', 'upload');
+        owner = await claimOwner(ctx, id, 'direct', 'upload', {
+            uploadMethod: 'upload',
+            sha256Verified: options.sha256 !== undefined,
+            ...(options.sha256 !== undefined ? { expectedSha256: options.sha256 } : {}),
+            ...(typeof metadata?.sha256 === 'string' ? { claimedSha256: metadata.sha256 } : {}),
+        });
     } catch (error) {
         if (source) releaseReadable(source);
         throw error;
@@ -138,7 +143,12 @@ export function openUploadStream(ctx: GridFSContext, filename: string, opts?: Gr
         let target: GridFSDriverStream | undefined;
         let owner: Awaited<ReturnType<typeof claimOwner>> | undefined;
         try {
-            owner = await claimOwner(ctx, id, 'direct', 'uploadStream');
+            owner = await claimOwner(ctx, id, 'direct', 'uploadStream', {
+                uploadMethod: 'uploadStream',
+                // uploadStream's SHA is explicitly metadata-only; never mark it verified.
+                sha256Verified: false,
+                ...(typeof metadata?.sha256 === 'string' ? { claimedSha256: metadata.sha256 } : {}),
+            });
             // Check again after the ID is reserved, in case an older unreserved file exists.
             if (await getFile(ctx, id)) {
                 throw fileExists('uploadStream', ctx, { id, filename, sha256: options.sha256 });
