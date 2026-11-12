@@ -67,15 +67,30 @@ function snapshotToken(doc) {
 }
 
 function classify(doc) {
-    if (doc.status === 'recovering' && doc.recovery?.fromStatus) return doc.recovery.fromStatus;
-    if (doc.kind === 'direct' && doc.status === 'uploading') return 'uploading';
-    if (doc.kind === 'delete' && doc.status === 'deleting') return 'deleting';
-    if (doc.kind === 'rename' && doc.status === 'renaming') return 'renaming';
-    if (doc.kind === 'cleanup' && doc.status === 'cleaning') return 'cleaning';
-    if (doc.status === 'pending' && doc.activeAppend) return 'activeAppend';
-    if ((!doc.kind || doc.kind === 'resumable') &&
-        (doc.status === 'finalizing' || doc.status === 'aborting')) return doc.status;
-    fail('Unsupported owner state: do not recover automatically');
+    let state = doc.status === 'recovering' ? doc.recovery?.fromStatus : null;
+    if (doc.status === 'recovering' && !state) fail('Recovering record lacks its original state');
+    if (!state) {
+        if (doc.kind === 'direct' && doc.status === 'uploading') state = 'uploading';
+        else if (doc.kind === 'delete' && doc.status === 'deleting') state = 'deleting';
+        else if (doc.kind === 'rename' && doc.status === 'renaming') state = 'renaming';
+        else if (doc.kind === 'cleanup' && doc.status === 'cleaning') state = 'cleaning';
+        else if ((!doc.kind || doc.kind === 'resumable') &&
+            doc.status === 'pending' && doc.activeAppend) state = 'activeAppend';
+        else if ((!doc.kind || doc.kind === 'resumable') &&
+            (doc.status === 'finalizing' || doc.status === 'aborting')) state = doc.status;
+    }
+    // Also validate the persisted origin when a crash left status=recovering:
+    // do not allow malformed/corrupt origin metadata to unlock arbitrary IDs.
+    const requiredKind = {
+        uploading: 'direct', deleting: 'delete', renaming: 'rename', cleaning: 'cleanup',
+    };
+    if (!state || (requiredKind[state] && doc.kind !== requiredKind[state]) ||
+        (['activeAppend', 'finalizing', 'aborting'].includes(state) &&
+          doc.kind && doc.kind !== 'resumable') ||
+        (state === 'activeAppend' && !doc.activeAppend?.token)) {
+        fail('Inconsistent or unsupported owner origin; preserve ownership');
+    }
+    return state;
 }
 
 async function contiguousChunkPrefix(db, bucket, id, session) {
