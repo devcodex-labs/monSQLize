@@ -127,7 +127,7 @@ describe('gridfs scan regressions (2026-11-02)', () => {
     it('fails the uploadStream Writable when it fails before the driver stream opens', { timeout: 30_000 }, async () => {
         await withRuntime('gridfs_scan_preopen', async (runtime, db) => {
             // A conflicting TTL index makes ensureIndexes fail before any driver stream exists.
-            await db.collection('b.uploads').createIndex({ createdAt: 1 }, { expireAfterSeconds: 60 });
+            await db.collection('b.uploads').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 60 });
             const bucket = runtime.gridfs('b');
             const writable = bucket.uploadStream('x.bin');
             const errored = new Promise<unknown>((resolve) => writable.once('error', resolve));
