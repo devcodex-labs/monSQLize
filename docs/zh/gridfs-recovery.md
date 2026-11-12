@@ -40,7 +40,7 @@ node scripts/maintenance/gridfs-recover.cjs \
   --quiesced --apply
 ```
 
-以上 ID、时间戳仅为格式示例。如果记录存在 `ownerToken`、`activeAppend.token` 或 `recovery.token`，必须加 `--expected-token=实际令牌`。任何状态/令牌/时间戳不符都应中止，重新检查。
+以上 ID、时间戳仅为格式示例。如果记录存在 `ownerToken`、`activeAppend.token` 或 `recovery.token`，必须加 `--expected-token=实际令牌`。任何状态/令牌/时间戳不符都应中止，重新检查。**当 `status: recovering` 时，还必须先确认上一轮恢复执行器确实已停止，执行 apply 时加 `--prior-recovery-stopped`。**恢复续接会通过 CAS 原子轮换令牌，两个持同一旧快照的恢复进程不能同时执行删除；但仍无法隔离未停止的旧进程已经发出的 MongoDB 写入。
 
 ## 按状态恢复
 
@@ -55,7 +55,7 @@ node scripts/maintenance/gridfs-recover.cjs \
 | finalizing，文件可见 | 核对文件长度、chunk size、实际 SHA 和元数据，再清理遗留会话 | 不信任单独的元数据 SHA |
 | aborting，文件不可见 | 清理孤儿 chunks，移除会话 | 无新写入抢占 |
 | aborting，文件可见 | **阻断；人工分析** | 严禁删除可见文件 |
-| recovering | 停机再次确认后，凭新恢复令牌、状态及时间戳续接 | 恢复失败继续保留锁 |
+| recovering | 必须确认上一轮恢复执行器也已停止，加 `--prior-recovery-stopped` 并通过 CAS 取得新恢复令牌 | 同一旧快照不能双重恢复，失败仍保留锁 |
 
 ## 失败和验收边界
 

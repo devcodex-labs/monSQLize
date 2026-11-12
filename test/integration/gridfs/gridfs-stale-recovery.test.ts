@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { MongoClient, ObjectId, type Db } from 'mongodb';
+import { Collection, MongoClient, ObjectId, type Db } from 'mongodb';
 import { createMemoryServerBootstrap } from '../../bootstrap/memory-server';
 
 const MonSQLize = require('../../../dist/cjs/index.cjs');
@@ -252,7 +252,7 @@ describe('GridFS operator recovery: deterministic post-crash state and chunk saf
                 recovery: { token: 'recovery-claim', fromStatus: 'cleaning', operator: 'original' },
             });
             await db.collection('b.chunks').insertOne({ files_id: id, n: 0, data: Buffer.from('ABCD') });
-            await recover(db, id);
+            await recover(db, id, { resumeQuiesced: true });
             assert.equal(await db.collection('b.chunks').countDocuments({ files_id: id }), 0);
             assert.equal(await db.collection('b.uploads').countDocuments({ _id: id }), 0);
         });
@@ -291,4 +291,76 @@ describe('GridFS operator recovery: deterministic post-crash state and chunk saf
             assert.equal(await db.collection('b.uploads').countDocuments({ _id: id }), 1);
         });
     });
+
+    it('requires proof the previous recovery process stopped before resuming', async () => {
+        await withRuntime(async (_, db) => {
+            const id = new ObjectId();
+            const now = new Date();
+            await db.collection('b.uploads').insertOne({
+                _id: id, kind: 'cleanup', status: 'recovering',
+                ownerToken: 'original', createdAt: now, updatedAt: now,
+                recovery: { token: 'old-recovery', fromStatus: 'cleaning' },
+            });
+            await db.collection('b.chunks').insertOne({ files_id: id, n: 0, data: Buffer.from('GOOD') });
+            await assert.rejects(recover(db, id), /verified shutdown of the prior recovery executor/);
+            assert.equal(await db.collection('b.chunks').countDocuments({ files_id: id }), 1);
+            assert.equal(await db.collection('b.uploads').countDocuments({ _id: id }), 1);
+        });
+    });
+
+    it('atomically rejects two recovery resumptions holding the same snapshot', { timeout: 30_000 }, async () => {
+        await withRuntime(async (bucket, db) => {
+            const id = new ObjectId();
+            const now = new Date();
+            await db.collection('b.uploads').insertOne({
+                _id: id, kind: 'cleanup', status: 'recovering',
+                ownerToken: 'original', createdAt: now, updatedAt: now,
+                recovery: { token: 'old-recovery', fromStatus: 'cleaning' },
+            });
+            await db.collection('b.chunks').insertOne({ files_id: id, n: 0, data: Buffer.from('GOOD') });
+            const original = Collection.prototype.updateOne;
+            let ready!: () => void;
+            const bothReached = new Promise<void>((resolve) => { ready = resolve; });
+            let release!: () => void;
+            const gate = new Promise<void>((resolve) => { release = resolve; });
+            let claims = 0;
+            (Collection.prototype as any).updateOne = async function (this: Collection, ...args: unknown[]) {
+                const filter = args[0] as Record<string, unknown>;
+                if (this.collectionName === 'b.uploads' && filter.status === 'recovering'
+                    && filter['recovery.token'] === 'old-recovery') {
+                    claims += 1;
+                    if (claims === 2) ready();
+                    await gate;
+                }
+                return (original as any).apply(this, args);
+            };
+            try {
+                const input = {
+                    db, bucket: 'b', id,
+                    expectedStatus: 'recovering', expectedUpdatedAt: now.toISOString(),
+                    expectedToken: 'old-recovery', quiesced: true, resumeQuiesced: true,
+                    operator: 'integration-test', reason: 'verified prior executor stop',
+                    apply: true,
+                };
+                const first = recoverGridFSOwnership(input);
+                const second = recoverGridFSOwnership(input);
+                await bothReached;
+                release();
+                const outcomes = await Promise.allSettled([first, second]);
+                assert.equal(outcomes.filter((x) => x.status === 'fulfilled').length, 1);
+                assert.equal(outcomes.filter((x) => x.status === 'rejected').length, 1);
+                assert.equal(await db.collection('b.ownership_recovery_audit').countDocuments({ outcome: 'completed' }), 1);
+                assert.equal(await db.collection('b.ownership_recovery_audit').countDocuments({ outcome: 'claim_conflict' }), 1);
+                assert.equal(await db.collection('b.uploads').countDocuments({ _id: id }), 0);
+                assert.equal(await db.collection('b.chunks').countDocuments({ files_id: id }), 0);
+                const payload = Buffer.from('NEW!');
+                await bucket.upload('replacement.bin', payload, { id });
+                assert.deepEqual(await bucket.download(id), payload);
+            } finally {
+                release();
+                Collection.prototype.updateOne = original;
+            }
+        });
+    });
+
 });

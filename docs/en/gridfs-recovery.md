@@ -43,7 +43,9 @@ node scripts/maintenance/gridfs-recover.cjs \
   --quiesced --apply
 ```
 
-Every apply attempt includes an audit entry. A crash can leave a `status: recovering` record with `recovery.token`; after proving quiescence again, re-inspect that record and use **its new status, updatedAt and recovery token** to retry. Never delete an ownership record by ID alone.
+For an already `recovering` owner only, verify that the previous recovery executor has stopped and add `--prior-recovery-stopped` to the apply command; this is separate from stopping ordinary GridFS writers.
+
+Every apply attempt includes an audit entry. A crash can leave a `status: recovering` record with `recovery.token`; after proving **both all writers and the previous recovery executor have stopped**, re-inspect that record and use its new status, updatedAt and recovery token to retry. Supply the additional `--prior-recovery-stopped` flag. The restart acquires a fresh recovery token via atomic CAS. Two operators with the same observed snapshot cannot perform destructive steps simultaneously, but in-flight writes by an unquiesced prior executor still cannot be fenced by MongoDB alone. Never delete an ownership record by ID alone.
 
 ## State-by-state recovery contract
 

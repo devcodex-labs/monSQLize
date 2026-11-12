@@ -117,7 +117,7 @@ async function contiguousChunkPrefix(db, bucket, id, session) {
 
 async function recoverGridFSOwnership(input) {
     const { db, bucket, id, expectedStatus, expectedUpdatedAt, expectedToken,
-        quiesced, operator, reason, apply = false } = input;
+        quiesced, operator, reason, apply = false, resumeQuiesced = false } = input;
     if (!db || !bucket || typeof bucket !== 'string' || !(id instanceof ObjectId)) fail('Invalid database, bucket or ObjectId');
     if (!expectedStatus || !expectedUpdatedAt) fail('Exact expected status and updatedAt are required');
     const uploads = db.collection(bucket + '.uploads');
@@ -151,6 +151,11 @@ async function recoverGridFSOwnership(input) {
         fail('Apply requires external writer quiescence, named operator and reason');
     }
     if (sourceStatus === 'aborting' && visible) fail('Visible file conflicts with aborting state; manual inspection required');
+    // A recovering owner may belong to a running recovery executor. Caller
+    // must separately prove that executor has stopped before a manual resume.
+    if (doc.status === 'recovering' && resumeQuiesced !== true) {
+        fail('Resuming recovery requires verified shutdown of the prior recovery executor');
+    }
 
     const audit = db.collection(bucket + '.ownership_recovery_audit');
     const attemptId = randomUUID();
@@ -160,7 +165,23 @@ async function recoverGridFSOwnership(input) {
     });
     let recoveryToken;
     if (doc.status === 'recovering') {
-        recoveryToken = doc.recovery.token;
+        // Concurrent recovery attempts with one observed snapshot must not share
+        // the same destructive authority. Atomically replace the old token.
+        // A prior executor must ALSO have been externally confirmed stopped.
+        recoveryToken = randomUUID();
+        const claim = await uploads.updateOne(
+            { _id: id, status: 'recovering', updatedAt: doc.updatedAt,
+                'recovery.token': doc.recovery.token },
+            { $set: { updatedAt: new Date(), 'recovery.token': recoveryToken,
+                'recovery.operator': operator, 'recovery.attemptId': attemptId,
+                'recovery.startedAt': new Date() } },
+        );
+        if (claim.matchedCount !== 1) {
+            await audit.updateOne({ _id: attemptId }, {
+                $set: { outcome: 'claim_conflict', finishedAt: new Date() },
+            });
+            fail('Concurrent recovery executor claimed the same owner first');
+        }
         await audit.updateOne({ _id: attemptId }, { $set: { outcome: 'resumed', recoveryToken } });
     } else {
         recoveryToken = randomUUID();
@@ -255,6 +276,7 @@ async function main() {
             expectedToken: readArg(args, 'expected-token') || null,
             operator: readArg(args, 'operator'), reason: readArg(args, 'reason'),
             quiesced: args.includes('--quiesced'),
+            resumeQuiesced: args.includes('--prior-recovery-stopped'),
             apply: args.includes('--apply'),
         });
         process.stdout.write(JSON.stringify(report, null, 2) + '\n');
