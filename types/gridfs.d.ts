@@ -18,6 +18,7 @@ export interface GridFSFileInfo {
     uploadDate: Date;
     /** Present when the file was stored with a content type. */
     contentType?: string;
+    /** Arbitrary metadata. metadata.sha256 is not verified; use the top-level sha256 option to request byte verification. */
     metadata?: Record<string, unknown>;
 }
 
@@ -56,7 +57,7 @@ export interface GridFSUploadOptions {
     chunkSizeBytes?: number;
 }
 
-/** `uploadStream` writes `sha256` into metadata without validating bytes, and does not support `ifExists`. */
+/** `uploadStream` writes the top-level `sha256` into metadata without validating bytes, and does not support `ifExists`. */
 export interface GridFSUploadStreamOptions extends Omit<GridFSUploadOptions, 'ifExists'> {}
 
 /**

@@ -48,7 +48,8 @@ Calling either method before `connect()` throws `NOT_CONNECTED`.
 - When `sha256` is set, the conflict key is `metadata.sha256`. The digest must be 64 lowercase hex characters. `Buffer` and `Uint8Array` payloads are hashed before any GridFS write. A mismatch throws `GRIDFS_INTEGRITY_MISMATCH` and leaves no visible file.
 - A `Readable` passed with `sha256` is buffered completely, then hashed, before any write. Large files should use the resumable API instead.
 - `skip` with `sha256` returns the newest visible file with that digest. `skip` without `sha256` returns the newest visible file with the same filename. `duplicate` always creates another file.
-- `uploadStream` stores `sha256` in metadata only. It does not check the bytes and it does not accept `ifExists`.
+- A `metadata.sha256` value supplied inside `metadata` is caller data and is not verified. To request byte verification with `upload()`, use the top-level `sha256` option.
+- `uploadStream` stores its top-level `sha256` option in metadata only. It does not check the bytes and it does not accept `ifExists`.
 
 `metadata.sha256` written by these helpers overwrites a caller-supplied `metadata.sha256`. A provided `contentType` is stored as `metadata.contentType` and overwrites a caller-supplied value of that field. `FileInfo.contentType` returns it. An older file that still has a top-level `contentType` is returned the same way.
 
