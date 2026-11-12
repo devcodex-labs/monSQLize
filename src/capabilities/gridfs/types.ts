@@ -16,6 +16,7 @@ export interface GridFSFileInfo {
     chunkSize: number;
     uploadDate: Date;
     contentType?: string;
+    /** Arbitrary metadata; metadata.sha256 is not verified. Use the top-level sha256 option for byte verification. */
     metadata?: Record<string, unknown>;
 }
 
@@ -30,6 +31,7 @@ export interface GridFSUploadOptions {
     chunkSizeBytes?: number;
 }
 
+/** uploadStream's top-level sha256 is metadata-only and does not validate the stream bytes. */
 export type GridFSUploadStreamOptions = Omit<GridFSUploadOptions, 'ifExists'>;
 
 export type GridFSIdOrName = ObjectId | { filename: string; revision?: number };

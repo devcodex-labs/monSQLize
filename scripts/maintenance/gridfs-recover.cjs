@@ -27,10 +27,10 @@ function toBuffer(data) {
     fail('Encountered a chunk with unsupported BSON binary data');
 }
 
-async function verifyVisibleFile(db, bucket, id, session) {
+async function verifyVisibleFile(db, bucket, id, session, owner) {
     const files = db.collection(bucket + '.files');
     const doc = await files.findOne({ _id: id });
-    if (!doc) return false;
+    if (!doc) return null;
     if (!Number.isSafeInteger(doc.length) || doc.length < 0 ||
         !Number.isSafeInteger(doc.chunkSize) || doc.chunkSize < 1) {
         fail('Visible file has invalid length/chunkSize; preserve ownership');
@@ -52,22 +52,50 @@ async function verifyVisibleFile(db, bucket, id, session) {
     if (length !== doc.length || n !== totalChunks) {
         fail('Visible file is incomplete; preserve ownership and chunks');
     }
-    const actualSha = digest.digest('hex');
+    const actualSha256 = digest.digest('hex');
+    let sha256Evidence;
     if (session) {
+        // Resumable session SHA is part of the upload protocol and is trusted
+        // only after the actual persisted chunks have been re-hashed.
         if (session.length !== doc.length || session.chunkSizeBytes !== doc.chunkSize ||
-            doc.metadata?.sha256 !== session.sha256 || actualSha !== session.sha256) {
+            doc.metadata?.sha256 !== session.sha256 || actualSha256 !== session.sha256) {
             fail('Finalizing session and visible bytes mismatch; preserve ownership and chunks');
         }
-    } else if (typeof doc.metadata?.sha256 === 'string') {
-        // UploadStream SHA is caller-supplied metadata, not proof of integrity.
-        // A mismatched claimed hash is nevertheless evidence of inconsistency:
-        // do not unlock an anomalous direct upload as if it had been verified.
-        if (!/^[0-9a-f]{64}$/i.test(doc.metadata.sha256) ||
-            actualSha !== doc.metadata.sha256.toLowerCase()) {
-            fail('Visible direct upload metadata SHA mismatch; preserve ownership and chunks');
+        sha256Evidence = {
+            sha256Policy: 'resumable-session-expected',
+            sha256Verified: true, expectedSha256: session.sha256, actualSha256, warnings: [],
+        };
+    } else {
+        const claimedSha256 = typeof owner?.claimedSha256 === 'string'
+            ? owner.claimedSha256
+            : typeof doc.metadata?.sha256 === 'string' ? doc.metadata.sha256 : undefined;
+        if (owner?.sha256Verified === true) {
+            // Only upload() records a digest that was checked against the full
+            // payload before any GridFS bytes were written.
+            if (owner.uploadMethod !== 'upload' || !/^[0-9a-f]{64}$/.test(owner.expectedSha256 || '') ||
+                owner.expectedSha256 !== doc.metadata?.sha256 || actualSha256 !== owner.expectedSha256) {
+                fail('Verified direct upload SHA provenance does not match visible bytes; preserve ownership and chunks');
+            }
+            sha256Evidence = {
+                sha256Policy: 'direct-upload-preverified',
+                sha256Verified: true, expectedSha256: owner.expectedSha256, actualSha256, warnings: [],
+            };
+        } else {
+            // uploadStream SHA and arbitrary metadata.sha256 are caller claims,
+            // not integrity guarantees. Keep the physical chunk checks above,
+            // but record a warning instead of permanently locking a complete file.
+            const warnings = [];
+            if (claimedSha256 !== undefined) {
+                if (!/^[0-9a-f]{64}$/i.test(claimedSha256)) warnings.push('metadata_sha256_invalid_unverified');
+                else if (actualSha256 !== claimedSha256.toLowerCase()) warnings.push('metadata_sha256_mismatch_unverified');
+            }
+            sha256Evidence = {
+                sha256Policy: owner?.uploadMethod === 'uploadStream' ? 'uploadStream-metadata-only' : 'unverified-metadata',
+                sha256Verified: false, claimedSha256: claimedSha256 ?? null, actualSha256, warnings,
+            };
         }
     }
-    return true;
+    return { fileLength: doc.length, chunkCount: n, ...sha256Evidence };
 }
 
 function snapshotToken(doc) {
@@ -211,6 +239,7 @@ async function recoverGridFSOwnership(input) {
         }
     }
     const held = { _id: id, status: 'recovering', 'recovery.token': recoveryToken };
+    let verification = null;
     try {
         const chunks = db.collection(bucket + '.chunks');
         const files = db.collection(bucket + '.files');
@@ -233,9 +262,9 @@ async function recoverGridFSOwnership(input) {
             // Verify before ANY deletion. Never delete chunks of a visible file
             // unless this is an explicitly quiesced, retained "deleting" owner.
             if (sourceStatus === 'finalizing') {
-                await verifyVisibleFile(db, bucket, id, doc);
+                verification = await verifyVisibleFile(db, bucket, id, doc, doc);
             } else if ((sourceStatus === 'uploading' || sourceStatus === 'renaming') && visible) {
-                await verifyVisibleFile(db, bucket, id, null);
+                verification = await verifyVisibleFile(db, bucket, id, null, doc);
             } else if (sourceStatus === 'renaming' && !visible) {
                 fail('Renaming owner has no visible file; preserve ownership for manual inspection');
             }
@@ -249,8 +278,8 @@ async function recoverGridFSOwnership(input) {
             const removed = await uploads.deleteOne(held);
             if (removed.deletedCount !== 1) fail('Lost recovery claim while releasing owner');
         }
-        await audit.updateOne({ _id: attemptId }, { $set: { outcome: 'completed', finishedAt: new Date() } });
-        return { outcome: 'completed', modified: true, plan, attemptId };
+        await audit.updateOne({ _id: attemptId }, { $set: { outcome: 'completed', finishedAt: new Date(), ...(verification ? { verification } : {}) } });
+        return { outcome: 'completed', modified: true, plan, attemptId, ...(verification ? { verification } : {}) };
     } catch (error) {
         // Deliberately retain recovering state; retry using its exact token and
         // updatedAt only after re-verifying process quiescence.

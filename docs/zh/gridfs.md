@@ -48,7 +48,8 @@ const modelBucket = model.gridfs(bucketName?: string, opts?: {
 - 提供 `sha256` 时，冲突键是 `metadata.sha256`。摘要必须是 64 位小写十六进制。`Buffer` 与 `Uint8Array` 会在任何 GridFS 写入之前完成哈希。不一致时抛出 `GRIDFS_INTEGRITY_MISMATCH`，并且不会留下可见文件。
 - 带 `sha256` 的 `Readable` 会先完整缓冲再哈希，然后才写入。大文件应改用可恢复上传。
 - 带 `sha256` 的 `skip` 返回该摘要最新的可见文件。不带 `sha256` 的 `skip` 返回同名最新可见文件。`duplicate` 总是再创建一份。
-- `uploadStream` 只把 `sha256` 写入 metadata。它不校验字节，也不接受 `ifExists`。
+- 通过 `metadata` 对象传入的 `metadata.sha256` 是调用方数据，不会被验证。`upload()` 如需校验字节，必须使用顶层 `sha256` 选项。
+- `uploadStream` 的顶层 `sha256` 只写入 metadata，不校验字节，也不接受 `ifExists`。
 
 这些助手写入的 `metadata.sha256` 会覆盖调用方自己放在 `metadata.sha256` 里的值。提供的 `contentType` 写入 `metadata.contentType`，并覆盖调用方在该字段上的值。`FileInfo.contentType` 会返回它。旧文件上残留的顶层 `contentType` 同样会返回。
 

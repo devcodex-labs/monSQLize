@@ -402,6 +402,13 @@
       "status": "covered"
     },
     {
+      "doc": "gridfs-recovery",
+      "kind": "doc-check",
+      "target": "docs/en/gridfs-recovery.md",
+      "runner": "check:docs-examples",
+      "status": "covered"
+    },
+    {
       "doc": "hooks",
       "kind": "example",
       "target": "examples/docs/hooks.ts",

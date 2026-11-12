@@ -45,13 +45,13 @@ node scripts/maintenance/gridfs-recover.cjs \
 
 For an already `recovering` owner only, verify that the previous recovery executor has stopped and add `--prior-recovery-stopped` to the apply command; this is separate from stopping ordinary GridFS writers.
 
-Every apply attempt includes an audit entry. A crash can leave a `status: recovering` record with `recovery.token`; after proving **both all writers and the previous recovery executor have stopped**, re-inspect that record and use its new status, updatedAt and recovery token to retry. Supply the additional `--prior-recovery-stopped` flag. The restart acquires a fresh recovery token via atomic CAS. Two operators with the same observed snapshot cannot perform destructive steps simultaneously, but in-flight writes by an unquiesced prior executor still cannot be fenced by MongoDB alone. Never delete an ownership record by ID alone.
+Every apply attempt includes an audit entry. A completed visible-file verification records actual SHA, claim provenance and warnings in that audit. A crash can leave a `status: recovering` record with `recovery.token`; after proving **both all writers and the previous recovery executor have stopped**, re-inspect that record and use its new status, updatedAt and recovery token to retry. Supply the additional `--prior-recovery-stopped` flag. The restart acquires a fresh recovery token via atomic CAS. Two operators with the same observed snapshot cannot perform destructive steps simultaneously, but in-flight writes by an unquiesced prior executor still cannot be fenced by MongoDB alone. Never delete an ownership record by ID alone.
 
 ## State-by-state recovery contract
 
 | Observed owner | After proven quiescence | Critical preservation rule |
 |---|---|---|
-| `kind:direct,status:uploading` | When a file is visible, verify every chunk, length and any claimed SHA before releasing ownership; otherwise delete orphan chunks and release | A mismatched caller-supplied metadata SHA blocks recovery; visible-file chunks are never deleted |
+| `kind:direct,status:uploading` | Verify chunk sequence, per-chunk length and total length. Enforce SHA only when the owner records a pre-verified `upload()` expected digest; otherwise record any metadata mismatch as an audit warning | `uploadStream()` and arbitrary `metadata.sha256` are untrusted claims; visible-file chunks are never deleted |
 | `kind:delete,status:deleting` | Complete the interrupted delete of file and chunks before releasing ownership | No new upload may claim the same ID until both steps finish |
 | `kind:cleanup,status:cleaning` | Check visible file; delete chunks only if no file exists; release | Never delete a visible file's chunks |
 | `kind:rename,status:renaming` | Verify the resulting visible file has complete chunks, then release; missing or corrupt files remain locked | The tool does not choose or replay a rename target; the operator must inspect the intended filename |
@@ -65,7 +65,7 @@ Every apply attempt includes an audit entry. A crash can leave a `status: recove
 ### Known limitations and release criteria
 
 - MongoDB cannot revoke an already-running Node.js process's in-memory chunk write. `--quiesced` is a mandatory **external operational assertion**, not a technical fencing guarantee. For non-quiesceable workloads, a future generation-aware writer fencing design and driver integration would be needed; do **not** automate unlocking based on age.
-- A direct uploadStream `metadata.sha256` is not authenticated at write time. The tool verifies visible chunk structure and length, but does not treat this metadata as a trusted digest for ordinary uploads.
+- Direct owner records preserve SHA provenance: `upload()` with `options.sha256` stores an expected digest that was verified before writing; `uploadStream()` and arbitrary `metadata.sha256` are explicitly unverified. Recovery always verifies visible chunk structure and length. It enforces the digest for resumable sessions and pre-verified direct `upload()` only; an unverified metadata mismatch is recorded in the audit result as a warning and does not strand a physically complete file.
 - The recovery code is a source-checkout maintenance utility. It is not an online public `GridFSBucket` API and must not be exposed to unprivileged application callers.
 - `drop()` is bucket-wide and ignores per-ID reservations; maintenance must globally stop writers before dropping the bucket.
 - Deterministic tests must show all state paths, wrong-token and wrong-timestamp rejection, fail-closed interrupted recovery, no deletion of visible chunks, and idempotent restart after an interrupted abort/delete. **No merge until the code and this runbook pass the latest-HEAD required CI matrices and independent review.**
