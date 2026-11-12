@@ -4,12 +4,17 @@ on:
   pull_request:
     branches: [main, 'fix/gridfs-id-ownership-v01']
 
+concurrency:
+  group: gridfs-safety-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
   gridfs:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
