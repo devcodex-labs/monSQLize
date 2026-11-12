@@ -89,6 +89,8 @@ describe('GridFS operator recovery: deterministic post-crash state and chunk saf
             const now = new Date();
             await db.collection('b.uploads').insertOne({
                 _id: id, kind: 'direct', status: 'uploading', ownerToken: 'post-commit',
+                uploadMethod: 'upload', sha256Verified: true,
+                expectedSha256: digest(data), claimedSha256: digest(data),
                 createdAt: now, updatedAt: now,
             });
             await recover(db, id);
@@ -365,22 +367,83 @@ describe('GridFS operator recovery: deterministic post-crash state and chunk saf
     });
 
 
-    it('does not release a visible direct upload with inconsistent claimed SHA', async () => {
+    it('keeps a trusted upload SHA strict when recovering a visible direct file', async () => {
         await withRuntime(async (bucket, db) => {
             const id = new ObjectId();
             const actual = Buffer.from('EVIL');
+            const expectedSha256 = digest(Buffer.from('GOOD'));
             await bucket.upload('direct.bin', actual, { id });
             await db.collection('b.files').updateOne({ _id: id }, {
-                $set: { 'metadata.sha256': digest(Buffer.from('GOOD')) },
+                $set: { 'metadata.sha256': expectedSha256 },
             });
             const now = new Date();
             await db.collection('b.uploads').insertOne({
                 _id: id, kind: 'direct', status: 'uploading', ownerToken: 'crash',
+                uploadMethod: 'upload', sha256Verified: true,
+                expectedSha256, claimedSha256: expectedSha256,
                 createdAt: now, updatedAt: now,
             });
-            await assert.rejects(recover(db, id), /metadata SHA mismatch/);
+            await assert.rejects(recover(db, id), /Verified direct upload SHA provenance/);
             assert.equal((await db.collection('b.uploads').findOne({ _id: id }))?.status, 'recovering');
+            assert.equal(await db.collection('b.chunks').countDocuments({ files_id: id }), 1);
             assert.deepEqual(await bucket.download(id), actual);
+        });
+    });
+
+    it('recovers a complete uploadStream with mismatching metadata-only SHA and audits a warning', { timeout: 30_000 }, async () => {
+        await withRuntime(async (bucket, db) => {
+            const id = new ObjectId();
+            const actual = Buffer.from('EVIL');
+            const claimedSha256 = digest(Buffer.from('GOOD'));
+            const original = Collection.prototype.deleteOne;
+            let intercepted = false;
+            (Collection.prototype as any).deleteOne = async function (this: Collection, ...args: unknown[]) {
+                const filter = args[0] as Record<string, any>;
+                if (!intercepted && this.collectionName === 'b.uploads' &&
+                    filter?._id?.equals(id) && typeof filter?.ownerToken === 'string') {
+                    intercepted = true;
+                    throw new Error('simulated process interruption before direct owner release');
+                }
+                return (original as any).apply(this, args);
+            };
+            try {
+                const writable = bucket.uploadStream('stream.bin', { id, sha256: claimedSha256 });
+                writable.end(actual);
+                const uploaded = await writable.done;
+                assert.equal(String(uploaded.id), String(id));
+            } finally {
+                Collection.prototype.deleteOne = original;
+            }
+            const stranded = await db.collection('b.uploads').findOne({ _id: id });
+            assert.equal(stranded?.uploadMethod, 'uploadStream');
+            assert.equal(stranded?.sha256Verified, false);
+            assert.equal(stranded?.claimedSha256, claimedSha256);
+
+            const receipt = await recover(db, id);
+            assert.equal(receipt.outcome, 'completed');
+            assert.equal(receipt.verification.sha256Policy, 'uploadStream-metadata-only');
+            assert.equal(receipt.verification.sha256Verified, false);
+            assert.equal(receipt.verification.actualSha256, digest(actual));
+            assert.equal(receipt.verification.claimedSha256, claimedSha256);
+            assert.deepEqual(receipt.verification.warnings, ['metadata_sha256_mismatch_unverified']);
+            assert.deepEqual(await bucket.download(id), actual);
+            assert.equal(await db.collection('b.chunks').countDocuments({ files_id: id }), 1);
+            const audit = await db.collection('b.ownership_recovery_audit').findOne({ fileId: id, outcome: 'completed' });
+            assert.equal(audit?.verification?.sha256Policy, 'uploadStream-metadata-only');
+            assert.deepEqual(audit?.verification?.warnings, ['metadata_sha256_mismatch_unverified']);
+        });
+    });
+
+    it('rejects upload() SHA mismatch before creating files, chunks or an ownership record', async () => {
+        await withRuntime(async (bucket, db) => {
+            const id = new ObjectId();
+            const actual = Buffer.from('EVIL');
+            const expectedSha256 = digest(Buffer.from('GOOD'));
+            await assert.rejects(bucket.upload('bad.bin', actual, { id, sha256: expectedSha256 }),
+                (error: unknown) => (error as { code?: string }).code === 'GRIDFS_INTEGRITY_MISMATCH');
+            assert.equal(await db.collection('b.files').countDocuments({ _id: id }), 0);
+            assert.equal(await db.collection('b.chunks').countDocuments({ files_id: id }), 0);
+            assert.equal(await db.collection('b.uploads').countDocuments({ _id: id }), 0);
         });
     });
 
