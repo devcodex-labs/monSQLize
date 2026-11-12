@@ -117,4 +117,53 @@ describe('GridFS inspect-only orphan reporter', () => {
             }
         });
     });
+
+    it('caps findings, streams results, and resumes a large-cardinality scan without deleting', async () => {
+        await withDb(async (db) => {
+            const total = 250;
+            const ids = Array.from({ length: total }, () => new ObjectId());
+            ids.sort((left, right) => left.toString().localeCompare(right.toString()));
+            await db.collection('b.chunks').insertMany(ids.map((id) => ({
+                files_id: id, n: 0, data: Buffer.from('DATA'),
+            })));
+            const streamed: string[] = [];
+            const first = await inspectGridFSOrphans({
+                db, bucket: 'b', pageSize: 11, maxFindings: 40,
+                onFinding: (row: { filesId: string }) => { streamed.push(row.filesId); },
+            });
+            assert.equal(first.filesIdsScanned, 40);
+            assert.equal(first.findings.length, 40);
+            assert.equal(first.truncated, true);
+            assert.ok(first.resumeAfter?.filesId);
+            assert.equal(streamed.length, 40);
+            assert.equal(first.candidateOrphans, 40);
+            const second = await inspectGridFSOrphans({
+                db, bucket: 'b', pageSize: 11, maxFindings: 40, after: first.resumeAfter,
+                collectFindings: false,
+                onFinding: (row: { filesId: string }) => { streamed.push(row.filesId); },
+            });
+            assert.equal(second.findings, undefined);
+            assert.equal(second.filesIdsScanned, 40);
+            assert.equal(second.truncated, true);
+            const rest = await inspectGridFSOrphans({
+                db, bucket: 'b', pageSize: 17, maxFindings: 200, after: second.resumeAfter,
+            });
+            assert.equal(rest.truncated, false);
+            assert.equal(rest.resumeAfter, null);
+            assert.equal(first.filesIdsScanned + second.filesIdsScanned + rest.filesIdsScanned, total);
+            const seen = new Set([
+                ...first.findings.map((row: { filesId: string }) => row.filesId),
+                ...rest.findings.map((row: { filesId: string }) => row.filesId),
+                ...streamed,
+            ]);
+            // streamed includes first+second pages; rest.findings is the remainder
+            const all = new Set([
+                ...first.findings.map((row: { filesId: string }) => row.filesId),
+                ...streamed.slice(40),
+                ...rest.findings.map((row: { filesId: string }) => row.filesId),
+            ]);
+            assert.equal(all.size, total);
+            assert.equal(await db.collection('b.chunks').countDocuments(), total);
+        });
+    });
 });

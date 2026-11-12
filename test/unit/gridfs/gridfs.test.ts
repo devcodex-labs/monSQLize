@@ -758,4 +758,28 @@ describe('gridfs bucket', () => {
         const info = await bucket.finalizeResumableUpload(started.uploadId);
         assert.equal(info.length, payload.length);
     });
+
+    it('resumes a Readable append from expectedNextChunk after one full chunk then a trailing partial', async () => {
+        const { bucket, db } = bucketFor({ driver: false });
+        const payload = Buffer.from('aaaabbbb');
+        const started = await bucket.beginResumableUpload('resume.bin', {
+            length: payload.length, sha256: sha(payload), chunkSizeBytes: 4,
+        });
+        await assert.rejects(
+            () => bucket.appendChunks(started.uploadId, 0, Readable.from([payload.subarray(0, 4), Buffer.from('bb')])),
+            (error: unknown) => codeOf(error) === 'INVALID_ARGUMENT',
+        );
+        assert.deepEqual(
+            (await db.collection('fs.chunks').find({ files_id: started.uploadId }).sort({ n: 1 }).toArray()).map((chunk) => chunk.n),
+            [0],
+        );
+        assert.equal((await db.collection('fs.uploads').findOne({ _id: started.uploadId }))?.activeAppend, undefined);
+        await assert.rejects(
+            () => bucket.appendChunks(started.uploadId, 2, payload.subarray(4)),
+            (error: unknown) => codeOf(error) === 'GRIDFS_RESUME_MISMATCH' && detailsOf(error).expectedNextChunk === 1,
+        );
+        const resumed = await bucket.appendChunks(started.uploadId, 1, payload.subarray(4));
+        assert.equal(resumed.nextChunk, 2);
+        assert.equal((await bucket.finalizeResumableUpload(started.uploadId)).length, 8);
+    });
 });

@@ -11,6 +11,22 @@ function delayed(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function settles<T>(promise: Promise<T>, ms = 1000): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`did not settle within ${ms}ms`)), ms);
+    });
+    try {
+        return await Promise.race([promise, timeout]);
+    } finally {
+        if (timer) clearTimeout(timer);
+    }
+}
+
+function isClosedError(error: unknown): boolean {
+    return codeOf(error) === 'INVALID_ARGUMENT' && String((error as Error).message).includes('closed before the upload completed');
+}
+
 function readableFromBuffer(data: Buffer, highWaterMark: number): Readable {
     let offset = 0;
     return new Readable({
@@ -144,5 +160,49 @@ describe('consumeReadableChunks', () => {
             /write failed/,
         );
         assert.deepEqual(written, [0, 1]);
+    });
+
+    it('rejects a close-only destroy without hanging', async () => {
+        const source = new Readable({ read() { /* never ends */ } });
+        const consumption = consumeReadableChunks(source, 0, 8, 4, async () => undefined);
+        setImmediate(() => source.destroy());
+        await assert.rejects(() => settles(consumption), isClosedError);
+        assert.equal(source.listenerCount('readable'), 0);
+        assert.equal(source.listenerCount('close'), 0);
+    });
+
+    it('rejects a stream that is already destroyed before it is passed in', async () => {
+        const source = new Readable({ read() { /* never ends */ } });
+        source.destroy();
+        assert.equal(source.destroyed, true);
+        assert.equal(source.readableEnded, false);
+        await assert.rejects(
+            () => settles(consumeReadableChunks(source, 0, 8, 4, async () => undefined)),
+            isClosedError,
+        );
+    });
+
+    it('waits for an in-flight onChunk write before rejecting a mid-write destroy', async () => {
+        let writeFinished = false;
+        let pushed = false;
+        const source = new Readable({
+            read() {
+                if (!pushed) {
+                    pushed = true;
+                    this.push(Buffer.from('aaaa'));
+                }
+            },
+        });
+        const started = Date.now();
+        await assert.rejects(
+            () => settles(consumeReadableChunks(source, 0, 8, 4, async () => {
+                source.destroy();
+                await delayed(40);
+                writeFinished = true;
+            })),
+            isClosedError,
+        );
+        assert.equal(writeFinished, true);
+        assert.ok(Date.now() - started >= 40, 'rejected before the in-flight write finished');
     });
 });

@@ -8,14 +8,21 @@
  *   - owned: no files document, but an uploads owner/session exists
  *   - candidate_orphan: no files document and no uploads owner at re-check time
  *
- * This tool never deletes, never applies, and never uses document age as a
- * deletion criterion. It is not part of the public GridFSBucket API.
+ * Findings are streamed (onFinding / CLI NDJSON) and capped by maxFindings.
+ * Use resumeAfter.filesId (exclusive) to continue a truncated scan. Counters
+ * are accumulated incrementally for the current invocation only. This tool
+ * never deletes, never applies, and never uses document age as a deletion
+ * criterion. It is not part of the public GridFSBucket API.
  *
  * Usage:
  *   MONSQLIZE_RECOVERY_MONGODB_URI=... node scripts/maintenance/gridfs-inspect-orphans.cjs \
- *     --db=my_database --bucket=fs [--page-size=200]
+ *     --db=my_database --bucket=fs [--page-size=200] [--max-findings=1000] \
+ *     [--after-files-id=0123456789abcdef01234567]
  */
 const { MongoClient, ObjectId } = require('mongodb');
+
+const DEFAULT_MAX_FINDINGS = 1000;
+const MAX_FINDINGS_CAP = 100000;
 
 function fail(message) {
     const error = new Error(message);
@@ -49,34 +56,72 @@ async function classifyFilesId(db, bucket, group) {
     return finding;
 }
 
+function parseAfter(after) {
+    if (after == null) return null;
+    const raw = after.filesId ?? after.files_id;
+    if (raw == null || raw === '') fail('after.filesId is required to resume');
+    const filesId = raw instanceof ObjectId ? raw : new ObjectId(String(raw));
+    return filesId;
+}
+
 async function inspectGridFSOrphans(input) {
-    const { db, bucket, pageSize = 200 } = input;
+    const { db, bucket, pageSize = 200, onFinding, collectFindings = true } = input;
     if (!db || !bucket || typeof bucket !== 'string') fail('Invalid database or bucket');
     if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 10000) {
         fail('pageSize must be an integer between 1 and 10000');
     }
+    const maxFindings = input.maxFindings === undefined ? DEFAULT_MAX_FINDINGS : input.maxFindings;
+    if (!Number.isInteger(maxFindings) || maxFindings < 1 || maxFindings > MAX_FINDINGS_CAP) {
+        fail('maxFindings must be an integer between 1 and ' + MAX_FINDINGS_CAP);
+    }
     if (input.apply === true) fail('This inspector has no apply mode and never deletes');
 
+    const afterId = parseAfter(input.after || input.resumeAfter);
     const chunks = db.collection(bucket + '.chunks');
-    const findings = [];
-    let lastId = null;
+    const findings = collectFindings ? [] : undefined;
+    let lastId = afterId;
     let lastN = -1;
     let current = null;
     let pages = 0;
+    let filesIdsScanned = 0;
+    let visibleFiles = 0;
+    let owned = 0;
+    let candidateOrphans = 0;
+    let truncated = false;
+    let resumeAfter = null;
+    let lastClassifiedId = afterId;
 
     const flush = async (group) => {
-        findings.push(await classifyFilesId(db, bucket, group));
+        const finding = await classifyFilesId(db, bucket, group);
+        filesIdsScanned += 1;
+        if (finding.classification === 'visible_file') visibleFiles += 1;
+        else if (finding.classification === 'owned') owned += 1;
+        else candidateOrphans += 1;
+        if (typeof onFinding === 'function') onFinding(finding);
+        if (findings) findings.push(finding);
+        lastClassifiedId = group.id;
+        if (filesIdsScanned >= maxFindings) {
+            const more = await chunks.find({ files_id: { $gt: group.id } }).project({ _id: 1 }).limit(1).next();
+            if (more) {
+                truncated = true;
+                resumeAfter = {
+                    filesId: group.id instanceof ObjectId ? group.id.toHexString() : String(group.id),
+                };
+            }
+        }
     };
 
     for (;;) {
         const filter = lastId == null
             ? {}
-            : {
-                $or: [
-                    { files_id: { $gt: lastId } },
-                    { files_id: lastId, n: { $gt: lastN } },
-                ],
-            };
+            : lastN < 0
+                ? { files_id: { $gt: lastId } }
+                : {
+                    $or: [
+                        { files_id: { $gt: lastId } },
+                        { files_id: lastId, n: { $gt: lastN } },
+                    ],
+                };
         const page = await chunks.find(filter)
             .sort({ files_id: 1, n: 1 })
             .project({ files_id: 1, n: 1 })
@@ -87,7 +132,13 @@ async function inspectGridFSOrphans(input) {
         for (const doc of page) {
             const filesId = doc.files_id;
             if (!current || !sameId(current.id, filesId)) {
-                if (current) await flush(current);
+                if (current) {
+                    await flush(current);
+                    if (truncated) {
+                        current = null;
+                        break;
+                    }
+                }
                 current = { id: filesId, minN: doc.n, maxN: doc.n, count: 1 };
             } else {
                 current.count += 1;
@@ -97,20 +148,23 @@ async function inspectGridFSOrphans(input) {
             lastId = filesId;
             lastN = doc.n;
         }
+        if (truncated) break;
         if (page.length < pageSize) break;
     }
-    if (current) await flush(current);
+    if (current && !truncated) await flush(current);
 
-    const countOf = (name) => findings.filter((row) => row.classification === name).length;
     return {
         bucket,
         pageSize,
+        maxFindings,
         pages,
-        filesIdsScanned: findings.length,
-        visibleFiles: countOf('visible_file'),
-        owned: countOf('owned'),
-        candidateOrphans: countOf('candidate_orphan'),
-        findings,
+        filesIdsScanned,
+        visibleFiles,
+        owned,
+        candidateOrphans,
+        truncated,
+        resumeAfter,
+        ...(findings ? { findings } : {}),
     };
 }
 
@@ -139,17 +193,33 @@ async function main() {
     if (pageSizeArg !== undefined && (!Number.isInteger(pageSize) || pageSize < 1)) {
         fail('--page-size must be a positive integer');
     }
+    const maxArg = readArg(args, 'max-findings');
+    const maxFindings = maxArg === undefined ? DEFAULT_MAX_FINDINGS : Number(maxArg);
+    if (maxArg !== undefined && (!Number.isInteger(maxFindings) || maxFindings < 1)) {
+        fail('--max-findings must be a positive integer');
+    }
+    const afterFilesId = readArg(args, 'after-files-id');
     const client = new MongoClient(uri);
     await client.connect();
     try {
-        const report = await inspectGridFSOrphans({ db: client.db(dbName), bucket, pageSize });
-        process.stdout.write(JSON.stringify(report, null, 2) + '\n');
+        const report = await inspectGridFSOrphans({
+            db: client.db(dbName),
+            bucket,
+            pageSize,
+            maxFindings,
+            after: afterFilesId ? { filesId: afterFilesId } : undefined,
+            collectFindings: false,
+            onFinding: (finding) => {
+                process.stdout.write(JSON.stringify({ type: 'finding', ...finding }) + '\n');
+            },
+        });
+        process.stdout.write(JSON.stringify({ type: 'summary', ...report }) + '\n');
     } finally {
         await client.close();
     }
 }
 
-module.exports = { inspectGridFSOrphans };
+module.exports = { inspectGridFSOrphans, DEFAULT_MAX_FINDINGS };
 if (require.main === module) {
     main().catch((error) => {
         process.stderr.write(String(error.code || 'INSPECT_ERROR') + ': ' + error.message + '\n');
