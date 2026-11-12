@@ -46,7 +46,7 @@ node scripts/maintenance/gridfs-recover.cjs \
 
 | 状态 | 恢复动作 | 数据保护 |
 |---|---|---|
-| direct/uploading | 可见文件先验证 chunks 完整性及声明的 SHA 再解锁；没有 files 才清理孤儿 chunks | SHA 元数据不可信，但一旦与实际 bytes 不符就阻断；绝不删除可见文件 chunks |
+| direct/uploading | 验证 chunks 连续性、每块长度和总长度；只有 owner 记录了 upload() 写入前验证过的 expected SHA 时才强制校验摘要，否则将 metadata 不一致记为审计 warning | uploadStream() 与任意 metadata.sha256 都是不可信声明；绝不删除可见文件 chunks |
 | delete/deleting | 继续删除 files 和 chunks，之后才释放同 ID 的所有权 | 删除未完成时禁止替换上传 |
 | cleanup/cleaning | 可见文件保留 chunks，否则清理孤儿 chunks | 先查 files |
 | rename/renaming | 先核验可见文件及完整 chunks，缺失或损坏时保留锁；运维核查文件名 | 工具不猜测目标或重新执行 rename |
@@ -56,6 +56,8 @@ node scripts/maintenance/gridfs-recover.cjs \
 | aborting，文件不可见 | 清理孤儿 chunks，移除会话 | 无新写入抢占 |
 | aborting，文件可见 | **阻断；人工分析** | 严禁删除可见文件 |
 | recovering | 必须确认上一轮恢复执行器也已停止，加 `--prior-recovery-stopped` 并通过 CAS 取得新恢复令牌 | 同一旧快照不能双重恢复，失败仍保留锁 |
+
+Direct owner 会保存摘要来源：`upload()` 的 `options.sha256` 在写入前已对完整 payload 校验，记录为可信 expected SHA；`uploadStream()` 和任意 `metadata.sha256` 明确标记为未验证。恢复时始终校验可见文件的 chunks 连续性、每块长度和总长度；只有 resumable session 或预校验的 direct upload 才强制比对 SHA。未验证 metadata 与实际内容不一致时只写入审计 warning，不会让完整文件永久卡在 recovering 状态。
 
 ## 失败和验收边界
 
