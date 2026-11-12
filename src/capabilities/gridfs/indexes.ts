@@ -46,7 +46,7 @@ export class GridFSIndexLatch {
             // Migrate pending sessions before removing the legacy TTL index. The new index
             // applies only to explicitly expiring pending sessions, not active ownership claims.
             await uploads.updateMany(
-                { status: 'pending', createdAt: { $type: 'date' }, expiresAt: { $exists: false } },
+                { status: 'pending', activeAppend: { $exists: false }, createdAt: { $type: 'date' }, expiresAt: { $exists: false } },
                 [{ $set: { expiresAt: { $add: [{ $ifNull: ['$updatedAt', '$createdAt'] }, UPLOADS_TTL_SECONDS * 1000] } } }],
             );
             try {

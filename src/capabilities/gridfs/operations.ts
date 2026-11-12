@@ -84,7 +84,13 @@ export async function uploadFile(
     const id = options.id ?? new ObjectId();
     // One atomic reservation excludes all other GridFS writers/deleters under this ID.
     // The visible-file preflight above is not sufficient across collections or processes.
-    const owner = await claimOwner(ctx, id, 'direct', 'upload');
+    let owner: Awaited<ReturnType<typeof claimOwner>>;
+    try {
+        owner = await claimOwner(ctx, id, 'direct', 'upload');
+    } catch (error) {
+        if (source) releaseReadable(source);
+        throw error;
+    }
     try {
         if (await getFile(ctx, id)) {
             if (source) releaseReadable(source);
