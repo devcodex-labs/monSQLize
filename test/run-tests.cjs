@@ -138,6 +138,7 @@ const INTEGRATION = [
     'test/integration/gridfs/gridfs.test.js',
     'test/integration/gridfs/gridfs-scan-regressions.test.js',
     'test/integration/gridfs/gridfs-ownership-regressions.test.js',
+    'test/integration/gridfs/gridfs-stale-recovery.test.js',
     'test/integration/mongodb/review-repair-regressions.test.js',
     'test/integration/model/review-model-regressions.test.js',
     'test/integration/slow-query-log/review-storage-regressions.test.js',

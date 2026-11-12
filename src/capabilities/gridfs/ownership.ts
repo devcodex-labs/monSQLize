@@ -30,10 +30,17 @@ export async function claimOwner(
 }
 
 export async function releaseOwner(ctx: GridFSContext, owner: GridFSOwner, operation: string): Promise<void> {
+    const status = owner.kind === 'direct' ? 'uploading'
+        : owner.kind === 'delete' ? 'deleting'
+            : owner.kind === 'rename' ? 'renaming' : 'cleaning';
     try {
-        await ctx.db.collection(uploadsCollectionName(ctx.bucketName)).deleteOne({
-            _id: owner.id, kind: owner.kind, ownerToken: owner.token,
+        const released = await ctx.db.collection(uploadsCollectionName(ctx.bucketName)).deleteOne({
+            _id: owner.id, kind: owner.kind, ownerToken: owner.token, status,
         });
+        // Recovery intentionally retains the original kind/ownerToken while
+        // changing status to recovering. A late original writer must not be
+        // able to remove that new recovery fence with its stale ownerToken.
+        if (released.deletedCount !== 1) throw uploadBusy(operation, ctx, owner.id);
     } catch (error) {
         throw mapDriverError(error, operation, ctx, { uploadId: owner.id });
     }

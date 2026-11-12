@@ -99,6 +99,8 @@ Retrying `finalizeResumableUpload` is idempotent while the session still exists:
 
 `<bucket>.uploads` uses an `expiresAt` TTL index (`expireAfterSeconds: 0`). Pending resumable sessions expire after **7 days without a successful append**; a successful append refreshes their expiry. Active append/finalize/abort claims and direct upload/delete reservations have no TTL and must be recovered explicitly after a crash, otherwise a stale writer could resume after its lock expires. MongoDB TTL deletion is asynchronous and removes only the session document, not chunks. Known orphan chunks can be cleaned with `abortResumableUpload(uploadId)` after an exclusive cleanup claim, or by starting a new resumable upload with the same ID. Existing `createdAt` TTL indexes are migrated to `expiresAt`; legacy pending expiry is derived from their last update. The migration requires stopping/draining old GridFS writers; mixing old and new writer versions is unsafe.
 
+**Crash and migration recovery:** see [the operator runbook](./gridfs-recovery.md). Recovery is dry-run by default and requires verified process quiescence, an exact state/token check and an audit record; do not delete stale-looking reservations manually.
+
 ## Indexes
 
 `upload`, `uploadStream` (before the driver stream is opened), `beginResumableUpload`, and `ensureIndexes` create:

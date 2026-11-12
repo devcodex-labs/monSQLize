@@ -2,7 +2,11 @@ name: GridFS Ownership Safety Validation
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, 'fix/gridfs-id-ownership-v01']
+
+concurrency:
+  group: gridfs-safety-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -10,6 +14,7 @@ permissions:
 jobs:
   gridfs:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -39,4 +44,5 @@ jobs:
             .generated/test-dist/test/unit/gridfs/gridfs.test.js \
             .generated/test-dist/test/integration/gridfs/gridfs.test.js \
             .generated/test-dist/test/integration/gridfs/gridfs-scan-regressions.test.js \
-            .generated/test-dist/test/integration/gridfs/gridfs-ownership-regressions.test.js
+            .generated/test-dist/test/integration/gridfs/gridfs-ownership-regressions.test.js \
+            .generated/test-dist/test/integration/gridfs/gridfs-stale-recovery.test.js

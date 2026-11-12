@@ -4,11 +4,18 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, 'fix/gridfs-id-ownership-v01']
+
+# Superseded PR revisions must not accumulate long-running test jobs.
+# Cancelled prior SHAs are never accepted as evidence for the current HEAD.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -50,6 +57,7 @@ jobs:
 
   release-gate:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v5
