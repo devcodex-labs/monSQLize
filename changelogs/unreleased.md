@@ -2,7 +2,7 @@
 
 ## Changes after v3.5.3
 
-No changes have been staged after 3.5.3. The GridFS and Search index fixes from the 2026-11-02 weekly scan are assigned to the [3.5.3 versioned notes](./v3.5.3.md); the vector search guidance and Search docs regrouping are in [3.5.2](./v3.5.2.md). Publication is established by the npm registry and immutable tag, not this file.
+Candidate work (not yet released): GridFS per-file ID ownership, durable append/finalize/abort state, deletion fencing, and expiresAt idle-TTL migration. These changes require a coordinated writer drain before upgrading and are pending full compatibility verification. No release version or publication is claimed. The GridFS and Search index fixes from the 2026-11-02 weekly scan are assigned to the [3.5.3 versioned notes](./v3.5.3.md); the vector search guidance and Search docs regrouping are in [3.5.2](./v3.5.2.md). Publication is established by the npm registry and immutable tag, not this file.
 
 ## Archived preparation notes for the 3.3.2 candidate
 

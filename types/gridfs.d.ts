@@ -56,7 +56,7 @@ export interface GridFSUploadOptions {
     chunkSizeBytes?: number;
 }
 
-/** `uploadStream` writes `sha256` into metadata and does not support `ifExists`. */
+/** `uploadStream` writes `sha256` into metadata without validating bytes, and does not support `ifExists`. */
 export interface GridFSUploadStreamOptions extends Omit<GridFSUploadOptions, 'ifExists'> {}
 
 /**
@@ -139,8 +139,8 @@ export interface MonSQLizeGridFSBucket {
     beginResumableUpload(filename: string, opts: BeginResumableUploadOptions): Promise<BeginResumableUploadResult>;
     appendChunks(uploadId: ObjectId, fromChunk: number, data: Buffer | Uint8Array | Readable): Promise<AppendChunksResult>;
     finalizeResumableUpload(uploadId: ObjectId): Promise<GridFSFileInfo>;
-    /** Deletes the session and any chunks. A missing or already aborted session resolves. */
+    /** Aborts pending sessions only; an active append/finalize may reject with GRIDFS_UPLOAD_BUSY. */
     abortResumableUpload(uploadId: ObjectId): Promise<void>;
-    /** Creates the standard files/chunks indexes, `metadata.sha256`, and the uploads TTL index. */
+    /** Creates files/chunks indexes, `metadata.sha256` and expiresAt TTL; migrates the legacy createdAt TTL. */
     ensureIndexes(): Promise<void>;
 }
