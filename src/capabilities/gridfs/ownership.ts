@@ -36,8 +36,16 @@ export async function claimOwner(
     if (kind !== 'direct' && provenance) {
         throw new Error('Only direct GridFS ownership accepts upload SHA provenance');
     }
-    if (provenance?.sha256Verified && (!provenance.expectedSha256 || !/^[0-9a-f]{64}$/.test(provenance.expectedSha256))) {
-        throw new Error('Verified direct GridFS ownership requires a valid expected SHA-256');
+    if (provenance?.sha256Verified && (
+        provenance.uploadMethod !== 'upload' ||
+        !provenance.expectedSha256 ||
+        !/^[0-9a-f]{64}$/.test(provenance.expectedSha256) ||
+        provenance.claimedSha256 !== provenance.expectedSha256
+    )) {
+        throw new Error('Verified direct GridFS ownership requires a consistent pre-verified upload SHA-256');
+    }
+    if (provenance && !provenance.sha256Verified && provenance.expectedSha256 !== undefined) {
+        throw new Error('Unverified direct GridFS ownership cannot carry a trusted expected SHA-256');
     }
     try {
         await ctx.db.collection(uploadsCollectionName(ctx.bucketName)).insertOne({
