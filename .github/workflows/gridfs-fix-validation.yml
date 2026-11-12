@@ -2,7 +2,7 @@ name: GridFS Ownership Safety Validation
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, 'fix/gridfs-id-ownership-v01']
 
 permissions:
   contents: read
@@ -39,4 +39,5 @@ jobs:
             .generated/test-dist/test/unit/gridfs/gridfs.test.js \
             .generated/test-dist/test/integration/gridfs/gridfs.test.js \
             .generated/test-dist/test/integration/gridfs/gridfs-scan-regressions.test.js \
-            .generated/test-dist/test/integration/gridfs/gridfs-ownership-regressions.test.js
+            .generated/test-dist/test/integration/gridfs/gridfs-ownership-regressions.test.js \
+            .generated/test-dist/test/integration/gridfs/gridfs-stale-recovery.test.js
