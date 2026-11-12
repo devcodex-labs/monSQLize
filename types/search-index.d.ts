@@ -9,8 +9,12 @@ export type SearchIndexType = 'search' | 'vectorSearch';
 /** Origin of `SearchIndexInfo.type`. */
 export type SearchIndexTypeSource = 'server' | 'inferred' | 'unknown';
 
-/** Server-reported Search index status (passed through unchanged). */
-export type SearchIndexStatus =
+/**
+ * Documented server-reported Search index statuses.
+ * Runtime values are not limited to this set: unknown future statuses are
+ * passed through unchanged and are never rewritten to `PENDING`.
+ */
+export type KnownSearchIndexStatus =
     | 'PENDING'
     | 'BUILDING'
     | 'READY'
@@ -18,6 +22,12 @@ export type SearchIndexStatus =
     | 'STALE'
     | 'DELETING'
     | 'DOES_NOT_EXIST';
+
+/**
+ * Server-reported Search index status, passed through unchanged.
+ * Known literals stay completable; unknown future server strings remain assignable.
+ */
+export type SearchIndexStatus = KnownSearchIndexStatus | (string & {});
 
 /** Search index definition submitted to the server. */
 export interface SearchIndexSpec {

@@ -2,7 +2,7 @@
  * Normalizes driver `$listSearchIndexes` documents into SearchIndexInfo.
  */
 import type { Document } from 'mongodb';
-import type { SearchIndexInfo, SearchIndexStatus, SearchIndexType, SearchIndexTypeSource } from './types';
+import type { KnownSearchIndexStatus, SearchIndexInfo, SearchIndexType, SearchIndexTypeSource } from './types';
 
 const STATUSES: ReadonlySet<string> = new Set(['PENDING', 'BUILDING', 'READY', 'FAILED', 'STALE', 'DELETING', 'DOES_NOT_EXIST']);
 
@@ -14,7 +14,7 @@ export function normalizeSearchIndexInfo(doc: Document): SearchIndexInfo {
     const info: SearchIndexInfo = {
         name: String(doc.name),
         // Unknown future statuses are passed through verbatim rather than rewritten.
-        status: (typeof doc.status === 'string' && doc.status.length > 0 ? doc.status : 'PENDING') as SearchIndexStatus,
+        status: typeof doc.status === 'string' && doc.status.length > 0 ? doc.status : 'PENDING',
         queryable: doc.queryable === true,
         typeSource: 'unknown',
         raw: doc as Record<string, unknown>,
@@ -32,7 +32,7 @@ export function normalizeSearchIndexInfo(doc: Document): SearchIndexInfo {
     return info;
 }
 
-export function isKnownSearchIndexStatus(status: string): boolean {
+export function isKnownSearchIndexStatus(status: string): status is KnownSearchIndexStatus {
     return STATUSES.has(status);
 }
 

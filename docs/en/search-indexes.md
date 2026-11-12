@@ -35,9 +35,13 @@ interface SearchIndexSpec {
   definition: Record<string, unknown>;
 }
 
+type KnownSearchIndexStatus =
+  'PENDING' | 'BUILDING' | 'READY' | 'FAILED' | 'STALE' | 'DELETING' | 'DOES_NOT_EXIST';
+type SearchIndexStatus = KnownSearchIndexStatus | (string & {});
+
 interface SearchIndexInfo {
   name: string;
-  status: 'PENDING' | 'BUILDING' | 'READY' | 'FAILED' | 'STALE' | 'DELETING' | 'DOES_NOT_EXIST';
+  status: SearchIndexStatus;
   queryable: boolean;
   type?: 'search' | 'vectorSearch';
   typeSource: 'server' | 'inferred' | 'unknown';
@@ -106,7 +110,9 @@ When an in-place update is not available, change the definition without downtime
 
 If a short outage is acceptable, drop the index, wait for `dropped`, and create it again. Searches fail until it is queryable again. The gap grows with data size. On atlas-local, 50,000 documents with 64 dimensions took about 1–2 seconds.
 
-`status` passes the server value through unchanged. Use `queryable` to decide whether searches can run and `status` to show progress.
+`status` passes the server value through unchanged, including unknown future statuses such as `PAUSED_BY_SERVER`. Those values are not rewritten to `PENDING`. TypeScript still autocompletes the documented `KnownSearchIndexStatus` literals, and `SearchIndexStatus` also accepts other server strings, including `''`. At runtime, `normalizeSearchIndexInfo` normalizes an empty, missing, or non-string status to `PENDING`, so list and wait results do not surface an empty `status`. Use `queryable` to decide whether searches can run and `status` to show progress.
+
+The three `waitForSearchIndex` `until` values are evaluated separately (see [waitForSearchIndex](#waitforsearchindex)). `until: 'queryable'` (the default) resolves when `queryable` is true, regardless of the status literal — including `FAILED` or an unknown future value such as `PAUSED_BY_SERVER`. It rejects with `SEARCH_INDEX_BUILD_FAILED` only when `queryable` is false and `status` is `FAILED`. A `READY` status with `queryable` false is not an immediate success and keeps polling. `until: 'ready'` resolves when `status` is `READY` and rejects with `SEARCH_INDEX_BUILD_FAILED` when `status` is `FAILED`. `until: 'dropped'` resolves when `status` is `DOES_NOT_EXIST`; `FAILED` keeps waiting. An unknown status that does not meet those success or failure rules keeps polling until timeout.
 
 ### dropSearchIndex
 

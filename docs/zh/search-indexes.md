@@ -35,9 +35,13 @@ interface SearchIndexSpec {
   definition: Record<string, unknown>;
 }
 
+type KnownSearchIndexStatus =
+  'PENDING' | 'BUILDING' | 'READY' | 'FAILED' | 'STALE' | 'DELETING' | 'DOES_NOT_EXIST';
+type SearchIndexStatus = KnownSearchIndexStatus | (string & {});
+
 interface SearchIndexInfo {
   name: string;
-  status: 'PENDING' | 'BUILDING' | 'READY' | 'FAILED' | 'STALE' | 'DELETING' | 'DOES_NOT_EXIST';
+  status: SearchIndexStatus;
   queryable: boolean;
   type?: 'search' | 'vectorSearch';
   typeSource: 'server' | 'inferred' | 'unknown';
@@ -106,7 +110,9 @@ Community 8.2.12 配合 `mongodb/mongodb-community-search` 会接受更新。20,
 
 如果能接受短暂中断，可以先删除索引、等待 `dropped`、再重新创建。在它重新可查询之前，检索会失败。中断时长随数据量增长。atlas-local 上 50,000 篇文档、64 维约 1–2 秒。
 
-`status` 原样透传服务端的值。判断能否检索看 `queryable`，展示进度看 `status`。
+`status` 原样透传服务端的值，包括尚不在文档中的未来状态（例如 `PAUSED_BY_SERVER`），不会把未知状态改写成 `PENDING`。TypeScript 仍会补全已记录的 `KnownSearchIndexStatus` 字面量，同时 `SearchIndexStatus` 也接受其他服务端字符串，包括 `''`。运行时 `normalizeSearchIndexInfo` 会把空、缺失或非字符串的 status 规范化为 `PENDING`，因此 list / wait 的结果不会出现空的 `status`。判断能否检索看 `queryable`，展示进度看 `status`。
+
+`waitForSearchIndex` 的三种 `until` 条件是分开判断的（见 [waitForSearchIndex](#waitforsearchindex)）。`until: 'queryable'`（默认）在 `queryable` 为 true 时返回，与 status 字面量无关，即使是 `FAILED` 或未知的未来状态（例如 `PAUSED_BY_SERVER`）也可以成功；仅在 `queryable` 为 false 且 `status` 为 `FAILED` 时以 `SEARCH_INDEX_BUILD_FAILED` 拒绝。`status` 为 `READY` 但 `queryable` 为 false 时不会立即成功，会继续轮询。`until: 'ready'` 在 `status` 为 `READY` 时返回，遇到 `FAILED` 以 `SEARCH_INDEX_BUILD_FAILED` 拒绝。`until: 'dropped'` 在 `status` 为 `DOES_NOT_EXIST` 时返回，遇到 `FAILED` 继续等待。不满足上述成功或失败规则的未知状态会继续轮询，直到超时。
 
 ### dropSearchIndex
 

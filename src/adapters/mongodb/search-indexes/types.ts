@@ -12,6 +12,7 @@ export type {
     SearchIndexInfo,
     SearchIndexManagement,
     SearchIndexSpec,
+    KnownSearchIndexStatus,
     SearchIndexStatus,
     SearchIndexType,
     SearchIndexTypeSource,
