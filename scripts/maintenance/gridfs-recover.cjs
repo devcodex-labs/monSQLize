@@ -78,11 +78,23 @@ function classify(doc) {
     fail('Unsupported owner state: do not recover automatically');
 }
 
-async function contiguousChunkPrefix(db, bucket, id) {
+async function contiguousChunkPrefix(db, bucket, id, session) {
+    if (!Number.isSafeInteger(session.length) || session.length < 1 ||
+        !Number.isSafeInteger(session.chunkSizeBytes) || session.chunkSizeBytes < 1) {
+        fail('Pending session has invalid length/chunkSizeBytes; preserve ownership');
+    }
+    const count = Math.ceil(session.length / session.chunkSizeBytes);
     let next = 0;
     for await (const doc of db.collection(bucket + '.chunks')
-        .find({ files_id: id }).sort({ n: 1 }).project({ n: 1 })) {
-        if (doc.n !== next) break;
+        .find({ files_id: id }).sort({ n: 1 })) {
+        if (doc.n !== next || next >= count) {
+            fail('Interrupted append contains a gap or extra chunk; preserve ownership');
+        }
+        const want = next === count - 1
+            ? session.length - next * session.chunkSizeBytes : session.chunkSizeBytes;
+        if (toBuffer(doc.data).length !== want) {
+            fail('Interrupted append contains a malformed chunk; preserve ownership');
+        }
         next++;
     }
     return next;
@@ -159,7 +171,7 @@ async function recoverGridFSOwnership(input) {
         const chunks = db.collection(bucket + '.chunks');
         const files = db.collection(bucket + '.files');
         if (sourceStatus === 'activeAppend') {
-            const nextChunk = await contiguousChunkPrefix(db, bucket, id);
+            const nextChunk = await contiguousChunkPrefix(db, bucket, id, doc);
             const changed = await uploads.updateOne(held, {
                 $set: { status: 'pending', nextChunk, updatedAt: new Date(),
                     expiresAt: new Date(Date.now() + TTL_MS) },
