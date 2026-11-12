@@ -12,14 +12,37 @@ import { chunksCollectionName, filesCollectionName, uploadsCollectionName } from
 export type GridFSOwnerKind = 'direct' | 'delete' | 'rename' | 'cleanup';
 export interface GridFSOwner { id: ObjectId; token: string; kind: GridFSOwnerKind }
 
+/**
+ * Provenance for a direct upload's optional SHA metadata.
+ * upload() validates its supplied sha256 against the complete payload before
+ * claiming ownership; uploadStream() stores caller SHA as metadata only.
+ */
+export interface GridFSDirectOwnerProvenance {
+    uploadMethod: 'upload' | 'uploadStream';
+    sha256Verified: boolean;
+    expectedSha256?: string;
+    claimedSha256?: string;
+}
+
 export async function claimOwner(
     ctx: GridFSContext, id: ObjectId, kind: GridFSOwnerKind, operation: string,
+    provenance?: GridFSDirectOwnerProvenance,
 ): Promise<GridFSOwner> {
     await ctx.indexes.ensure();
     const token = randomUUID();
+    if (kind === 'direct' && !provenance) {
+        throw new Error('Direct GridFS ownership requires upload SHA provenance');
+    }
+    if (kind !== 'direct' && provenance) {
+        throw new Error('Only direct GridFS ownership accepts upload SHA provenance');
+    }
+    if (provenance?.sha256Verified && (!provenance.expectedSha256 || !/^[0-9a-f]{64}$/.test(provenance.expectedSha256))) {
+        throw new Error('Verified direct GridFS ownership requires a valid expected SHA-256');
+    }
     try {
         await ctx.db.collection(uploadsCollectionName(ctx.bucketName)).insertOne({
             _id: id, kind, status: kind === 'direct' ? 'uploading' : kind === 'delete' ? 'deleting' : kind === 'rename' ? 'renaming' : 'cleaning',
+            ...(provenance ?? {}),
             ownerToken: token, createdAt: new Date(), updatedAt: new Date(),
         });
     } catch (error) {
