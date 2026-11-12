@@ -258,6 +258,24 @@ describe('GridFS operator recovery: deterministic post-crash state and chunk saf
         });
     });
 
+    it('rejects corrupt recovery origin metadata rather than unlocking the ID', async () => {
+        await withRuntime(async (_, db) => {
+            const id = new ObjectId();
+            const now = new Date();
+            await db.collection('b.uploads').insertOne({
+                _id: id, kind: 'delete', status: 'recovering', ownerToken: 'old',
+                createdAt: now, updatedAt: now,
+                recovery: { token: 'recovery-token', fromStatus: 'uploading' },
+            });
+            await db.collection('b.chunks').insertOne({
+                files_id: id, n: 0, data: Buffer.from('GOOD'),
+            });
+            await assert.rejects(recover(db, id), /Inconsistent or unsupported owner origin/);
+            assert.equal(await db.collection('b.uploads').countDocuments({ _id: id }), 1);
+            assert.equal(await db.collection('b.chunks').countDocuments({ files_id: id }), 1);
+        });
+    });
+
     it('refuses to clear aborting ownership if a visible file already owns the chunks', async () => {
         await withRuntime(async (bucket, db) => {
             const id = new ObjectId();
