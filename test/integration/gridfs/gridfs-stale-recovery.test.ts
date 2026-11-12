@@ -81,19 +81,35 @@ describe('GridFS operator recovery: deterministic post-crash state and chunk saf
         });
     });
 
-    it('preserves committed direct upload bytes while releasing a stranded owner', async () => {
+    it('preserves a pre-verified upload() SHA when the process crashes before owner release', { timeout: 30_000 }, async () => {
         await withRuntime(async (bucket, db) => {
             const id = new ObjectId();
             const data = Buffer.from('GOODGOOD');
-            await bucket.upload('committed.bin', data, { id, sha256: digest(data) });
-            const now = new Date();
-            await db.collection('b.uploads').insertOne({
-                _id: id, kind: 'direct', status: 'uploading', ownerToken: 'post-commit',
-                uploadMethod: 'upload', sha256Verified: true,
-                expectedSha256: digest(data), claimedSha256: digest(data),
-                createdAt: now, updatedAt: now,
-            });
-            await recover(db, id);
+            const hash = digest(data);
+            const original = Collection.prototype.deleteOne;
+            let intercepted = false;
+            (Collection.prototype as any).deleteOne = async function (this: Collection, ...args: unknown[]) {
+                const filter = args[0] as Record<string, any>;
+                if (!intercepted && this.collectionName === 'b.uploads' &&
+                    filter?._id?.equals(id) && typeof filter?.ownerToken === 'string') {
+                    intercepted = true;
+                    throw new Error('simulated process interruption before owner release');
+                }
+                return (original as any).apply(this, args);
+            };
+            try {
+                await bucket.upload('committed.bin', data, { id, sha256: hash });
+            } finally {
+                Collection.prototype.deleteOne = original;
+            }
+            const owner = await db.collection('b.uploads').findOne({ _id: id });
+            assert.equal(owner?.uploadMethod, 'upload');
+            assert.equal(owner?.sha256Verified, true);
+            assert.equal(owner?.expectedSha256, hash);
+            assert.equal(owner?.claimedSha256, hash);
+            const receipt = await recover(db, id);
+            assert.equal(receipt.verification.sha256Policy, 'direct-upload-preverified');
+            assert.equal(receipt.verification.sha256Verified, true);
             assert.equal(await db.collection('b.uploads').countDocuments({ _id: id }), 0);
             assert.equal(await db.collection('b.chunks').countDocuments({ files_id: id }), 2);
             assert.deepEqual(await bucket.download(id), data);
