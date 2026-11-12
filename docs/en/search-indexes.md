@@ -35,9 +35,13 @@ interface SearchIndexSpec {
   definition: Record<string, unknown>;
 }
 
+type KnownSearchIndexStatus =
+  'PENDING' | 'BUILDING' | 'READY' | 'FAILED' | 'STALE' | 'DELETING' | 'DOES_NOT_EXIST';
+type SearchIndexStatus = KnownSearchIndexStatus | (string & {});
+
 interface SearchIndexInfo {
   name: string;
-  status: 'PENDING' | 'BUILDING' | 'READY' | 'FAILED' | 'STALE' | 'DELETING' | 'DOES_NOT_EXIST';
+  status: SearchIndexStatus;
   queryable: boolean;
   type?: 'search' | 'vectorSearch';
   typeSource: 'server' | 'inferred' | 'unknown';
@@ -106,7 +110,7 @@ When an in-place update is not available, change the definition without downtime
 
 If a short outage is acceptable, drop the index, wait for `dropped`, and create it again. Searches fail until it is queryable again. The gap grows with data size. On atlas-local, 50,000 documents with 64 dimensions took about 1–2 seconds.
 
-`status` passes the server value through unchanged. Use `queryable` to decide whether searches can run and `status` to show progress.
+`status` passes the server value through unchanged, including unknown future statuses such as `PAUSED_BY_SERVER`. Those values are not rewritten to `PENDING`. TypeScript still autocompletes the documented `KnownSearchIndexStatus` literals, and `SearchIndexStatus` also accepts other non-empty server strings. Use `queryable` to decide whether searches can run and `status` to show progress. `waitForSearchIndex` still treats only `READY` and `FAILED` as terminal for the `ready` / `queryable` waits; an unknown status keeps polling until timeout, `queryable`, or a documented terminal status.
 
 ### dropSearchIndex
 

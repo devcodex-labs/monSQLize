@@ -9,5 +9,5 @@ export {
     waitForSearchIndexOp,
 } from './operations';
 export { classifySearchIndexError, mapSearchIndexError } from './errors';
-export { normalizeSearchIndexInfo, missingSearchIndexInfo } from './normalize';
+export { normalizeSearchIndexInfo, missingSearchIndexInfo, isKnownSearchIndexStatus } from './normalize';
 export type { SearchIndexCollectionLike, SearchIndexContext } from './types';

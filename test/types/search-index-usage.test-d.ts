@@ -2,8 +2,10 @@ import { expectAssignable, expectError, expectType } from 'tsd';
 import MonSQLize, {
     ErrorCodes,
     type CreateSearchIndexResult,
+    type KnownSearchIndexStatus,
     type SearchIndexInfo,
     type SearchIndexSpec,
+    type SearchIndexStatus,
     type SearchIndexTypeSource,
 } from 'monsqlize';
 
@@ -29,6 +31,13 @@ expectAssignable<'created' | 'skipped' | 'updated'>(result.action);
 declare const info: SearchIndexInfo;
 expectType<SearchIndexTypeSource>(info.typeSource);
 expectAssignable<'search' | 'vectorSearch' | undefined>(info.type);
+expectAssignable<SearchIndexStatus>(info.status);
+expectAssignable<SearchIndexStatus>('READY');
+expectAssignable<SearchIndexStatus>('PAUSED_BY_SERVER');
+expectAssignable<KnownSearchIndexStatus>('READY');
+declare function acceptKnownStatus(status: KnownSearchIndexStatus): void;
+acceptKnownStatus('READY');
+expectError(acceptKnownStatus('PAUSED_BY_SERVER'));
 
 expectError(docs.createSearchIndex({ name: 'x', definition: {} }));
 expectError(docs.createSearchIndex(spec, { ifExists: 'replace' }));

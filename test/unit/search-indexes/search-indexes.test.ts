@@ -6,6 +6,7 @@ import {
     createSearchIndexesOp,
     dropSearchIndexOp,
     getSearchIndexOp,
+    isKnownSearchIndexStatus,
     listSearchIndexesOp,
     normalizeSearchIndexInfo,
     updateSearchIndexOp,
@@ -96,6 +97,27 @@ describe('search indexes: type resolution (A02 v1.1 §1.1)', () => {
         assert.equal(info.type, undefined);
         assert.equal(info.typeSource, 'unknown');
         assert.equal(info.queryable, false);
+    });
+    it('passes unknown future statuses through unchanged', () => {
+        const info = normalizeSearchIndexInfo({ name: 'a', status: 'PAUSED_BY_SERVER', queryable: false });
+        assert.equal(info.status, 'PAUSED_BY_SERVER');
+        assert.equal(isKnownSearchIndexStatus(info.status), false);
+    });
+    it('does not rewrite a known status other than PENDING', () => {
+        for (const status of ['BUILDING', 'READY', 'FAILED', 'STALE', 'DELETING', 'DOES_NOT_EXIST']) {
+            const info = normalizeSearchIndexInfo({ name: 'a', status });
+            assert.equal(info.status, status);
+            assert.equal(isKnownSearchIndexStatus(info.status), true);
+        }
+        assert.equal(isKnownSearchIndexStatus('PENDING'), true);
+        assert.equal(isKnownSearchIndexStatus('paused_by_server'), false);
+        assert.equal(isKnownSearchIndexStatus(''), false);
+    });
+    it('treats a missing or empty status as PENDING', () => {
+        assert.equal(normalizeSearchIndexInfo({ name: 'a' }).status, 'PENDING');
+        assert.equal(normalizeSearchIndexInfo({ name: 'a', status: '' }).status, 'PENDING');
+        assert.equal(normalizeSearchIndexInfo({ name: 'a', status: 1 }).status, 'PENDING');
+        assert.equal(isKnownSearchIndexStatus(normalizeSearchIndexInfo({ name: 'a' }).status), true);
     });
     it('list filters by resolved type and excludes unknown', async () => {
         const { ctx } = fakeCollection({ lists: [[
@@ -268,6 +290,18 @@ describe('search indexes: waitForSearchIndex', () => {
         assert.equal((await waitForSearchIndexOp(a.ctx, 'v', { until: 'ready', intervalMs: 100 })).status, 'READY');
         const b = fakeCollection({ lists: [[{ name: 'v', status: 'FAILED', queryable: true }]] });
         await rejectsCode(waitForSearchIndexOp(b.ctx, 'v', { until: 'ready', intervalMs: 100 }), 'SEARCH_INDEX_BUILD_FAILED');
+    });
+    it('ready: an unknown future status is not terminal and times out', async () => {
+        const { ctx } = fakeCollection({ lists: [[{ name: 'v', status: 'PAUSED_BY_SERVER', queryable: false }]] });
+        const err = await rejectsCode(waitForSearchIndexOp(ctx, 'v', { until: 'ready', intervalMs: 100, timeoutMs: 250 }), 'SEARCH_INDEX_WAIT_TIMEOUT');
+        const details = (err as { details?: Array<{ last?: { status?: string } }> }).details;
+        assert.equal(details?.[0]?.last?.status, 'PAUSED_BY_SERVER');
+    });
+    it('queryable: an unknown future status still succeeds when queryable', async () => {
+        const { ctx } = fakeCollection({ lists: [[{ name: 'v', status: 'PAUSED_BY_SERVER', queryable: true }]] });
+        const info = await waitForSearchIndexOp(ctx, 'v', { intervalMs: 100 });
+        assert.equal(info.status, 'PAUSED_BY_SERVER');
+        assert.equal(info.queryable, true);
     });
     it('dropped: resolves on DOES_NOT_EXIST, keeps waiting on FAILED', async () => {
         const { ctx } = fakeCollection({ lists: [[{ name: 'v', status: 'DELETING' }], [{ name: 'v', status: 'FAILED' }], []] });
