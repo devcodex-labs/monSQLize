@@ -386,7 +386,7 @@ describe('GridFS remaining-issue regressions (begin race, finalize rollback, str
                 const first = bucket.finalizeResumableUpload(id);
                 pending.push(first);
                 await firstCleanup.wait;
-                const oldRetry = bucket.finalizeResumableUpload(id);
+                const oldRetry = assert.rejects(bucket.finalizeResumableUpload(id), { code: 'GRIDFS_UPLOAD_BUSY' });
                 pending.push(oldRetry);
                 await retryCleanup.wait;
                 finishFirst.open();
@@ -402,7 +402,7 @@ describe('GridFS remaining-issue regressions (begin race, finalize rollback, str
                 assert.equal(owner?.status, 'finalizing');
 
                 finishRetry.open();
-                assert.equal((await oldRetry).filename, 'old.bin');
+                await oldRetry;
                 assert.deepEqual(await uploads.findOne({ _id: id }), owner);
                 await assert.rejects(bucket.abortResumableUpload(id), { code: 'GRIDFS_UPLOAD_BUSY' });
 

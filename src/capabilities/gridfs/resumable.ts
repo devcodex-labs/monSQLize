@@ -410,7 +410,8 @@ async function committedFile(ctx: GridFSContext, uploadId: ObjectId, session: Gr
         if (index !== chunkCount(session.length, session.chunkSizeBytes) || total !== session.length || hash.digest('hex') !== session.sha256) {
             throw integrityMismatch('finalizeResumableUpload', ctx.bucketName, { uploadId, expected: session.sha256, actual: 'committed chunks do not match' });
         }
-        await uploads.deleteOne(owner);
+        const released = await uploads.deleteOne(owner);
+        if (!released.deletedCount) throw uploadBusy('finalizeResumableUpload', ctx, uploadId);
         return info;
     } catch (error) {
         // GridFS domain errors (the conflict above) pass through unchanged.
