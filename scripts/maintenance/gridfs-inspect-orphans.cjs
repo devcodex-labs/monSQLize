@@ -170,6 +170,7 @@ async function main() {
         fail('--max-findings must be a positive integer');
     }
     const afterFilesId = readArg(args, 'after-files-id');
+    const after = afterFilesId === undefined ? undefined : { filesId: parseAfter({ filesId: afterFilesId }) };
     const client = new MongoClient(uri);
     await client.connect();
     try {
@@ -178,7 +179,7 @@ async function main() {
             bucket,
             pageSize,
             maxFindings,
-            after: afterFilesId ? { filesId: afterFilesId } : undefined,
+            after,
             collectFindings: false,
             onFinding: (finding) => {
                 process.stdout.write(JSON.stringify({ type: 'finding', ...finding }) + '\n');

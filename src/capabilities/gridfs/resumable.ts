@@ -54,6 +54,7 @@ export async function beginResumableUpload(ctx: GridFSContext, filename: string,
     try {
         await uploads.insertOne({
             ...initializing,
+            sessionToken: ownerToken,
             filename,
             length: opts.length,
             sha256: opts.sha256,
@@ -213,7 +214,7 @@ export async function finalizeResumableUpload(ctx: GridFSContext, uploadId: Obje
     const ownerToken = randomUUID();
     const owner = finalizingOwner(uploadId, ownerToken);
     const transitioned = await uploads.updateOne(
-        { _id: uploadId, status: 'pending', activeAppend: { $exists: false } },
+        { ...sessionIdentity(session), status: 'pending', activeAppend: { $exists: false } },
         { $set: { status: 'finalizing', ownerToken, updatedAt: new Date() }, $unset: { expiresAt: '' } },
     );
     if (!transitioned.matchedCount) throw uploadBusy('finalizeResumableUpload', ctx, uploadId);
@@ -348,8 +349,9 @@ export async function abortResumableUpload(ctx: GridFSContext, uploadId: ObjectI
     if (session.kind && session.kind !== 'resumable') throw uploadBusy('abortResumableUpload', ctx, uploadId);
     if (session.status === 'finalized') return;
     if (session.status !== 'pending') throw uploadBusy('abortResumableUpload', ctx, uploadId);
+    const identity = sessionIdentity(session);
     const transitioned = await uploads.updateOne(
-        { _id: uploadId, status: 'pending', activeAppend: { $exists: false } },
+        { ...identity, status: 'pending', activeAppend: { $exists: false } },
         { $set: { status: 'aborting', updatedAt: new Date() }, $unset: { expiresAt: '' } },
     );
     if (!transitioned.matchedCount) throw uploadBusy('abortResumableUpload', ctx, uploadId);
@@ -357,10 +359,16 @@ export async function abortResumableUpload(ctx: GridFSContext, uploadId: ObjectI
     // aborting record that prevents a second writer from claiming this ID.
     try {
         await removeInvisibleChunks(ctx, uploadId, 'abortResumableUpload');
-        await uploads.deleteOne({ _id: uploadId, status: 'aborting' });
+        await uploads.deleteOne({ ...identity, status: 'aborting' });
     } catch (error) {
         throw mapDriverError(error, 'abortResumableUpload', ctx, { uploadId });
     }
+}
+
+function sessionIdentity(session: GridFSUploadSession) {
+    if (session.sessionToken !== undefined) return { _id: session._id, sessionToken: session.sessionToken };
+    // Older sessions have no token. In particular, they must never match a new upload.
+    return { _id: session._id, sessionToken: { $exists: false }, createdAt: session.createdAt ?? { $exists: false } };
 }
 
 function finalizingOwner(uploadId: ObjectId, ownerToken?: string) {

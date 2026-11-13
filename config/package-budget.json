@@ -1,8 +1,8 @@
 {
-  "comment": "GridFS ownership checks, primary reads and bounded diagnostics bring the 2026-11-13 build to 897375 CJS and 894610 ESM bytes, with no dependency change. Release preflight enforces these ceilings.",
+  "comment": "GridFS session identity checks bring the 2026-11-13 build to 897830 CJS and 895065 ESM bytes, with no dependency change. Release preflight enforces these ceilings.",
   "artifacts": {
     "dist/cjs/index.cjs": 898000,
-    "dist/esm/index.mjs": 895000,
+    "dist/esm/index.mjs": 895500,
     "dist/cjs/cli/data-task.cjs": 50000
   }
 }

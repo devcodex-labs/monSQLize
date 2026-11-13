@@ -295,6 +295,63 @@ describe('GridFS remaining-issue regressions (begin race, finalize rollback, str
         });
     });
 
+    for (const operation of ['finalizeResumableUpload', 'abortResumableUpload'] as const) {
+        for (const legacy of [false, true]) {
+            it(`${operation} does not take over a replacement pending session after reading a ${legacy ? 'legacy' : 'tokenized'} session`, { timeout: 10_000 }, async () => {
+                await withRuntime('gridfs_pending_session_reuse', async (runtime, db) => {
+                    const bucket = runtime.gridfs('b', { chunkSizeBytes: 4 });
+                    const id = new ObjectId();
+                    const payload = Buffer.from('DATA');
+                    const options = { id, length: payload.length, sha256: sha(payload) };
+                    await bucket.beginResumableUpload('old.bin', options);
+                    await bucket.appendChunks(id, 0, payload);
+                    const uploads = db.collection('b.uploads');
+                    if (legacy) await uploads.updateOne({ _id: id }, { $unset: { sessionToken: '' } });
+                    const oldSession = await uploads.findOne({ _id: id });
+                    assert.ok(oldSession?.createdAt instanceof Date);
+
+                    const claiming = gate();
+                    const resume = gate();
+                    const original = Collection.prototype.updateOne;
+                    const status = operation === 'finalizeResumableUpload' ? 'finalizing' : 'aborting';
+                    let pause = true;
+                    Collection.prototype.updateOne = async function (this: Collection, filter, update, opts) {
+                        if (pause && this.collectionName === 'b.uploads' && id.equals(filter?._id) &&
+                            !Array.isArray(update) && update.$set?.status === status) {
+                            pause = false;
+                            claiming.open();
+                            await resume.wait;
+                        }
+                        return original.call(this, filter, update, opts);
+                    };
+
+                    const stale = bucket[operation](id);
+                    try {
+                        await claiming.wait;
+                        await bucket.abortResumableUpload(id);
+                        await bucket.beginResumableUpload('new.bin', options);
+                        await bucket.appendChunks(id, 0, payload);
+                        await uploads.updateOne({ _id: id }, { $set: { createdAt: oldSession.createdAt } });
+                        const replacement = await uploads.findOne({ _id: id });
+                        assert.equal(replacement?.status, 'pending');
+
+                        resume.open();
+                        await assert.rejects(stale, { code: 'GRIDFS_UPLOAD_BUSY' });
+                        assert.deepEqual(await uploads.findOne({ _id: id }), replacement);
+                        assert.equal(await db.collection('b.chunks').countDocuments({ files_id: id }), 1);
+                        assert.equal(await bucket.getFile(id), null);
+                        assert.equal((await bucket.finalizeResumableUpload(id)).filename, 'new.bin');
+                        assert.deepEqual(await bucket.download(id), payload);
+                    } finally {
+                        resume.open();
+                        Collection.prototype.updateOne = original;
+                        await Promise.allSettled([stale]);
+                    }
+                });
+            });
+        }
+    }
+
     it('bounds missing-chunk diagnostics and counts the complete gap', { timeout: 10_000 }, async () => {
         await withRuntime('gridfs_finalize_gap_bound', async (runtime, db) => {
             const bucket = runtime.gridfs('b', { chunkSizeBytes: 1 });

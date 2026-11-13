@@ -1,5 +1,7 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { Collection, MongoClient, ObjectId, type Db } from 'mongodb';
 import { createMemoryServerBootstrap } from '../../bootstrap/memory-server';
 
@@ -30,6 +32,29 @@ describe('GridFS inspect-only orphan reporter', () => {
             await db.dropDatabase();
         }
     }
+
+    it('rejects an explicitly empty CLI continuation but accepts an omitted or valid one', { timeout: 15_000 }, async () => {
+        await withDb(async (db) => {
+            const first = new ObjectId();
+            const second = new ObjectId();
+            await db.collection('b.chunks').insertMany([{ files_id: first, n: 0 }, { files_id: second, n: 0 }]);
+            const runCli = (...args: string[]) => promisify(execFile)(process.execPath, [
+                'scripts/maintenance/gridfs-inspect-orphans.cjs', `--db=${db.databaseName}`, '--bucket=b', ...args,
+            ], { env: { ...process.env, MONSQLIZE_RECOVERY_MONGODB_URI: uri } });
+
+            await assert.rejects(runCli('--after-files-id='), {
+                code: 1, stdout: '', stderr: 'GRIDFS_INSPECT_PRECONDITION_FAILED: after.filesId must be an ObjectId\n',
+            });
+            const { stdout } = await runCli('--max-findings=1');
+            const [finding, summary] = stdout.trim().split('\n').map((line) => JSON.parse(line));
+            assert.equal(finding.filesId, first.toHexString());
+            assert.equal(summary.resumeAfter.filesId, first.toHexString());
+            const continued = await runCli(`--after-files-id=${summary.resumeAfter.filesId}`);
+            const [next, end] = continued.stdout.trim().split('\n').map((line) => JSON.parse(line));
+            assert.equal(next.filesId, second.toHexString());
+            assert.equal(end.truncated, false);
+        });
+    });
 
     it('classifies visible, owned, and candidate orphan files_id groups without deleting', async () => {
         await withDb(async (db) => {
