@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { ObjectId } from 'mongodb';
 import type { GridFSContext } from './types';
-import { fileExists, isDuplicateKey, mapDriverError, uploadBusy } from './errors';
+import { isDuplicateKey, mapDriverError, uploadBusy } from './errors';
 import { chunksCollectionName, filesCollectionName, uploadsCollectionName } from './normalize';
 
 /**
@@ -81,7 +81,7 @@ export async function releaseOwner(ctx: GridFSContext, owner: GridFSOwner, opera
 export async function cleanupFailedDirect(ctx: GridFSContext, owner: GridFSOwner): Promise<void> {
     try {
         const visible = await ctx.db.collection(filesCollectionName(ctx.bucketName))
-            .findOne({ _id: owner.id }, { projection: { _id: 1 } });
+            .findOne({ _id: owner.id }, { projection: { _id: 1 }, readPreference: 'primary' });
         if (!visible) {
             await ctx.db.collection(chunksCollectionName(ctx.bucketName))
                 .deleteMany({ files_id: owner.id });
@@ -103,7 +103,7 @@ export async function cleanupOrphanById(ctx: GridFSContext, id: ObjectId): Promi
     let safeToRelease = false;
     try {
         const visible = await ctx.db.collection(filesCollectionName(ctx.bucketName))
-            .findOne({ _id: id }, { projection: { _id: 1 } });
+            .findOne({ _id: id }, { projection: { _id: 1 }, readPreference: 'primary' });
         if (!visible) await ctx.db.collection(chunksCollectionName(ctx.bucketName)).deleteMany({ files_id: id });
         safeToRelease = true;
     } catch (error) {

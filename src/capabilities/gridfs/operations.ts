@@ -68,7 +68,7 @@ export async function uploadFile(
     }
 
     await ctx.indexes.ensure();
-    if (options.id && await getFile(ctx, options.id)) {
+    if (options.id && await getFile(ctx, options.id, 'primary')) {
         if (source) releaseReadable(source);
         throw fileExists('upload', ctx, { id: options.id, filename, sha256: options.sha256 });
     }
@@ -97,14 +97,14 @@ export async function uploadFile(
         throw error;
     }
     try {
-        if (await getFile(ctx, id)) {
+        if (await getFile(ctx, id, 'primary')) {
             if (source) releaseReadable(source);
             throw fileExists('upload', ctx, { id, filename, sha256: options.sha256 });
         }
         const writeOptions = { chunkSizeBytes, metadata, contentType: options.contentType };
         if (payload) await writeBuffer(ctx, id, filename, payload, writeOptions);
         else if (source) await writeReadable(ctx, id, filename, source, writeOptions);
-        const info = await getFile(ctx, id);
+        const info = await getFile(ctx, id, 'primary');
         if (!info) throw fileNotFound('upload', ctx, { id, filename });
         // A successful upload is committed even if removing its reservation fails.
         // Keep the durable reservation for explicit recovery rather than deleting the file.
@@ -150,7 +150,7 @@ export function openUploadStream(ctx: GridFSContext, filename: string, opts?: Gr
                 ...(typeof metadata?.sha256 === 'string' ? { claimedSha256: metadata.sha256 } : {}),
             });
             // Check again after the ID is reserved, in case an older unreserved file exists.
-            if (await getFile(ctx, id)) {
+            if (await getFile(ctx, id, 'primary')) {
                 throw fileExists('uploadStream', ctx, { id, filename, sha256: options.sha256 });
             }
             target = ctx.driver.openUploadStream(id, filename, {
@@ -160,7 +160,7 @@ export function openUploadStream(ctx: GridFSContext, filename: string, opts?: Gr
             });
             const { pipeline } = await import('node:stream/promises');
             await pipeline(input, target);
-            const info = await getFile(ctx, id);
+            const info = await getFile(ctx, id, 'primary');
             if (!info) throw fileNotFound('uploadStream', ctx, { id, filename });
             try {
                 await releaseOwner(ctx, owner, 'uploadStream');
@@ -224,10 +224,10 @@ export function openDownloadStream(ctx: GridFSContext, idOrName: GridFSIdOrName,
     return output;
 }
 
-export async function getFile(ctx: GridFSContext, id: ObjectId): Promise<GridFSFileInfo | null> {
+export async function getFile(ctx: GridFSContext, id: ObjectId, readPreference?: 'primary'): Promise<GridFSFileInfo | null> {
     assertObjectId(id, 'getFile', 'id');
     try {
-        const doc = await ctx.db.collection(filesCollectionName(ctx.bucketName)).findOne({ _id: id });
+        const doc = await ctx.db.collection(filesCollectionName(ctx.bucketName)).findOne({ _id: id }, { readPreference });
         return doc ? toFileInfo(doc as Record<string, unknown>) : null;
     } catch (error) {
         throw mapDriverError(error, 'getFile', ctx, { id });
@@ -254,7 +254,7 @@ export async function deleteFile(ctx: GridFSContext, id: ObjectId, opts?: GridFS
     const owner = await claimOwner(ctx, id, 'delete', 'delete');
     let driverInvoked = false;
     try {
-        const existing = await getFile(ctx, id);
+        const existing = await getFile(ctx, id, 'primary');
         if (!existing) {
             await releaseOwner(ctx, owner, 'delete');
             if (opts?.ignoreMissing) return;
@@ -284,16 +284,26 @@ export async function renameFile(ctx: GridFSContext, id: ObjectId, filename: str
     assertFilename(filename, 'rename');
     const owner = await claimOwner(ctx, id, 'rename', 'rename');
     try {
-        const existing = await getFile(ctx, id);
+        const existing = await getFile(ctx, id, 'primary');
         if (!existing) throw fileNotFound('rename', ctx, { id, filename });
         try {
             await ctx.driver.rename(id, filename);
         } catch (error) {
             throw mapDriverError(error, 'rename', ctx, { id, filename });
         }
-    } finally {
-        // Rename never removes chunks and is safe to unlock after driver settles.
-        await releaseOwner(ctx, owner, 'rename');
+        // A successful rename is committed even if removing its reservation fails.
+        try {
+            await releaseOwner(ctx, owner, 'rename');
+        } catch (error) {
+            ctx.logger?.warn?.('[gridfs] rename committed but reservation cleanup failed', { bucket: ctx.bucketName, id: String(id), error });
+        }
+    } catch (error) {
+        try {
+            await releaseOwner(ctx, owner, 'rename');
+        } catch (releaseError) {
+            ctx.logger?.warn?.('[gridfs] rename reservation retained after cleanup failure', { bucket: ctx.bucketName, id: String(id), error: releaseError });
+        }
+        throw error;
     }
 }
 
@@ -323,7 +333,7 @@ async function findConflict(ctx: GridFSContext, filename: string, sha256: string
     const filter = sha256 !== undefined ? { 'metadata.sha256': sha256 } : { filename };
     let docs;
     try {
-        docs = await files.find(filter).sort({ uploadDate: -1 }).limit(1).toArray();
+        docs = await files.find(filter, { readPreference: 'primary' }).sort({ uploadDate: -1 }).limit(1).toArray();
     } catch (error) {
         throw mapDriverError(error, 'upload', ctx, { filename });
     }
@@ -404,6 +414,6 @@ async function cleanupFailedWrite(ctx: GridFSContext, id: ObjectId, stream: Grid
         if (typeof stream.abort === 'function') await stream.abort();
     } catch { /* A finished driver stream refuses abort; delete the visible file below. */ }
     try {
-        if (await getFile(ctx, id)) await ctx.driver.delete(id);
+        if (await getFile(ctx, id, 'primary')) await ctx.driver.delete(id);
     } catch { /* The caller still receives the original write error. */ }
 }

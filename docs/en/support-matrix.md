@@ -18,7 +18,7 @@
 | MongoDB Driver | 6.x / 7.x | `npm run test:server-matrix` |
 | MongoDB Server | 7.x / 8.x | strict `mongodb-memory-server` 7.0.37 / 8.0.26 single + replica set matrix |
 
-GridFS is a client convention on `<bucket>.files` and `<bucket>.chunks`. Its integration tests run on `mongodb-memory-server` 7.0.37. That does not add MongoDB 4.x, or any server outside 7.x / 8.x, to this matrix.
+GridFS is a client convention on `<bucket>.files` and `<bucket>.chunks`. Its integration tests run on `mongodb-memory-server` 7.0.37 and 8.0.26 in the current GridFS safety / release-gate jobs. That does not add MongoDB 4.x, or any server outside 7.x / 8.x, to this matrix. Search and Vector Search against Atlas, atlas-local, or mongot remain UNVERIFIED in this checkout; those deployments are not implied by the memory-server matrix.
 
 ## Default verification method
 

@@ -46,7 +46,7 @@ Calling either method before `connect()` throws `NOT_CONNECTED`.
 `upload` defaults to `ifExists: 'error'`.
 
 - When `sha256` is set, the conflict key is `metadata.sha256`. The digest must be 64 lowercase hex characters. `Buffer` and `Uint8Array` payloads are hashed before any GridFS write. A mismatch throws `GRIDFS_INTEGRITY_MISMATCH` and leaves no visible file.
-- A `Readable` passed with `sha256` is buffered completely, then hashed, before any write. Large files should use the resumable API instead.
+- A `Readable` passed with `sha256` is buffered completely, then hashed, before any write. That is required to honor the contract that a failed verification leaves no visible file. `upload()` without `sha256` can stream, but the whole payload is still a single commit. For large files, use the resumable API with `appendChunks` and a `Readable` whose `highWaterMark` stays modest; do not pass a multi-gigabyte `Buffer` or a fully-buffered `upload({ sha256 })`.
 - `skip` with `sha256` returns the newest visible file with that digest. `skip` without `sha256` returns the newest visible file with the same filename. `duplicate` always creates another file.
 - A `metadata.sha256` value supplied inside `metadata` is caller data and is not verified. To request byte verification with `upload()`, use the top-level `sha256` option.
 - `uploadStream` stores its top-level `sha256` option in metadata only. It does not check the bytes and it does not accept `ifExists`.
@@ -75,13 +75,13 @@ const info = await bucket.finalizeResumableUpload(session.uploadId);
 await bucket.abortResumableUpload(session.uploadId);
 ```
 
-`beginResumableUpload` requires `length` and `sha256`. An id that already exists in `files` or `uploads` throws `GRIDFS_FILE_EXISTS`.
+`beginResumableUpload` requires `length` and `sha256`. An id already present in `files` or `uploads` throws `GRIDFS_FILE_EXISTS`. The insert claims the id in `initializing` without expiry. It rechecks `files` and cleans old chunks before making the session `pending`. While initialization runs, other writes to that id are blocked. If a file became visible before the recheck, the call preserves its chunks and throws `GRIDFS_FILE_EXISTS`. An interrupted initialization can be cleared through operator recovery after the writer has stopped.
 
 Chunk bytes must follow the session size:
 
 - Every chunk except the last has length `chunkSizeBytes`.
 - The last chunk has length `length % chunkSizeBytes`, or `chunkSizeBytes` when the length divides evenly.
-- A payload that does not split into those sizes throws `INVALID_ARGUMENT`. The whole payload is checked before any chunk is inserted.
+- A payload that does not split into those sizes throws `INVALID_ARGUMENT`. For a `Buffer` or `Uint8Array`, the whole payload is planned and checked before any chunk is inserted. For a `Readable`, complete chunks are written as they arrive; a trailing partial or oversize remainder is rejected during consumption, after any complete prefix chunks have been stored. A failed append throws and does not return `nextChunk`. Resume from the last successfully acknowledged position; if the stored prefix has moved, `GRIDFS_RESUME_MISMATCH` includes `expectedNextChunk`. A source error during automatic destruction after EOF also rejects the append. Memory use is bounded by the current stream buffer, the partial chunk, and a fixed-size batch of stored chunk indexes. Use a modest `highWaterMark` for large files.
 
 `appendChunks` is addressed by `fromChunk`:
 
@@ -92,9 +92,11 @@ Chunk bytes must follow the session size:
 - A payload that contains any new chunk must start at `nextChunk`. Starting earlier throws `GRIDFS_RESUME_MISMATCH` and writes nothing.
 - A duplicate `{ files_id, n }` insert is accepted only when the stored bytes match.
 
-`finalizeResumableUpload` requires a contiguous prefix, a total length equal to the session length, and a sha256 equal to the session digest. It then inserts the files document, sets `metadata.sha256`, and deletes the session. Missing chunk indexes throw `GRIDFS_UPLOAD_INCOMPLETE` with `details[0].missingChunks`. A bad digest or a chunk of the wrong size throws `GRIDFS_INTEGRITY_MISMATCH`. The files document is not inserted in those cases.
+`finalizeResumableUpload` requires exactly one chunk at each expected index starting at zero, a total length equal to the session length, and a sha256 equal to the session digest. It then inserts the files document, sets `metadata.sha256`, and deletes the session. Missing chunk indexes throw `GRIDFS_UPLOAD_INCOMPLETE`. `details[0].missingChunks` lists the first 1,024 missing indexes at most. When truncated, `details[0].missingChunkCount` gives the total. An invalid, duplicate, or out-of-range chunk index, a bad digest, or a chunk of the wrong size throws `GRIDFS_INTEGRITY_MISMATCH`. The files document is not inserted in those cases.
 
-Retrying `finalizeResumableUpload` is idempotent while the session still exists: if a file with the same id is already visible and its `metadata.sha256` and length match the session, the call returns that file and deletes the session. A file with a different sha256 or length still throws `GRIDFS_FILE_EXISTS`. Once the session is gone (a finalize that fully succeeded, an abort, or the TTL), there is no digest to compare, so a retry throws `GRIDFS_FILE_NOT_FOUND`; use `getFile(uploadId)` to check the result.
+Retrying `finalizeResumableUpload` is idempotent while the session still exists: if a file with the same id is already visible, the library re-hashes the actual stored chunks and returns the file only when that digest, the file length, and the chunk size match the session. A different sha256 or length throws `GRIDFS_FILE_EXISTS`. A chunk-size mismatch throws `GRIDFS_INTEGRITY_MISMATCH` and retains the existing finalizing session. A retry that observes a different upload under the same ID returns `GRIDFS_UPLOAD_BUSY`. Once the session is gone (a finalize that fully succeeded, an abort, or the TTL), there is no digest to compare, so a retry throws `GRIDFS_FILE_NOT_FOUND`. Callers must persist `uploadId`, `length`, and `sha256` themselves. After a vanished session, use `getFile(uploadId)` to see whether a file is visible, then re-hash the **actual** bytes (for example `download(uploadId)` or a walk of `<bucket>.chunks`) and compare them to the persisted length and digest. Never treat `metadata.sha256` alone as proof: `uploadStream()` and a raw `metadata.sha256` can store an unverified claim. This package does not add a separate public verification API.
+
+A `finalizeResumableUpload` that fails with `GRIDFS_FILE_EXISTS` or `GRIDFS_INTEGRITY_MISMATCH` after it has claimed `finalizing` rolls the session back to `pending` so `abortResumableUpload` (and then a delete of a conflicting visible file) can proceed through the public API. Ambiguous driver errors during the files insert still leave `finalizing` for explicit recovery.
 
 `abortResumableUpload` atomically claims a pending session before deleting chunks. It fails with `GRIDFS_UPLOAD_BUSY` while append or finalize owns the session. It deletes the session and, when no files document is visible, that upload's chunks. A missing or already aborted session resolves, and any chunks left under that id without a visible file are still deleted. Aborting an id that already has a visible file does not delete that file's chunks.
 
@@ -136,7 +138,7 @@ A blocked call throws `INVALID_OPERATION` before any GridFS write. `details[0]` 
 |------|------|
 | `GRIDFS_FILE_NOT_FOUND` | Download, delete, rename, or resumable session target is missing |
 | `GRIDFS_FILE_EXISTS` | `ifExists: 'error'` finds a conflict, or the chosen id is already present |
-| `GRIDFS_INTEGRITY_MISMATCH` | Bytes do not match `sha256`, or a finalized chunk has the wrong size |
+| `GRIDFS_INTEGRITY_MISMATCH` | Bytes do not match `sha256`, or finalize found an invalid chunk index or size |
 | `GRIDFS_UPLOAD_INCOMPLETE` | Finalize found gaps. `details[0].missingChunks` lists them |
 | `GRIDFS_RESUME_MISMATCH` | `fromChunk` is ahead of the contiguous prefix, or a replayed chunk differs |
 | `GRIDFS_UPLOAD_BUSY` | Another append/finalize/abort/upload/delete operation owns the ID; do not retry until it finishes or is explicitly recovered |

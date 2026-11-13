@@ -18,7 +18,7 @@
 | MongoDB Driver | 6.x / 7.x | `npm run test:server-matrix` |
 | MongoDB Server | 7.x / 8.x | `mongodb-memory-server` 7.0.37 / 8.0.26 single + replica set 严格矩阵 |
 
-GridFS 是 `<bucket>.files` 与 `<bucket>.chunks` 上的客户端约定。它的集成测试跑在 `mongodb-memory-server` 7.0.37 上。这不会把 MongoDB 4.x，或 7.x / 8.x 以外的服务器，写进本矩阵。
+GridFS 是 `<bucket>.files` 与 `<bucket>.chunks` 上的客户端约定。它的集成测试跑在当前 GridFS safety / release-gate 任务中的 `mongodb-memory-server` 7.0.37 和 8.0.26 上。这不会把 MongoDB 4.x，或 7.x / 8.x 以外的服务器，写进本矩阵。本检出内针对 Atlas、atlas-local 或 mongot 的 Search / Vector Search 仍为 UNVERIFIED；memory-server 矩阵不能外推到这些部署。
 
 ## 默认验证方式
 

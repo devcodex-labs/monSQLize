@@ -85,7 +85,9 @@ export interface GridFSUploadSession {
     metadata?: Record<string, unknown>;
     contentType?: string;
     kind?: 'resumable';
-    status: 'pending' | 'finalizing' | 'aborting' | 'finalized' | 'aborted';
+    status: 'initializing' | 'pending' | 'finalizing' | 'aborting' | 'finalized' | 'aborted';
+    sessionToken?: string;
+    ownerToken?: string;
     activeAppend?: { token: string; startedAt: Date };
     expiresAt?: Date;
     nextChunk: number;

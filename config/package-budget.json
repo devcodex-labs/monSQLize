@@ -1,8 +1,8 @@
 {
-  "comment": "The 3.5.3 bundle ceilings were 881096 CJS and 878096 ESM. The GridFS cross-operation ownership, durable session CAS/abort fencing, delete protection and idle-TTL migration add ~4.4/4.7 KiB over that ceiling (CI build 2026-11-12: 885536 CJS / 882819 ESM). Raise to 890000 / 887000, keeping ~4 KiB reviewed headroom; no dependency change. Enforce these ceilings in release preflight.",
+  "comment": "GridFS session identity checks bring the 2026-11-13 build to 897830 CJS and 895065 ESM bytes, with no dependency change. Release preflight enforces these ceilings.",
   "artifacts": {
-    "dist/cjs/index.cjs": 890000,
-    "dist/esm/index.mjs": 887000,
+    "dist/cjs/index.cjs": 898000,
+    "dist/esm/index.mjs": 895500,
     "dist/cjs/cli/data-task.cjs": 50000
   }
 }

@@ -46,7 +46,7 @@ const modelBucket = model.gridfs(bucketName?: string, opts?: {
 `upload` 的 `ifExists` 默认为 `'error'`。
 
 - 提供 `sha256` 时，冲突键是 `metadata.sha256`。摘要必须是 64 位小写十六进制。`Buffer` 与 `Uint8Array` 会在任何 GridFS 写入之前完成哈希。不一致时抛出 `GRIDFS_INTEGRITY_MISMATCH`，并且不会留下可见文件。
-- 带 `sha256` 的 `Readable` 会先完整缓冲再哈希，然后才写入。大文件应改用可恢复上传。
+- 带 `sha256` 的 `Readable` 会先完整缓冲再哈希，然后才写入。这是为了遵守“校验失败不会留下可见文件”的契约。不带 `sha256` 的 `upload()` 可以边读边写，但整段 payload 仍是一次提交。大文件应使用可恢复上传，用 `appendChunks` 配合 `highWaterMark` 较小的 `Readable`，不要传入数 GB 的 `Buffer`，也不要走会全量缓冲的 `upload({ sha256 })`。
 - 带 `sha256` 的 `skip` 返回该摘要最新的可见文件。不带 `sha256` 的 `skip` 返回同名最新可见文件。`duplicate` 总是再创建一份。
 - 通过 `metadata` 对象传入的 `metadata.sha256` 是调用方数据，不会被验证。`upload()` 如需校验字节，必须使用顶层 `sha256` 选项。
 - `uploadStream` 的顶层 `sha256` 只写入 metadata，不校验字节，也不接受 `ifExists`。
@@ -75,13 +75,13 @@ const info = await bucket.finalizeResumableUpload(session.uploadId);
 await bucket.abortResumableUpload(session.uploadId);
 ```
 
-`beginResumableUpload` 必须提供 `length` 和 `sha256`。`files` 或 `uploads` 中已经存在该 id 时抛出 `GRIDFS_FILE_EXISTS`。
+`beginResumableUpload` 必须提供 `length` 和 `sha256`。`files` 或 `uploads` 已存在该 id 时抛出 `GRIDFS_FILE_EXISTS`。插入会以 `initializing` 状态独占该 id，且没有过期时间。再次检查 `files` 并清理旧分片后，会话才变为 `pending`。初始化期间，针对同一 id 的其他写入会被阻止。若复查时文件已可见，会保留其分片并抛出 `GRIDFS_FILE_EXISTS`。初始化中断后，运维人员可在确认写入进程已停止后执行恢复。
 
 分片长度必须符合会话：
 
 - 除最后一片外，每片长度都是 `chunkSizeBytes`。
 - 最后一片长度是 `length % chunkSizeBytes`；能够整除时仍是 `chunkSizeBytes`。
-- 无法按这些长度切开的 payload 抛出 `INVALID_ARGUMENT`。整段 payload 会在插入任何分片之前完成检查。
+- 无法按这些长度切开的 payload 抛出 `INVALID_ARGUMENT`。对 `Buffer` / `Uint8Array`，整段 payload 会在插入任何分片之前完成规划与检查。对 `Readable`，完整分片会随读随写；末尾不足或超出的残余会在消费过程中被拒绝，此前已经写入的完整前缀分片会保留。失败的 append 会抛错，不会返回 `nextChunk`。应从上一次已成功确认的位置继续；若已写入前缀已前进，以 `GRIDFS_RESUME_MISMATCH.expectedNextChunk` 为准。正常读到 EOF 后，若输入流在自动销毁期间报错，追加仍会失败。内存占用受当前流缓冲、未凑齐的分片和固定大小的分片索引批次限制。大文件应使用较小的 `highWaterMark`。
 
 `appendChunks` 以 `fromChunk` 定位：
 
@@ -92,9 +92,11 @@ await bucket.abortResumableUpload(session.uploadId);
 - 只要 payload 含有新分片，`fromChunk` 就必须等于 `nextChunk`。从更早的序号开始会抛出 `GRIDFS_RESUME_MISMATCH`，并且不会写入。
 - `{ files_id, n }` 唯一索引冲突只有在已存字节相同的时候才算成功。
 
-`finalizeResumableUpload` 要求分片从 0 连续、总长度等于会话长度，且 sha256 等于会话摘要。然后插入 files 文档、写入 `metadata.sha256`，并删除会话。缺少的分片序号抛出 `GRIDFS_UPLOAD_INCOMPLETE`，`details[0].missingChunks` 列出缺口。摘要不符或分片长度不对抛出 `GRIDFS_INTEGRITY_MISMATCH`。这些失败都不会插入 files 文档。
+`finalizeResumableUpload` 要求从 0 开始的每个预期序号恰好对应一个分片，总长度等于会话长度，且 sha256 等于会话摘要。然后插入 files 文档、写入 `metadata.sha256`，并删除会话。缺少分片时抛出 `GRIDFS_UPLOAD_INCOMPLETE`。`details[0].missingChunks` 最多列出前 1,024 个缺失序号，截断时 `details[0].missingChunkCount` 给出缺失总数。序号无效、重复或越界，以及摘要或分片长度不符，均抛出 `GRIDFS_INTEGRITY_MISMATCH`。这些失败都不会插入 files 文档。
 
-会话仍在时，重试 `finalizeResumableUpload` 是幂等的：若同 id 的文件已可见，且其 `metadata.sha256` 与长度都和会话一致，调用直接返回该文件并删除会话。sha256 或长度不同的文件仍抛 `GRIDFS_FILE_EXISTS`。会话已不存在时（上一次 finalize 已完整成功、已 abort 或 TTL 过期），没有可比对的摘要，重试抛 `GRIDFS_FILE_NOT_FOUND`，可用 `getFile(uploadId)` 确认结果。
+会话仍在时，重试 `finalizeResumableUpload` 是幂等的：若同 id 的文件已可见，库会重新哈希**实际存储的 chunks**，只有摘要、文件长度和分片大小都与会话一致时才返回该文件并删除会话。sha256 或长度不一致时抛出 `GRIDFS_FILE_EXISTS`。分片大小不一致时抛出 `GRIDFS_INTEGRITY_MISMATCH`，并保留已有的 `finalizing` 会话。重试期间若同一 ID 已由另一次上传接管，则返回 `GRIDFS_UPLOAD_BUSY`。会话已不存在时（上一次 finalize 已完整成功、已 abort 或 TTL 过期），没有可比对的摘要，重试抛 `GRIDFS_FILE_NOT_FOUND`。调用方必须自己持久化 `uploadId`、`length` 和 `sha256`。会话消失后，先用 `getFile(uploadId)` 看文件是否可见，再对**实际字节**重新哈希（例如 `download(uploadId)` 或遍历 `<bucket>.chunks`），与自己保存的长度和摘要比对。不要只信任 `metadata.sha256`：`uploadStream()` 和调用方写入的 `metadata.sha256` 可以是未校验的声明。本包不为此再提供新的公开校验 API。
+
+`finalizeResumableUpload` 在已经占有 `finalizing` 之后，若因 `GRIDFS_FILE_EXISTS` 或 `GRIDFS_INTEGRITY_MISMATCH` 失败，会把会话 CAS 回 `pending`，以便通过公开 API 执行 `abortResumableUpload`（然后再删除冲突的可见文件）。files 插入过程中含义不明的驱动错误仍会保留 `finalizing`，需显式恢复。
 
 `abortResumableUpload` 先原子取得 pending 会话的所有权；append 或 finalize 仍在执行时返回 `GRIDFS_UPLOAD_BUSY`，绝不删除其 chunks。取得所有权后删除会话；如果还没有可见的 files 文档，同时删除该上传的 chunks。会话不存在或已经中止时直接成功，并且仍会删除该 id 下没有可见文件的残留 chunks。对已经可见的文件调用 abort 不会删除该文件的 chunks。
 
@@ -136,7 +138,7 @@ GridFS 写入的类别是 `gridfs`。命名空间是 `<bucket>.files`，匹配�
 |--------|------|
 | `GRIDFS_FILE_NOT_FOUND` | 下载、删除、重命名或可恢复会话的目标不存在 |
 | `GRIDFS_FILE_EXISTS` | `ifExists: 'error'` 发现冲突，或指定 id 已经存在 |
-| `GRIDFS_INTEGRITY_MISMATCH` | 字节与 `sha256` 不符，或 finalize 时分片长度不对 |
+| `GRIDFS_INTEGRITY_MISMATCH` | 字节与 `sha256` 不符，或 finalize 时发现无效的分片序号或长度 |
 | `GRIDFS_UPLOAD_INCOMPLETE` | finalize 发现缺口。`details[0].missingChunks` 列出缺少的序号 |
 | `GRIDFS_RESUME_MISMATCH` | `fromChunk` 超前于连续前缀，或重放的分片内容不同 |
 | `GRIDFS_UPLOAD_BUSY` | 其他 append/finalize/abort/upload/delete 操作正在占用该 ID，必须等待完成或在确认旧进程停止后显式恢复 |

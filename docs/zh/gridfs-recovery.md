@@ -8,6 +8,16 @@
 
 任何强制恢复必须先从集群所有节点停止并排空旧版和新版 GridFS 写入进程、队列消费者、定时任务与自动重启，确认没有仍可恢复的旧写入。恢复脚本无法在 MongoDB 层直接阻止旧进程已发出的 chunks 写入；只有外部进程停机隔离后才安全。不得混用忽略 ownership 的旧版与新版本。
 
+dry-run 可以使用领取所有权之前的可见性快照；**apply 必须在独占 claim 之后重新读取 `files`**。若可见性已经变化，或在需要可见文件时 `verifyVisibleFile` 无法确认，脚本失败并保留 `recovering` 所有权。
+
+排查使用 ObjectId 的残留 chunks 时，使用只读巡检脚本 `scripts/maintenance/gridfs-inspect-orphans.cjs`。它按已有 `{ files_id, n }` 索引分批扫描 `<bucket>.chunks`。分类时若未查到 `files` 和 `uploads` 记录，会再次核对 `files`，报告 `visible_file`、`owned` 或 `candidate_orphan`。没有 apply 模式，不会删除，也不会按文档年龄删除。它不是公开的 `GridFSBucket` API。CLI 按行输出 NDJSON 结果及一条摘要。`--max-findings`（默认 1000，上限 100000）限制单次内存；截断时用 `resumeAfter.filesId` 作为下次的 `--after-files-id`。摘要计数在扫描过程中增量累计。
+
+```sh
+export MONSQLIZE_RECOVERY_MONGODB_URI='<从密钥管理系统读取的 MongoDB URI>'
+node scripts/maintenance/gridfs-inspect-orphans.cjs --db=database --bucket=fs --page-size=200 --max-findings=1000
+```
+
+
 ## 上线和回滚步骤
 
 1. 冻结所有 GridFS 写入，禁止新请求和自动重启，核查所有旧版 Writer 已排空；保留相关运行实例、进程、队列、版本和时间证据。
@@ -49,6 +59,7 @@ node scripts/maintenance/gridfs-recover.cjs \
 | direct/uploading | 验证 chunks 连续性、每块长度和总长度；只有 owner 记录了 upload() 写入前验证过的 expected SHA 时才强制校验摘要，否则将 metadata 不一致记为审计 warning | uploadStream() 与任意 metadata.sha256 都是不可信声明；绝不删除可见文件 chunks |
 | delete/deleting | 继续删除 files 和 chunks，之后才释放同 ID 的所有权 | 删除未完成时禁止替换上传 |
 | cleanup/cleaning | 可见文件保留 chunks，否则清理孤儿 chunks | 先查 files |
+| resumable/initializing | 保留可见文件的分片，或清理不可见的残留分片，再释放初始化占位 | 文件不可见时，恢复完成后可重试 `beginResumableUpload` |
 | rename/renaming | 先核验可见文件及完整 chunks，缺失或损坏时保留锁；运维核查文件名 | 工具不猜测目标或重新执行 rename |
 | pending + activeAppend | 根据 chunks 的连续前缀恢复 nextChunk，清除中断令牌，重新设置七天闲置过期 | 保留已写 chunks，后续需验证重传 |
 | finalizing，文件不可见 | 退回 pending，正常 finalize 重新校验 | 不删已有 chunks |

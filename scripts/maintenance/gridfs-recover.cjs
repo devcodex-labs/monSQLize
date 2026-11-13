@@ -13,6 +13,16 @@ const { randomUUID, createHash } = require('node:crypto');
 const { MongoClient, ObjectId } = require('mongodb');
 
 const TTL_MS = 604800000;
+const RECOVERY_ORIGIN_KINDS = new Map([
+    ['uploading', 'direct'],
+    ['deleting', 'delete'],
+    ['renaming', 'rename'],
+    ['cleaning', 'cleanup'],
+    ['initializing', 'resumable'],
+    ['activeAppend', 'resumable'],
+    ['finalizing', 'resumable'],
+    ['aborting', 'resumable'],
+]);
 
 function fail(message) {
     const error = new Error(message);
@@ -29,7 +39,7 @@ function toBuffer(data) {
 
 async function verifyVisibleFile(db, bucket, id, session, owner) {
     const files = db.collection(bucket + '.files');
-    const doc = await files.findOne({ _id: id });
+    const doc = await files.findOne({ _id: id }, { readPreference: 'primary' });
     if (!doc) return null;
     if (!Number.isSafeInteger(doc.length) || doc.length < 0 ||
         !Number.isSafeInteger(doc.chunkSize) || doc.chunkSize < 1) {
@@ -40,7 +50,7 @@ async function verifyVisibleFile(db, bucket, id, session, owner) {
     let n = 0;
     let length = 0;
     for await (const chunk of db.collection(bucket + '.chunks')
-        .find({ files_id: id }).sort({ n: 1 })) {
+        .find({ files_id: id }, { readPreference: 'primary' }).sort({ n: 1 })) {
         if (chunk.n !== n || n >= totalChunks) fail('Visible file has a missing, extra or out-of-order chunk');
         const bytes = toBuffer(chunk.data);
         const want = n === totalChunks - 1 ? doc.length - n * doc.chunkSize : doc.chunkSize;
@@ -110,6 +120,7 @@ function classify(doc) {
         else if (doc.kind === 'delete' && doc.status === 'deleting') state = 'deleting';
         else if (doc.kind === 'rename' && doc.status === 'renaming') state = 'renaming';
         else if (doc.kind === 'cleanup' && doc.status === 'cleaning') state = 'cleaning';
+        else if (doc.kind === 'resumable' && doc.status === 'initializing') state = 'initializing';
         else if ((!doc.kind || doc.kind === 'resumable') &&
             doc.status === 'pending' && doc.activeAppend) state = 'activeAppend';
         else if ((!doc.kind || doc.kind === 'resumable') &&
@@ -117,13 +128,11 @@ function classify(doc) {
     }
     // Also validate the persisted origin when a crash left status=recovering:
     // do not allow malformed/corrupt origin metadata to unlock arbitrary IDs.
-    const requiredKind = {
-        uploading: 'direct', deleting: 'delete', renaming: 'rename', cleaning: 'cleanup',
-    };
-    if (!state || (requiredKind[state] && doc.kind !== requiredKind[state]) ||
-        (['activeAppend', 'finalizing', 'aborting'].includes(state) &&
-          doc.kind && doc.kind !== 'resumable') ||
-        (state === 'activeAppend' && !doc.activeAppend?.token)) {
+    const requiredKind = RECOVERY_ORIGIN_KINDS.get(state);
+    if (!requiredKind ||
+        (doc.kind !== requiredKind && !(requiredKind === 'resumable' && !doc.kind)) ||
+        (state === 'activeAppend' && !doc.activeAppend?.token) ||
+        (state === 'initializing' && (doc.kind !== 'resumable' || !doc.ownerToken))) {
         fail('Inconsistent or unsupported owner origin; preserve ownership');
     }
     return state;
@@ -137,7 +146,7 @@ async function contiguousChunkPrefix(db, bucket, id, session) {
     const count = Math.ceil(session.length / session.chunkSizeBytes);
     let next = 0;
     for await (const doc of db.collection(bucket + '.chunks')
-        .find({ files_id: id }).sort({ n: 1 })) {
+        .find({ files_id: id }, { readPreference: 'primary' }).sort({ n: 1 })) {
         if (doc.n !== next || next >= count) {
             fail('Interrupted append contains a gap or extra chunk; preserve ownership');
         }
@@ -157,7 +166,7 @@ async function recoverGridFSOwnership(input) {
     if (!db || !bucket || typeof bucket !== 'string' || !(id instanceof ObjectId)) fail('Invalid database, bucket or ObjectId');
     if (!expectedStatus || !expectedUpdatedAt) fail('Exact expected status and updatedAt are required');
     const uploads = db.collection(bucket + '.uploads');
-    const doc = await uploads.findOne({ _id: id });
+    const doc = await uploads.findOne({ _id: id }, { readPreference: 'primary' });
     if (!doc) return { outcome: 'no_owner', modified: false };
     if (!(doc.updatedAt instanceof Date) ||
         doc.status !== expectedStatus ||
@@ -167,7 +176,8 @@ async function recoverGridFSOwnership(input) {
     const token = snapshotToken(doc);
     if ((token || null) !== (expectedToken || null)) fail('Owner token changed since inspection');
     const sourceStatus = classify(doc);
-    const visible = await db.collection(bucket + '.files').findOne({ _id: id }, { projection: { _id: 1 } });
+    const fileProjection = { projection: { _id: 1 }, readPreference: 'primary' };
+    const visible = await db.collection(bucket + '.files').findOne({ _id: id }, fileProjection);
     const plan = {
         bucket, uploadId: id.toHexString(), fromStatus: sourceStatus,
         fileVisible: !!visible,
@@ -176,6 +186,7 @@ async function recoverGridFSOwnership(input) {
             deleting: 'complete-file-and-chunk-deletion',
             renaming: 'release-after-inspecting-rename-outcome',
             cleaning: 'remove-invisible-orphan-chunks',
+            initializing: 'remove-invisible-orphan-chunks-and-release-initialization',
             activeAppend: 'restore-pending-and-reconcile-prefix',
             finalizing: visible ? 'verify-visible-bytes-and-release-session' : 'restore-pending-for-retry',
             aborting: visible ? 'BLOCK-visible-file-conflict' : 'finish-invisible-chunk-removal',
@@ -243,6 +254,13 @@ async function recoverGridFSOwnership(input) {
     try {
         const chunks = db.collection(bucket + '.chunks');
         const files = db.collection(bucket + '.files');
+        // Dry-run may use the pre-claim snapshot. Apply must re-read visibility
+        // after the exclusive claim and fail closed if it changed.
+        const visibleAfter = await files.findOne({ _id: id }, fileProjection);
+        const visibleNow = !!visibleAfter;
+        if (visibleNow !== !!visible) {
+            fail('File visibility changed after recovery claim; preserve recovering ownership');
+        }
         if (sourceStatus === 'activeAppend') {
             const nextChunk = await contiguousChunkPrefix(db, bucket, id, doc);
             const changed = await uploads.updateOne(held, {
@@ -251,11 +269,11 @@ async function recoverGridFSOwnership(input) {
                 $unset: { activeAppend: '', recovery: '' },
             });
             if (changed.matchedCount !== 1) fail('Lost recovery claim while restoring append');
-        } else if (sourceStatus === 'finalizing' && !visible) {
+        } else if (sourceStatus === 'finalizing' && !visibleNow) {
             const changed = await uploads.updateOne(held, {
                 $set: { status: 'pending', updatedAt: new Date(),
                     expiresAt: new Date(Date.now() + TTL_MS) },
-                $unset: { recovery: '' },
+                $unset: { recovery: '', ownerToken: '' },
             });
             if (changed.matchedCount !== 1) fail('Lost recovery claim while restoring finalize');
         } else {
@@ -263,16 +281,18 @@ async function recoverGridFSOwnership(input) {
             // unless this is an explicitly quiesced, retained "deleting" owner.
             if (sourceStatus === 'finalizing') {
                 verification = await verifyVisibleFile(db, bucket, id, doc, doc);
-            } else if ((sourceStatus === 'uploading' || sourceStatus === 'renaming') && visible) {
+                if (!verification) fail('Visible file could not be verified after claim; preserve recovering ownership');
+            } else if ((sourceStatus === 'uploading' || sourceStatus === 'renaming') && visibleNow) {
                 verification = await verifyVisibleFile(db, bucket, id, null, doc);
-            } else if (sourceStatus === 'renaming' && !visible) {
+                if (!verification) fail('Visible file could not be verified after claim; preserve recovering ownership');
+            } else if (sourceStatus === 'renaming' && !visibleNow) {
                 fail('Renaming owner has no visible file; preserve ownership for manual inspection');
             }
             if (sourceStatus === 'deleting') {
                 await files.deleteOne({ _id: id });
                 await chunks.deleteMany({ files_id: id });
-            } else if ((sourceStatus === 'uploading' || sourceStatus === 'cleaning' ||
-                        sourceStatus === 'aborting') && !visible) {
+            } else if ((sourceStatus === 'uploading' || sourceStatus === 'cleaning' || sourceStatus === 'initializing' ||
+                        sourceStatus === 'aborting') && !visibleNow) {
                 await chunks.deleteMany({ files_id: id });
             }
             const removed = await uploads.deleteOne(held);
