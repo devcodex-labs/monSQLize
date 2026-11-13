@@ -27,7 +27,7 @@ function isPrematureClose(source: Readable, ended: boolean): boolean {
  *
  * A premature `close` (destroy without error) or an already-destroyed source
  * rejects in finite time and settles once. An in-flight `onChunk` write is
- * awaited before settlement so the caller can release its append claim safely.
+ * awaited before settlement, and any remaining buffered slices are discarded.
  */
 export async function consumeReadableChunks(
     source: Readable,
@@ -62,7 +62,9 @@ export async function consumeReadableChunks(
     const takeFrom = async (incoming: Buffer): Promise<void> => {
         let offset = 0;
         report(incoming.length);
-        while (index < total && offset < incoming.length) {
+        while (offset < incoming.length) {
+            if (aborted || isPrematureClose(source, ended)) return;
+            if (index >= total) badChunkSize();
             const want = chunkLengthAt(index, length, chunkSizeBytes);
             const have = residual.length + (incoming.length - offset);
             if (have < want) {
@@ -85,7 +87,6 @@ export async function consumeReadableChunks(
             }
             await emit({ index, bytes });
         }
-        if (index >= total && offset < incoming.length) badChunkSize();
         report();
     };
 

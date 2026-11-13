@@ -92,7 +92,7 @@ Chunk bytes must follow the session size:
 - A payload that contains any new chunk must start at `nextChunk`. Starting earlier throws `GRIDFS_RESUME_MISMATCH` and writes nothing.
 - A duplicate `{ files_id, n }` insert is accepted only when the stored bytes match.
 
-`finalizeResumableUpload` requires a contiguous prefix, a total length equal to the session length, and a sha256 equal to the session digest. It then inserts the files document, sets `metadata.sha256`, and deletes the session. Missing chunk indexes throw `GRIDFS_UPLOAD_INCOMPLETE` with `details[0].missingChunks`. A bad digest or a chunk of the wrong size throws `GRIDFS_INTEGRITY_MISMATCH`. The files document is not inserted in those cases.
+`finalizeResumableUpload` requires exactly one chunk at each expected index starting at zero, a total length equal to the session length, and a sha256 equal to the session digest. It then inserts the files document, sets `metadata.sha256`, and deletes the session. Missing chunk indexes throw `GRIDFS_UPLOAD_INCOMPLETE` with `details[0].missingChunks`. An invalid, duplicate, or out-of-range chunk index, a bad digest, or a chunk of the wrong size throws `GRIDFS_INTEGRITY_MISMATCH`. The files document is not inserted in those cases.
 
 Retrying `finalizeResumableUpload` is idempotent while the session still exists: if a file with the same id is already visible, the library re-hashes the actual stored chunks and returns the file only when that digest and the file length match the session. A file with a different sha256 or length still throws `GRIDFS_FILE_EXISTS`. Once the session is gone (a finalize that fully succeeded, an abort, or the TTL), there is no digest to compare, so a retry throws `GRIDFS_FILE_NOT_FOUND`. Callers must persist `uploadId`, `length`, and `sha256` themselves. After a vanished session, use `getFile(uploadId)` to see whether a file is visible, then re-hash the **actual** bytes (for example `download(uploadId)` or a walk of `<bucket>.chunks`) and compare them to the persisted length and digest. Never treat `metadata.sha256` alone as proof: `uploadStream()` and a raw `metadata.sha256` can store an unverified claim. This package does not add a separate public verification API.
 
@@ -138,7 +138,7 @@ A blocked call throws `INVALID_OPERATION` before any GridFS write. `details[0]` 
 |------|------|
 | `GRIDFS_FILE_NOT_FOUND` | Download, delete, rename, or resumable session target is missing |
 | `GRIDFS_FILE_EXISTS` | `ifExists: 'error'` finds a conflict, or the chosen id is already present |
-| `GRIDFS_INTEGRITY_MISMATCH` | Bytes do not match `sha256`, or a finalized chunk has the wrong size |
+| `GRIDFS_INTEGRITY_MISMATCH` | Bytes do not match `sha256`, or finalize found an invalid chunk index or size |
 | `GRIDFS_UPLOAD_INCOMPLETE` | Finalize found gaps. `details[0].missingChunks` lists them |
 | `GRIDFS_RESUME_MISMATCH` | `fromChunk` is ahead of the contiguous prefix, or a replayed chunk differs |
 | `GRIDFS_UPLOAD_BUSY` | Another append/finalize/abort/upload/delete operation owns the ID; do not retry until it finishes or is explicitly recovered |

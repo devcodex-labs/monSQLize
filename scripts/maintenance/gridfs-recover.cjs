@@ -13,6 +13,15 @@ const { randomUUID, createHash } = require('node:crypto');
 const { MongoClient, ObjectId } = require('mongodb');
 
 const TTL_MS = 604800000;
+const RECOVERY_ORIGIN_KINDS = new Map([
+    ['uploading', 'direct'],
+    ['deleting', 'delete'],
+    ['renaming', 'rename'],
+    ['cleaning', 'cleanup'],
+    ['activeAppend', 'resumable'],
+    ['finalizing', 'resumable'],
+    ['aborting', 'resumable'],
+]);
 
 function fail(message) {
     const error = new Error(message);
@@ -117,12 +126,9 @@ function classify(doc) {
     }
     // Also validate the persisted origin when a crash left status=recovering:
     // do not allow malformed/corrupt origin metadata to unlock arbitrary IDs.
-    const requiredKind = {
-        uploading: 'direct', deleting: 'delete', renaming: 'rename', cleaning: 'cleanup',
-    };
-    if (!state || (requiredKind[state] && doc.kind !== requiredKind[state]) ||
-        (['activeAppend', 'finalizing', 'aborting'].includes(state) &&
-          doc.kind && doc.kind !== 'resumable') ||
+    const requiredKind = RECOVERY_ORIGIN_KINDS.get(state);
+    if (!requiredKind ||
+        (doc.kind !== requiredKind && !(requiredKind === 'resumable' && !doc.kind)) ||
         (state === 'activeAppend' && !doc.activeAppend?.token)) {
         fail('Inconsistent or unsupported owner origin; preserve ownership');
     }

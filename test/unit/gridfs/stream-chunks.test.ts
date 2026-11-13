@@ -182,27 +182,30 @@ describe('consumeReadableChunks', () => {
         );
     });
 
-    it('waits for an in-flight onChunk write before rejecting a mid-write destroy', async () => {
+    it('waits for the in-flight write and discards the remaining buffered chunks on destroy', async () => {
         let writeFinished = false;
         let pushed = false;
+        const startedWrites: number[] = [];
         const source = new Readable({
             read() {
                 if (!pushed) {
                     pushed = true;
-                    this.push(Buffer.from('aaaa'));
+                    this.push(Buffer.from('aaaabbbbcccc'));
                 }
             },
         });
-        const started = Date.now();
         await assert.rejects(
-            () => settles(consumeReadableChunks(source, 0, 8, 4, async () => {
-                source.destroy();
-                await delayed(40);
-                writeFinished = true;
+            () => settles(consumeReadableChunks(source, 0, 12, 4, async ({ index }) => {
+                startedWrites.push(index);
+                if (index === 0) {
+                    source.destroy();
+                    await delayed(40);
+                    writeFinished = true;
+                }
             })),
             isClosedError,
         );
         assert.equal(writeFinished, true);
-        assert.ok(Date.now() - started >= 40, 'rejected before the in-flight write finished');
+        assert.deepEqual(startedWrites, [0]);
     });
 });

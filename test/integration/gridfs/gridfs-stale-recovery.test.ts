@@ -295,6 +295,34 @@ describe('GridFS operator recovery: deterministic post-crash state and chunk saf
         });
     });
 
+    it('rejects an unknown recovery origin before changing ownership or chunks', async () => {
+        await withRuntime(async (bucket, db) => {
+            const payload = Buffer.from('GOOD');
+            const { uploadId: id } = await bucket.beginResumableUpload('interrupted.bin', {
+                length: payload.length, sha256: digest(payload),
+            });
+            await bucket.appendChunks(id, 0, payload);
+            const uploads = db.collection('b.uploads');
+            await uploads.updateOne({ _id: id }, {
+                $set: {
+                    status: 'recovering', updatedAt: new Date(),
+                    recovery: { token: 'recovery-token', fromStatus: 'unknown' },
+                },
+                $unset: { expiresAt: '' },
+            });
+            const owner = await uploads.findOne({ _id: id });
+            const chunks = db.collection('b.chunks');
+            const originalChunks = await chunks.find({ files_id: id }).toArray();
+
+            await assert.rejects(recover(db, id, { resumeQuiesced: true }), {
+                code: 'GRIDFS_RECOVERY_PRECONDITION_FAILED',
+            });
+            assert.deepEqual(await uploads.findOne({ _id: id }), owner);
+            assert.deepEqual(await chunks.find({ files_id: id }).toArray(), originalChunks);
+            assert.equal(await db.collection('b.ownership_recovery_audit').countDocuments({ fileId: id }), 0);
+        });
+    });
+
     it('refuses to clear aborting ownership if a visible file already owns the chunks', async () => {
         await withRuntime(async (bucket, db) => {
             const id = new ObjectId();

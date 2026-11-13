@@ -232,14 +232,15 @@ export async function finalizeResumableUpload(ctx: GridFSContext, uploadId: Obje
         const cursor = ctx.db.collection(chunksCollectionName(ctx.bucketName)).find({ files_id: uploadId }).sort({ n: 1 });
         let seen = 0;
         for await (const doc of cursor) {
-            const n = typeof doc.n === 'number' ? doc.n : -1;
-            while (seen < n && seen < expected) {
+            const n = doc.n;
+            if (!Number.isSafeInteger(n) || n < seen || n >= expected) {
+                throw integrityMismatch('finalizeResumableUpload', ctx.bucketName, {
+                    uploadId, expected: `chunk index between ${seen} and ${expected - 1}`, actual: n,
+                });
+            }
+            while (seen < n) {
                 missing.push(seen);
                 seen += 1;
-            }
-            if (n !== seen || n < 0 || n >= expected) {
-                if (n >= 0) missing.push(n);
-                continue;
             }
             const bytes = binaryToBuffer(doc.data, 'finalizeResumableUpload');
             const want = chunkLengthAt(n, session.length, session.chunkSizeBytes);

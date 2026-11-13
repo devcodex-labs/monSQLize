@@ -106,6 +106,32 @@ describe('GridFS remaining-issue regressions (begin race, finalize rollback, str
         });
     });
 
+    it('rejects malformed or extra chunk indexes even when the expected bytes are present', async () => {
+        await withRuntime('gridfs_finalize_invalid_index', async (runtime, db) => {
+            const bucket = runtime.gridfs('b', { chunkSizeBytes: 4 });
+            const payload = Buffer.from('GOOD');
+            for (const n of [-1, 'invalid', 0.5, 1, Number.MAX_SAFE_INTEGER + 1]) {
+                const { uploadId } = await bucket.beginResumableUpload(`bad-index-${n}.bin`, {
+                    length: payload.length, sha256: sha(payload),
+                });
+                await bucket.appendChunks(uploadId, 0, payload);
+                const chunks = db.collection('b.chunks');
+                const extra = await chunks.insertOne({ files_id: uploadId, n, data: Buffer.from('BAD!') });
+
+                await assert.rejects(bucket.finalizeResumableUpload(uploadId), {
+                    code: 'GRIDFS_INTEGRITY_MISMATCH',
+                }, `chunk index ${n}`);
+                assert.equal(await db.collection('b.files').findOne({ _id: uploadId }), null);
+                assert.equal((await db.collection('b.uploads').findOne({ _id: uploadId }))?.status, 'pending');
+                assert.equal(await chunks.countDocuments({ files_id: uploadId }), 2);
+
+                await chunks.deleteOne({ _id: extra.insertedId });
+                const info = await bucket.finalizeResumableUpload(uploadId);
+                assert.deepEqual(await bucket.download(info.id), payload);
+            }
+        });
+    });
+
     it('streams a Readable append with ownership, idempotent replay, and recoverable partial failure', { timeout: 30_000 }, async () => {
         await withRuntime('gridfs_stream_append', async (runtime, db) => {
             const bucket = runtime.gridfs('b', { chunkSizeBytes: 4 });
