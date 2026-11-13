@@ -81,7 +81,7 @@ await bucket.abortResumableUpload(session.uploadId);
 
 - 除最后一片外，每片长度都是 `chunkSizeBytes`。
 - 最后一片长度是 `length % chunkSizeBytes`；能够整除时仍是 `chunkSizeBytes`。
-- 无法按这些长度切开的 payload 抛出 `INVALID_ARGUMENT`。对 `Buffer` / `Uint8Array`，整段 payload 会在插入任何分片之前完成规划与检查。对 `Readable`，完整分片会随读随写；末尾不足或超出的残余会在消费过程中被拒绝，此前已经写入的完整前缀分片会保留。失败的 append 会抛错，不会返回 `nextChunk`。应从上一次已成功确认的位置继续；若已写入前缀已前进，以 `GRIDFS_RESUME_MISMATCH.expectedNextChunk` 为准。峰值内存是“下一片所需长度以内的残余 + 当前流入的 stream 缓冲”，不会随整个 payload 线性增长。大文件应使用较小的 `highWaterMark`。
+- 无法按这些长度切开的 payload 抛出 `INVALID_ARGUMENT`。对 `Buffer` / `Uint8Array`，整段 payload 会在插入任何分片之前完成规划与检查。对 `Readable`，完整分片会随读随写；末尾不足或超出的残余会在消费过程中被拒绝，此前已经写入的完整前缀分片会保留。失败的 append 会抛错，不会返回 `nextChunk`。应从上一次已成功确认的位置继续；若已写入前缀已前进，以 `GRIDFS_RESUME_MISMATCH.expectedNextChunk` 为准。正常读到 EOF 后，若输入流在自动销毁期间报错，追加仍会失败。内存占用受当前流缓冲、未凑齐的分片和固定大小的分片索引批次限制。大文件应使用较小的 `highWaterMark`。
 
 `appendChunks` 以 `fromChunk` 定位：
 

@@ -2,6 +2,8 @@ import type { Readable } from 'node:stream';
 import { invalidArgument } from './errors';
 import { chunkCount, chunkLengthAt } from './validate';
 
+const DESTROY_CHECK_MS = 50;
+
 export interface StreamedChunk {
     index: number;
     bytes: Buffer;
@@ -23,7 +25,9 @@ function isPrematureClose(source: Readable, ended: boolean): boolean {
 export function watchReadable(source: Readable) {
     let error: Error | undefined;
     let released = false;
+    let closeCheck: ReturnType<typeof setInterval> | undefined;
     const detach = (): void => {
+        clearInterval(closeCheck);
         source.removeListener('error', onError);
         source.removeListener('close', detach);
     };
@@ -42,12 +46,17 @@ export function watchReadable(source: Readable) {
                 detach();
                 return;
             }
-            if (!source.closed) source.once('close', detach);
-            if (!source.destroyed) source.destroy();
-            // A synchronous _destroy can queue an error even after closed is true.
-            setImmediate(() => {
+            if (source.closed) {
+                // A synchronous _destroy may have already queued an error.
+                setImmediate(detach);
+                return;
+            }
+            source.once('close', detach);
+            closeCheck = setInterval(() => {
                 if (source.closed) detach();
-            });
+            }, DESTROY_CHECK_MS);
+            closeCheck.unref();
+            if (!source.destroyed) source.destroy();
         },
     };
 }
@@ -159,8 +168,8 @@ export async function consumeReadableChunks(
         };
         const onError = (error: unknown): void => abort(error);
         const onClose = (): void => {
-            if (ended || source.readableEnded) return;
-            abort(streamClosedError());
+            if (ended || source.readableEnded) run();
+            else abort(streamClosedError());
         };
 
         const pump = async (): Promise<void> => {
@@ -204,7 +213,9 @@ export async function consumeReadableChunks(
                     run();
                     return;
                 }
-                if ((ended || source.readableEnded) && residual.length === 0) finish();
+                // Node starts auto-destruction after end listeners return.
+                // Once it starts, wait for its result before accepting the append.
+                if (ended && (!source.destroyed || source.closed)) finish();
             }, (error: unknown) => finish(error));
         };
 
@@ -215,7 +226,8 @@ export async function consumeReadableChunks(
         // emitClose:false suppresses the notification even when an idle source is destroyed.
         const checkDestroyed = setInterval(() => {
             if (isPrematureClose(source, ended)) abort(stream.error ?? streamClosedError());
-        }, 50);
+            else if (ended && source.closed) run();
+        }, DESTROY_CHECK_MS);
         checkDestroyed.unref();
         run();
         if (!ended && source.readableEnded) {

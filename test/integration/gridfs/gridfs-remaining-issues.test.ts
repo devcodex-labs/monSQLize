@@ -177,6 +177,83 @@ describe('GridFS remaining-issue regressions (begin race, finalize rollback, str
         });
     });
 
+    it('keeps the new finalize owner when an older retry completes after ID reuse', { timeout: 10_000 }, async () => {
+        await withRuntime('gridfs_finalize_owner_reuse', async (runtime, db) => {
+            const bucket = runtime.gridfs('b', { chunkSizeBytes: 4 });
+            const id = new ObjectId();
+            const oldBytes = Buffer.from('OLD!');
+            const newBytes = Buffer.from('NEW!');
+            const firstCleanup = gate();
+            const retryCleanup = gate();
+            const newInsert = gate();
+            const finishFirst = gate();
+            const finishRetry = gate();
+            const finishNew = gate();
+            const originalDelete = Collection.prototype.deleteOne;
+            const originalInsert = Collection.prototype.insertOne;
+            await bucket.beginResumableUpload('old.bin', { id, length: 4, sha256: sha(oldBytes) });
+            await bucket.appendChunks(id, 0, oldBytes);
+            let cleanups = 0;
+            Collection.prototype.deleteOne = async function (this: Collection, filter, options) {
+                if (this.collectionName === 'b.uploads' && filter?.status === 'finalizing' && id.equals(filter._id)) {
+                    cleanups += 1;
+                    if (cleanups === 1) {
+                        firstCleanup.open();
+                        await finishFirst.wait;
+                    } else if (cleanups === 2) {
+                        retryCleanup.open();
+                        await finishRetry.wait;
+                    }
+                }
+                return originalDelete.call(this, filter, options);
+            };
+            Collection.prototype.insertOne = async function (this: Collection, doc, options) {
+                if (this.collectionName === 'b.files' && doc.filename === 'new.bin') {
+                    newInsert.open();
+                    await finishNew.wait;
+                }
+                return originalInsert.call(this, doc, options);
+            };
+            const pending = [];
+            try {
+                const first = bucket.finalizeResumableUpload(id);
+                pending.push(first);
+                await firstCleanup.wait;
+                const oldRetry = bucket.finalizeResumableUpload(id);
+                pending.push(oldRetry);
+                await retryCleanup.wait;
+                finishFirst.open();
+                await first;
+                await bucket.delete(id);
+                await bucket.beginResumableUpload('new.bin', { id, length: 4, sha256: sha(newBytes) });
+                await bucket.appendChunks(id, 0, newBytes);
+                const current = bucket.finalizeResumableUpload(id);
+                pending.push(current);
+                await newInsert.wait;
+                const uploads = db.collection('b.uploads');
+                const owner = await uploads.findOne({ _id: id });
+                assert.equal(owner?.status, 'finalizing');
+
+                finishRetry.open();
+                assert.equal((await oldRetry).filename, 'old.bin');
+                assert.deepEqual(await uploads.findOne({ _id: id }), owner);
+                await assert.rejects(bucket.abortResumableUpload(id), { code: 'GRIDFS_UPLOAD_BUSY' });
+
+                finishNew.open();
+                assert.equal((await current).filename, 'new.bin');
+                assert.deepEqual(await bucket.download(id), newBytes);
+                assert.equal(await uploads.findOne({ _id: id }), null);
+            } finally {
+                finishFirst.open();
+                finishRetry.open();
+                finishNew.open();
+                Collection.prototype.deleteOne = originalDelete;
+                Collection.prototype.insertOne = originalInsert;
+                await Promise.allSettled(pending);
+            }
+        });
+    });
+
     it('rejects malformed or extra chunk indexes even when the expected bytes are present', async () => {
         await withRuntime('gridfs_finalize_invalid_index', async (runtime, db) => {
             const bucket = runtime.gridfs('b', { chunkSizeBytes: 4 });
@@ -332,6 +409,66 @@ describe('GridFS remaining-issue regressions (begin race, finalize rollback, str
             assert.equal((await db.collection('b.uploads').findOne({ _id: uploadId }))?.activeAppend, undefined);
             assert.equal(await db.collection('b.chunks').countDocuments({ files_id: uploadId }), 0);
             assert.equal((await bucket.appendChunks(uploadId, 0, payload)).nextChunk, 1);
+        });
+    });
+
+    it('rejects an append when automatic destruction fails after EOF', async () => {
+        await withRuntime('gridfs_append_eof_error', async (runtime, db) => {
+            const bucket = runtime.gridfs('b', { chunkSizeBytes: 4 });
+            const payload = Buffer.from('GOOD');
+            const { uploadId } = await bucket.beginResumableUpload('eof.bin', { length: 4, sha256: sha(payload) });
+            const destroying = gate();
+            const complete = gate();
+            const failure = new Error('asynchronous EOF cleanup failed');
+            const source = new Readable({
+                read() { this.push(payload); this.push(null); },
+                destroy(_error, callback) {
+                    destroying.open();
+                    void complete.wait.then(() => callback(failure));
+                },
+            });
+            const rejected = assert.rejects(bucket.appendChunks(uploadId, 0, source), (error) => error === failure);
+            try {
+                await destroying.wait;
+                await assert.rejects(bucket.abortResumableUpload(uploadId), { code: 'GRIDFS_UPLOAD_BUSY' });
+            } finally {
+                complete.open();
+                await rejected;
+            }
+            const owner = await db.collection('b.uploads').findOne({ _id: uploadId });
+            assert.equal(owner?.nextChunk, 0);
+            assert.equal(owner?.activeAppend, undefined);
+            assert.equal(await db.collection('b.chunks').countDocuments({ files_id: uploadId }), 1);
+            assert.equal((await bucket.appendChunks(uploadId, 0, payload)).nextChunk, 1);
+        });
+    });
+
+    it('scans the stored prefix in bounded batches after a large stream append', async () => {
+        await withRuntime('gridfs_append_batch_scan', async (runtime, db) => {
+            const bucket = runtime.gridfs('b', { chunkSizeBytes: 1 });
+            const payload = Buffer.alloc(600, 7);
+            const { uploadId } = await bucket.beginResumableUpload('batched.bin', { length: payload.length, sha256: sha(payload) });
+            const original = Collection.prototype.find;
+            const batchSizes: number[] = [];
+            Collection.prototype.find = function (this: Collection, ...args: unknown[]) {
+                const cursor = Reflect.apply(original, this, args);
+                const filter = args[0] as { files_id?: ObjectId; n?: { $gte?: number } } | undefined;
+                if (this.collectionName === 'b.chunks' && uploadId.equals(filter?.files_id) && filter?.n?.$gte !== undefined) {
+                    const batchSize = cursor.batchSize.bind(cursor);
+                    cursor.batchSize = (size: number) => { batchSizes.push(size); return batchSize(size); };
+                    cursor.toArray = async () => { throw new Error('prefix scan materialized all matching chunk indexes'); };
+                }
+                return cursor;
+            } as typeof original;
+            try {
+                const result = await bucket.appendChunks(uploadId, 0, Readable.from([payload]));
+                assert.deepEqual(result, { nextChunk: 600, bytesAccepted: 600 });
+                assert.deepEqual(batchSizes, [256, 256]);
+            } finally {
+                Collection.prototype.find = original;
+            }
+            await bucket.finalizeResumableUpload(uploadId);
+            assert.deepEqual(await bucket.download(uploadId), payload);
         });
     });
 

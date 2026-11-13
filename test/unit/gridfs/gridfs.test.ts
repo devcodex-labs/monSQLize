@@ -80,15 +80,20 @@ class MemoryCollection {
 
     find(filter: Doc) {
         let rows = this.matched(filter);
+        const countRow = () => { this.rowsRead += 1; };
         const count = (out: Doc[]) => { this.rowsRead += out.length; return out; };
         const cursor = {
             sort: (spec: Doc) => { rows = sortRows(rows, spec); return cursor; },
             skip: (count: number) => { rows = rows.slice(count); return cursor; },
             limit: (count: number) => { rows = rows.slice(0, count); return cursor; },
             project: () => cursor,
+            batchSize: () => cursor,
             toArray: async () => count(rows).map((row) => ({ ...row })),
             async *[Symbol.asyncIterator]() {
-                for (const row of rows) yield { ...row };
+                for (const row of rows) {
+                    countRow();
+                    yield { ...row };
+                }
             },
         };
         return cursor;

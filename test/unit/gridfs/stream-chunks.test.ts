@@ -208,6 +208,30 @@ describe('consumeReadableChunks', () => {
         assert.equal(source.listenerCount('close'), 0);
     });
 
+    it('removes its listeners after silent asynchronous destruction completes', async () => {
+        let finishDestroy = (): void => {};
+        const source = new Readable({
+            emitClose: false,
+            read() {},
+            destroy(error, callback) {
+                finishDestroy = () => callback(error);
+            },
+        });
+        const result = consumeReadableChunks(source, 0, 4, 4, async () => undefined);
+        setImmediate(() => source.destroy());
+        try {
+            await assert.rejects(settles(result), isClosedError);
+            assert.equal(source.closed, false);
+            await new Promise<void>((resolve) => setImmediate(resolve));
+        } finally {
+            finishDestroy();
+        }
+        await delayed(100);
+        assert.equal(source.closed, true);
+        assert.equal(source.listenerCount('error'), 0);
+        assert.equal(source.listenerCount('close'), 0);
+    });
+
     it('waits for the in-flight write and discards the remaining buffered chunks on destroy', async () => {
         let writeFinished = false;
         let pushed = false;

@@ -208,23 +208,27 @@ export async function finalizeResumableUpload(ctx: GridFSContext, uploadId: Obje
         throw uploadBusy('finalizeResumableUpload', ctx, uploadId);
     }
     if (session.status !== 'pending') throw uploadBusy('finalizeResumableUpload', ctx, uploadId);
+    const ownerToken = randomUUID();
+    const owner = finalizingOwner(uploadId, ownerToken);
     const transitioned = await uploads.updateOne(
         { _id: uploadId, status: 'pending', activeAppend: { $exists: false } },
-        { $set: { status: 'finalizing', updatedAt: new Date() }, $unset: { expiresAt: '' } },
+        { $set: { status: 'finalizing', ownerToken, updatedAt: new Date() }, $unset: { expiresAt: '' } },
     );
     if (!transitioned.matchedCount) throw uploadBusy('finalizeResumableUpload', ctx, uploadId);
     // Only the winner of this CAS may inspect/commit files. Abort will now
     // fail its pending -> aborting CAS instead of deleting validated chunks.
     session = await requireSession(ctx, uploadId, 'finalizeResumableUpload');
+    if (session.status !== 'finalizing' || session.ownerToken !== ownerToken) {
+        throw uploadBusy('finalizeResumableUpload', ctx, uploadId);
+    }
     const files = ctx.db.collection(filesCollectionName(ctx.bucketName));
 
-    const restorePendingAfterClosedFailure = async (error: unknown): Promise<void> => {
-        if (!isClosedFinalizeFailure(error)) return;
+    const restorePending = async (): Promise<void> => {
         try {
-            await uploads.updateOne(
-                { _id: uploadId, status: 'finalizing' },
-                { $set: { status: 'pending', updatedAt: new Date(), expiresAt: new Date(Date.now() + 604800 * 1000) } },
-            );
+            await uploads.updateOne(owner, {
+                $set: { status: 'pending', updatedAt: new Date(), expiresAt: new Date(Date.now() + 604800 * 1000) },
+                $unset: { ownerToken: '' },
+            });
         } catch { /* The retained finalizing state must be recovered explicitly. */ }
     };
 
@@ -232,7 +236,7 @@ export async function finalizeResumableUpload(ctx: GridFSContext, uploadId: Obje
         const already = await committedFile(ctx, uploadId, session);
         if (already) return already;
     } catch (error) {
-        await restorePendingAfterClosedFailure(error);
+        if (isClosedFinalizeFailure(error)) await restorePending();
         throw error;
     }
 
@@ -278,12 +282,7 @@ export async function finalizeResumableUpload(ctx: GridFSContext, uploadId: Obje
     } catch (error) {
         // Validation failed before any files insert. Return to pending so the
         // caller can supply missing/correct chunks; do not erase those chunks.
-        try {
-            await uploads.updateOne(
-                { _id: uploadId, status: 'finalizing' },
-                { $set: { status: 'pending', updatedAt: new Date(), expiresAt: new Date(Date.now() + 604800 * 1000) } },
-            );
-        } catch { /* The retained finalizing state must be recovered explicitly. */ }
+        await restorePending();
         throw error;
     }
 
@@ -306,20 +305,20 @@ export async function finalizeResumableUpload(ctx: GridFSContext, uploadId: Obje
                 const raced = await committedFile(ctx, uploadId, session);
                 if (raced) return raced;
             } catch (conflict) {
-                await restorePendingAfterClosedFailure(conflict);
+                if (isClosedFinalizeFailure(conflict)) await restorePending();
                 throw conflict;
             }
         }
         const mapped = mapDriverError(error, 'finalizeResumableUpload', ctx, { uploadId, filename: session.filename });
         if (isClosedFinalizeFailure(mapped)) {
-            await restorePendingAfterClosedFailure(mapped);
+            await restorePending();
         }
         // Ambiguous commit outcomes keep finalizing ownership rather than
         // allowing an abort or another writer to delete/reuse the same chunks.
         throw mapped;
     }
     try {
-        await uploads.deleteOne({ _id: uploadId, status: 'finalizing' });
+        await uploads.deleteOne(owner);
     } catch (error) {
         ctx.logger?.warn?.('[gridfs] finalizeResumableUpload could not delete the upload session', { bucket: ctx.bucketName, uploadId: String(uploadId), error });
     }
@@ -371,6 +370,11 @@ export async function abortResumableUpload(ctx: GridFSContext, uploadId: ObjectI
  * Returns null when no file exists. A file whose stored sha256 and length match the session is this upload's own
  * earlier commit: delete the leftover session and return it. Any other file is a real conflict (GRIDFS_FILE_EXISTS).
  */
+function finalizingOwner(uploadId: ObjectId, ownerToken?: string) {
+    // Legacy finalizing records have no token. Their retries can only clear legacy records.
+    return { _id: uploadId, status: 'finalizing', ownerToken: ownerToken ?? { $exists: false } };
+}
+
 async function committedFile(ctx: GridFSContext, uploadId: ObjectId, session: GridFSUploadSession): Promise<GridFSFileInfo | null> {
     const target = { uploadId, filename: session.filename };
     try {
@@ -404,7 +408,7 @@ async function committedFile(ctx: GridFSContext, uploadId: ObjectId, session: Gr
         if (index !== chunkCount(session.length, session.chunkSizeBytes) || total !== session.length || hash.digest('hex') !== session.sha256) {
             throw integrityMismatch('finalizeResumableUpload', ctx.bucketName, { uploadId, expected: session.sha256, actual: 'committed chunks do not match' });
         }
-        await ctx.db.collection(uploadsCollectionName(ctx.bucketName)).deleteOne({ _id: uploadId, status: 'finalizing' });
+        await ctx.db.collection(uploadsCollectionName(ctx.bucketName)).deleteOne(finalizingOwner(uploadId, session.ownerToken));
         return info;
     } catch (error) {
         // GridFS domain errors (the conflict above) pass through unchanged.
@@ -462,20 +466,19 @@ async function requireSession(ctx: GridFSContext, uploadId: ObjectId, operation:
  */
 async function contiguousNext(ctx: GridFSContext, uploadId: ObjectId, from: number): Promise<number> {
     const start = Number.isInteger(from) && from > 0 ? from : 0;
-    let docs;
+    let expected = start;
     try {
-        docs = await ctx.db.collection(chunksCollectionName(ctx.bucketName))
+        const cursor = ctx.db.collection(chunksCollectionName(ctx.bucketName))
             .find({ files_id: uploadId, n: { $gte: start } })
             .sort({ n: 1 })
-            .project({ n: 1 })
-            .toArray();
+            .project({ _id: 0, n: 1 })
+            .batchSize(256);
+        for await (const doc of cursor) {
+            if (doc.n !== expected) break;
+            expected += 1;
+        }
     } catch (error) {
         throw mapDriverError(error, 'appendChunks', ctx, { uploadId });
-    }
-    let expected = start;
-    for (const doc of docs) {
-        if (doc.n !== expected) break;
-        expected += 1;
     }
     return expected;
 }

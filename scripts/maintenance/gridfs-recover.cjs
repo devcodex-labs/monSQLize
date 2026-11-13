@@ -272,7 +272,7 @@ async function recoverGridFSOwnership(input) {
             const changed = await uploads.updateOne(held, {
                 $set: { status: 'pending', updatedAt: new Date(),
                     expiresAt: new Date(Date.now() + TTL_MS) },
-                $unset: { recovery: '' },
+                $unset: { recovery: '', ownerToken: '' },
             });
             if (changed.matchedCount !== 1) fail('Lost recovery claim while restoring finalize');
         } else {
