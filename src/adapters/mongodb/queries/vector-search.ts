@@ -6,7 +6,8 @@
  * and result-envelope guarantees are applied before the driver is called.
  */
 
-import type { Document } from 'mongodb';
+import { Binary, type Document } from 'mongodb';
+import { types as utilTypes } from 'node:util';
 import { createError, ErrorCodes } from '../../../core/errors';
 import { normalizeProjection } from '../../../utils/normalize';
 import type {
@@ -67,6 +68,49 @@ function isNonArrayObject(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/** Captures the representation sent to MongoDB without decoding pre-quantized vectors. */
+function normalizeQueryVector(value: unknown): number[] | Binary {
+    if (Array.isArray(value)) {
+        const vector = [...value];
+        if (vector.length === 0) {
+            throw createError(ErrorCodes.INVALID_VECTOR_SEARCH, 'queryVector must be a non-empty number array', [{ field: 'queryVector', reason: 'non-empty number array required' }]);
+        }
+        if (vector.some((entry) => typeof entry !== 'number' || !Number.isFinite(entry))) {
+            throw createError(ErrorCodes.INVALID_VECTOR_SEARCH, 'queryVector values must be finite numbers', [{ field: 'queryVector', reason: 'finite numbers required' }]);
+        }
+        return vector;
+    }
+    const invalid = (reason: string): never => {
+        throw createError(ErrorCodes.INVALID_VECTOR_SEARCH, `queryVector ${reason}`, [{ field: 'queryVector', reason }]);
+    };
+    // Match BSON's type marker rather than one constructor identity: compatible Binary
+    // values can originate in another copy of the driver. Never invoke caller toBSON.
+    if (!isNonArrayObject(value) || value._bsontype !== 'Binary') {
+        return invalid('must be a non-empty number array or a BSON int8/int1 vector');
+    }
+    const { buffer, position, sub_type: subtype } = value;
+    if (subtype !== Binary.SUBTYPE_VECTOR || !utilTypes.isUint8Array(buffer)) {
+        return invalid('must use BSON vector subtype 9 with a byte buffer');
+    }
+    const bytes = buffer as Uint8Array;
+    if (typeof position !== 'number' || !Number.isInteger(position) || position < 3 || position > bytes.byteLength) {
+        return invalid('must contain a non-empty vector within its effective byte length');
+    }
+    const captured = Buffer.from(new Uint8Array(bytes.buffer, bytes.byteOffset, position));
+    const dtype = captured[0];
+    const padding = captured[1];
+    if (dtype === Binary.VECTOR_TYPE.Int8) {
+        if (padding !== 0) return invalid('int8 padding must be zero');
+    } else if (dtype === Binary.VECTOR_TYPE.PackedBit) {
+        if (padding > 7 || (position - 2) * 8 - padding <= 0) {
+            return invalid('int1 padding must be between 0 and 7 with non-empty data');
+        }
+    } else {
+        return invalid('must encode an int8 or packed-bit int1 vector');
+    }
+    return new Binary(captured, Binary.SUBTYPE_VECTOR);
+}
+
 function normalizeVectorProjection(value: unknown): Record<string, unknown> | undefined {
     if (value === undefined) return undefined;
     if (Array.isArray(value)) {
@@ -107,12 +151,7 @@ export function buildVectorSearchPipeline(options: VectorSearchOptions): VectorS
     assertNonEmptyString(options.path, 'path');
     assertPositiveInteger(options.limit, 'limit');
 
-    if (!Array.isArray(options.queryVector) || options.queryVector.length === 0) {
-        throw createError(ErrorCodes.INVALID_VECTOR_SEARCH, 'queryVector must be a non-empty number array', [{ field: 'queryVector', reason: 'non-empty number array required' }]);
-    }
-    if (options.queryVector.some((value) => typeof value !== 'number' || !Number.isFinite(value))) {
-        throw createError(ErrorCodes.INVALID_VECTOR_SEARCH, 'queryVector values must be finite numbers', [{ field: 'queryVector', reason: 'finite numbers required' }]);
-    }
+    const queryVector = normalizeQueryVector(options.queryVector);
     if (options.exact !== undefined && typeof options.exact !== 'boolean') {
         throw createError(ErrorCodes.INVALID_VECTOR_SEARCH, 'exact must be a boolean', [{ field: 'exact', reason: 'boolean required' }]);
     }
@@ -135,7 +174,7 @@ export function buildVectorSearchPipeline(options: VectorSearchOptions): VectorS
     const vectorSearchStage: Document = {
         index: options.index.trim(),
         path: options.path.trim(),
-        queryVector: [...options.queryVector],
+        queryVector,
         limit: options.limit,
         ...(isExactSearch ? { exact: true } : { numCandidates: options.numCandidates }),
         ...(options.filter === undefined ? {} : { filter: options.filter }),

@@ -1,4 +1,5 @@
 import { expectAssignable, expectNotAssignable, expectType } from 'tsd';
+import { Binary } from 'mongodb';
 import MonSQLize, {
     defineModel,
     Model,
@@ -54,6 +55,9 @@ const modelVectorOptions: ModelVectorSearchOptions = {
     numCandidates: 100,
     withDeleted: true,
 };
+expectAssignable<ModelVectorSearchOptions>({
+    ...modelVectorOptions, queryVector: Binary.fromInt8Array(Int8Array.of(1, 2)), onlyDeleted: true,
+});
 
 const virtual: VirtualConfig = {
     get() {

@@ -1,5 +1,6 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { Binary } from 'mongodb';
 import { Model, ModelInstance } from '../../../src/capabilities/model';
 import { populateModelPath } from '../../../src/capabilities/model/model-instance-helpers';
 import { createCompatModelInstance } from '../../../src/entry/runtime-compat-accessors';
@@ -114,6 +115,16 @@ describe('Model P0 vector, populate, and protected relation deletion', () => {
             onlyDeleted: true,
         });
         assert.deepEqual((calls[2] as { filter: unknown }).filter, { deletedAt: { $ne: null } });
+
+        const queryVector = Binary.fromInt8Array(Int8Array.of(-1, 2));
+        const binaryHits = await model.vectorSearch({
+            index: 'posts_embedding', path: 'embedding', queryVector,
+            limit: 1, exact: true, onlyDeleted: true,
+        });
+        assert.strictEqual((calls[3] as { queryVector: unknown }).queryVector, queryVector);
+        assert.deepEqual((calls[3] as { filter: unknown }).filter, { deletedAt: { $ne: null } });
+        assert.equal(binaryHits[0].score, 0.91);
+        assert.equal(typeof binaryHits[0].document.populate, 'function');
 
         await assert.rejects(
             () => model.vectorSearch({ withDeleted: 'yes' } as never),

@@ -128,6 +128,7 @@
         "probe:server-matrix": "node scripts/validation/probe-memory-server-matrix.cjs",
         "test:server-matrix": "node scripts/validation/run-memory-server-matrix.cjs",
         "test:search-index:real": "npm run build && node scripts/validation/run-search-index-real-env.cjs",
+        "test:search:real": "npm run build && node scripts/validation/run-search-real-env.cjs",
         "test:real-env:private": "node scripts/validation/run-private-real-env-checks.cjs",
         "test:examples": "npm run build && tsc -p tsconfig.examples.json && node scripts/run-examples.cjs",
         "test:performance": "npm run build && npm run build:tests && node .generated/test-dist/test/performance/baselines/function-cache.benchmark.js",

@@ -4,9 +4,13 @@
 
 ## 环境要求
 
-- MongoDB Atlas、带 `mongot` 的 MongoDB Community / Enterprise 8.2+，或本地镜像 `mongodb/mongodb-atlas-local`。
+- MongoDB Atlas、兼容的 MongoDB Community / Enterprise + `mongot` 配对，或本地镜像 `mongodb/mongodb-atlas-local`。自建部署请核对[现行版本配对表](https://www.mongodb.com/docs/search/self-managed/current/deployment/compatibility-requirements/)。
 - 普通 `mongod`（包括 `mongodb-memory-server`）不支持 Search 索引命令，调用会以 `SEARCH_INDEX_UNSUPPORTED` 拒绝。
 - 服务端异步构建索引。create、update、drop 在服务端接受命令后即返回，需要结果时调用 `waitForSearchIndex()`。
+
+MongoDB 8.2 已 EOL，mongot 1.70.1+ 不与其配对。历史 8.2.12 + mongot 0.69.1 已实测查询矩阵和 READY/queryable 等待。更早的 mongot 0.60.1 可以接受索引并返回查询，但原生列表缺少 `status`/`queryable`；monSQLize 保留 `PENDING`/`false`，因此等待超时。查询有命中不代表索引上报 READY，库不会用查询探测替代状态。下文原地更新观察仍是独立的历史证据。
+
+量化、BSON、全文和融合的可选查询矩阵见[向量查询验证](vector-search.md#可选真实环境验证)。
 
 ## API
 

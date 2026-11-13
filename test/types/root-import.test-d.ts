@@ -1,4 +1,5 @@
 import { expectAssignable, expectNotAssignable, expectType } from 'tsd';
+import { Binary } from 'mongodb';
 import MonSQLize, {
     compilePipelineExpressions,
     Logger,
@@ -143,6 +144,13 @@ expectNotAssignable<VectorSearchOptions>({
     numCandidates: 100,
     aggregateOptions: { meta: true },
 });
+expectAssignable<VectorSearchOptions>({
+    index: 'vec', path: 'embedding', queryVector: Binary.fromInt8Array(Int8Array.of(-1, 2)), limit: 1, exact: true,
+});
+expectAssignable<VectorSearchOptions>({
+    index: 'vec', path: 'embedding', queryVector: Binary.fromBits([1, 0, 1, 0, 1, 0, 1, 0]), limit: 1, numCandidates: 10,
+});
+expectNotAssignable<VectorSearchOptions>({ index: 'vec', path: 'embedding', queryVector: new Int8Array(8), limit: 1 });
 expectAssignable<DistinctOptions>({ collation: { locale: 'en' }, hint: 'name_1', meta: { includeCache: true } });
 
 expectAssignable<SSHConfig>({

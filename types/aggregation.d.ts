@@ -1,3 +1,5 @@
+import type { Binary } from 'mongodb';
+
 /** Meta options for controlling timing/cache info in query results. */
 export interface MetaOptions {
     /** 'op' = operation-level timing only; 'sub' = include sub-step timings (findPage only) */
@@ -35,8 +37,8 @@ export interface VectorSearchOptions {
     index: string;
     /** Indexed vector field path. */
     path: string;
-    /** Query embedding. Every value must be a finite number. */
-    queryVector: number[];
+    /** Finite number array, or BSON vector subtype 9 encoded as int8 or packed-bit int1. */
+    queryVector: number[] | Binary;
     /** Maximum number of scored documents to return. */
     limit: number;
     /** Required for approximate nearest-neighbor search (`exact !== true`). */

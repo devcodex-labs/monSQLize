@@ -1,8 +1,8 @@
 {
-  "comment": "GridFS session identity checks bring the 2026-11-13 build to 897830 CJS and 895065 ESM bytes, with no dependency change. Release preflight enforces these ceilings.",
+  "comment": "BSON int8/int1 vector input validation brings the 2026-11-13 build to 899490 CJS and 896637 ESM bytes (+1660/+1572 over main), with no dependency change. Release preflight enforces these ceilings.",
   "artifacts": {
-    "dist/cjs/index.cjs": 898000,
-    "dist/esm/index.mjs": 895500,
+    "dist/cjs/index.cjs": 900000,
+    "dist/esm/index.mjs": 897000,
     "dist/cjs/cli/data-task.cjs": 50000
   }
 }

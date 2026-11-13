@@ -19,10 +19,12 @@ model.vectorSearch(options: ModelVectorSearchOptions)
 ```
 
 ```ts
+import type { Binary } from 'mongodb';
+
 interface VectorSearchOptions {
   index: string;
   path: string;
-  queryVector: number[];
+  queryVector: number[] | Binary;
   limit: number;
   numCandidates?: number;
   exact?: boolean;
@@ -94,6 +96,32 @@ const hits = await runtime.collection('articles').vectorSearch({
 });
 ```
 
+## 量化与 BSON 查询向量
+
+BSON 输入是 3.5.4 之后尚未发布的源码新增能力。对仅接收数组的 npm 版本，可通过 `collection.aggregate()` 中的原生 `$vectorSearch` 阶段执行 BSON 查询。
+
+自动量化保留存储的数值数组和查询数组：在 Search 索引的向量字段设置 `quantization: 'scalar'` 或 `'binary'`，调用 `vectorSearch()` 时继续传原始有限 `number[]`，由服务端量化。
+
+预量化向量则使用 MongoDB `Binary` 的 **subtype 9**，其内部 dtype 为 int8（`0x03`）或 packed-bit int1（`0x10`）。本源码增量直接接收这两种表示：
+
+```ts
+import { Binary } from 'mongodb';
+
+const queryVector = Binary.fromInt8Array(Int8Array.of(-12, 7, 21, -8, 4, 16, -5, 9));
+const hits = await runtime.collection('articles').vectorSearch({
+  index: 'articles_int8_index', path: 'embeddingInt8', queryVector,
+  limit: 5, numCandidates: 100,
+});
+```
+
+存储数据、查询表示和 embedding 模型必须匹配。上例对应八维、cosine 索引，int8 不需要额外的 `quantization` 设置。工厂方法负责封装数值，不负责生成 embedding。请使用与 monSQLize 驱动可序列化兼容的 mongodb/BSON 版本。
+
+int1 可使用 `Binary.fromBits([1, 0, 1, 0, 1, 0, 1, 0])` 或 `Binary.fromPackedBits(...)` 构造查询；存储表示保持一致，索引使用 euclidean，相应维度为八的倍数。ANN、ENN 和 Model 均使用相同 BSON 输入契约。
+
+不要将 int8/int1 解码成 `number[]` 后查询预量化字段：实测 8.2.12 + mongot 0.69.1 会返回 `[]`，没有错误。对浮点数组使用自动 binary 量化是另一种场景，仍接受数值查询数组。
+
+便利接口只接收非空 int8/int1 Binary 向量；float32 Binary、其他 subtype/dtype、裸 Buffer/TypedArray 及 JSON/EJSON 对象均在本地拒绝。它保留有效 `position` 字节和 padding，在异步执行前复制输入，不修改调用方对象。本地检查格式，维度和相似度匹配由服务端判定。其他原生格式可使用 `aggregate()`。
+
 ## Model 层向量查询
 
 `model.vectorSearch()` 与 Collection 方法使用相同的索引、ANN/ENN 校验和结果信封；它额外负责 Model 可见性与文档 hydrate：
@@ -120,7 +148,7 @@ await hits[0]?.document.populate('author');
 方法在访问 MongoDB 前会先做本地校验：
 
 - `index` 和 `path` 必须为非空字符串。
-- `queryVector` 必须是非空且每项为有限数字的数组。
+- `queryVector` 必须是非空有限数字数组，或合法的 BSON subtype 9 int8/int1 向量；稀疏数组、undefined、非有限数字均无效。二进制元数据、有效长度和 padding 必须合法。
 - `limit` 必须为正整数。
 - ANN 要求 `numCandidates >= limit`；ENN 不允许 `numCandidates`。
 - `filter`、`projection` 和 `aggregateOptions` 必须使用受支持的数据形状。
@@ -133,6 +161,22 @@ Search 索引（含 `vectorSearch` 类型）的管理见 [Search 索引生命周
 
 ## 运行注意事项
 
-- 默认本地 `mongodb-memory-server` 不支持 Vector Search。单元测试覆盖管道构造和参数校验。端到端验证需要 Atlas、`mongodb/mongodb-atlas-local`，或带 `mongot` 的 Community / Enterprise 8.2+。可运行示例是 [`examples/docs/vector-search.ts`](../../examples/docs/vector-search.ts)。请设置 `MONSQLIZE_VECTOR_SEARCH_URI` 或 `MONSQLIZE_ATLAS_LOCAL_URI`。两者都未设置时，该示例不会调用 Search 并直接退出，因此 `npm run test:examples` 仍可以执行它。
+- 默认本地 `mongodb-memory-server` 不支持 Vector Search。端到端验证需要 Atlas、`mongodb/mongodb-atlas-local` 或兼容的自建 mongod/mongot 配对。可运行示例是 [`examples/docs/vector-search.ts`](../../examples/docs/vector-search.ts)，覆盖数字数组和 BSON int8/int1。请设置 `MONSQLIZE_VECTOR_SEARCH_URI` 或 `MONSQLIZE_ATLAS_LOCAL_URI`；均未设置时明确跳过 Search 调用。
 - 向量排序分数由 MongoDB 生成，monSQLize 只返回该分数，不会在本地二次排序。
 - 请让写入端和查询端使用一致的 embedding 模型、向量维度和索引配置。
+
+## 可选真实环境验证
+
+安装项目开发依赖后，仅对已授权、可丢弃的 Search 环境执行源码矩阵：
+
+```bash
+MONSQLIZE_VECTOR_SEARCH_URI='mongodb://127.0.0.1:27017/?directConnection=true' \
+MONSQLIZE_SEARCH_REAL_OUT='/absolute/outside-repo/search-results.json' \
+npm run test:search:real
+```
+
+验证器创建随机 `msq_search_real_*` 数据库，写入种子及 Search 索引，最后只删除该库并关闭本次连接。它对照原生驱动与 Collection/Model，覆盖自动 scalar/binary、预量化 int8/int1、全文分数、`$searchMeta` 计数及同集合 `$rankFusion`/`$scoreFusion`。失败和清理错误保留，失败退出码非零。
+
+`MONSQLIZE_VECTOR_SEARCH_URI` 优先于 `MONSQLIZE_ATLAS_LOCAL_URI`。均缺失时报告 `skipped` 并以零退出，不能当作真实验证通过。`MONSQLIZE_SEARCH_REAL_TIMEOUT_MS` 是正安全整数毫秒，默认每个索引等待 600000；显式无效配置在连接前失败。结果默认写 stdout，`MONSQLIZE_SEARCH_REAL_OUT` 可选写同一结果文件，写入失败也使整次运行失败。输出副本会屏蔽 URI 凭据。
+
+请将真实 mongot 版本或镜像摘要与报告一并保存，不能由 URI 推断该信息。MongoDB 8.2 已 EOL；新部署使用[现行自建配对表](https://www.mongodb.com/docs/search/self-managed/current/deployment/compatibility-requirements/)，mongot 1.70.1+ 不与 8.2 配对。历史 8.2.12 + 0.69.1 实测不代表任意组合可用；8.2 上的融合结果属于该版本预览范围。

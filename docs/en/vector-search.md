@@ -19,10 +19,12 @@ model.vectorSearch(options: ModelVectorSearchOptions)
 ```
 
 ```ts
+import type { Binary } from 'mongodb';
+
 interface VectorSearchOptions {
   index: string;
   path: string;
-  queryVector: number[];
+  queryVector: number[] | Binary;
   limit: number;
   numCandidates?: number;
   exact?: boolean;
@@ -94,6 +96,32 @@ const hits = await runtime.collection('articles').vectorSearch({
 });
 ```
 
+## Quantization and BSON query vectors
+
+The BSON input addition is unreleased source work after 3.5.4. For a registry version whose `vectorSearch()` only accepts arrays, use `collection.aggregate()` with the native `$vectorSearch` stage for BSON vectors.
+
+Automatic quantization keeps your stored embeddings and query vectors as numeric arrays. Set `quantization: 'scalar'` or `'binary'` on the vector field in the Search index; continue passing the original finite `number[]` to `vectorSearch()`. The server quantizes it.
+
+Pre-quantized vectors instead use MongoDB `Binary` **subtype 9**. Its internal dtype is int8 (`0x03`) or packed-bit int1 (`0x10`). This source accepts those two representations directly:
+
+```ts
+import { Binary } from 'mongodb';
+
+const queryVector = Binary.fromInt8Array(Int8Array.of(-12, 7, 21, -8, 4, 16, -5, 9));
+const hits = await runtime.collection('articles').vectorSearch({
+  index: 'articles_int8_index', path: 'embeddingInt8', queryVector,
+  limit: 5, numCandidates: 100,
+});
+```
+
+The indexed data must use the matching representation and embedding model. Here the index has eight dimensions and cosine similarity; int8 needs no `quantization` setting. Factory methods pack values, rather than generating embeddings. Use a driver/BSON version compatible with monSQLize's driver.
+
+For int1, create the query with `Binary.fromBits([1, 0, 1, 0, 1, 0, 1, 0])` or `Binary.fromPackedBits(...)`, use matching Binary data, and configure an index with euclidean similarity and dimensions that are a multiple of eight. Both ANN and ENN accept Binary input. Model uses the same input contract.
+
+Do not decode int8/int1 into `number[]` to query a pre-quantized field: the measured 8.2.12 + mongot 0.69.1 combination returns `[]` without an error for that mismatch. Automatic binary quantization of float arrays is a separate case and continues to accept numeric arrays.
+
+Only non-empty int8/int1 Binary vectors are accepted by this convenience method. Float32 Binary, other subtypes/dtypes, raw Buffer/TypedArray and JSON/EJSON objects are rejected locally. The method preserves effective `position` bytes and padding, copies the input before asynchronous execution, and does not modify the caller's vector. Local checks cover format; index dimensions and similarity remain server checks. `aggregate()` remains available for other native formats.
+
 ## Model vector search
 
 `model.vectorSearch()` uses the same index, ANN/ENN validation, and result envelope as the Collection method. Its only extra responsibilities are Model visibility and hydration:
@@ -120,7 +148,7 @@ await hits[0]?.document.populate('author');
 The method validates options locally before it contacts MongoDB:
 
 - `index` and `path` must be non-empty strings.
-- `queryVector` must be a non-empty array of finite numbers.
+- `queryVector` must be a non-empty finite number array or a valid BSON subtype 9 int8/int1 vector. Sparse arrays, undefined and non-finite elements are invalid. Binary metadata, effective length and padding must be valid.
 - `limit` must be a positive integer.
 - ANN requires `numCandidates >= limit`; ENN rejects `numCandidates`.
 - `filter`, `projection`, and `aggregateOptions` must have supported shapes.
@@ -133,6 +161,22 @@ Index management for a Search index (including type `vectorSearch`) is on the [S
 
 ## Operational notes
 
-- A default local `mongodb-memory-server` instance does not provide Vector Search. Unit coverage verifies pipeline construction and validation. End-to-end verification needs Atlas, `mongodb/mongodb-atlas-local`, or Community/Enterprise 8.2+ with `mongot`. The runnable walkthrough is [`examples/docs/vector-search.ts`](../../examples/docs/vector-search.ts). Set `MONSQLIZE_VECTOR_SEARCH_URI` or `MONSQLIZE_ATLAS_LOCAL_URI`. When neither is set, that example exits without calling Search so `npm run test:examples` can still invoke it.
+- A default local `mongodb-memory-server` instance does not provide Vector Search. End-to-end verification needs Atlas, `mongodb/mongodb-atlas-local`, or a compatible self-managed mongod/mongot pair. The runnable walkthrough is [`examples/docs/vector-search.ts`](../../examples/docs/vector-search.ts); it covers numeric arrays and BSON int8/int1. Set `MONSQLIZE_VECTOR_SEARCH_URI` or `MONSQLIZE_ATLAS_LOCAL_URI`. When neither is set, that example explicitly skips Search calls.
 - Vector Search ranking is produced by MongoDB. monSQLize returns that score and does not re-rank results locally.
 - Keep the embedding model, vector dimensions, and index configuration synchronized across writers and readers.
+
+## Optional real-environment verification
+
+After installing project development dependencies, run the source matrix only against an authorized disposable Search deployment:
+
+```bash
+MONSQLIZE_VECTOR_SEARCH_URI='mongodb://127.0.0.1:27017/?directConnection=true' \
+MONSQLIZE_SEARCH_REAL_OUT='/absolute/outside-repo/search-results.json' \
+npm run test:search:real
+```
+
+The runner creates a random `msq_search_real_*` database, writes seed data and Search indexes, then drops only that database and closes its clients. It compares the native driver with Collection/Model queries, automatic scalar/binary quantization, pre-quantized int8/int1, full-text scores, `$searchMeta` counts and same-collection `$rankFusion`/`$scoreFusion`. It preserves failures and reports cleanup failures with a nonzero exit.
+
+`MONSQLIZE_VECTOR_SEARCH_URI` takes precedence over `MONSQLIZE_ATLAS_LOCAL_URI`. With no URI the runner reports `skipped` and exits zero; this is not a real-test pass. `MONSQLIZE_SEARCH_REAL_TIMEOUT_MS` is a positive safe integer in milliseconds (default 600000 per index wait). Invalid explicit configuration fails before connecting. Results go to stdout; `MONSQLIZE_SEARCH_REAL_OUT` optionally writes the same report, and a write failure fails the run. URI credentials are removed from report copies.
+
+Record the actual mongot version or image digest alongside the report; a URI does not establish that provenance. MongoDB 8.2 is EOL. Use the [current self-managed compatibility table](https://www.mongodb.com/docs/search/self-managed/current/deployment/compatibility-requirements/) for new deployments; mongot 1.70.1+ does not pair with 8.2. Historical 8.2.12 + 0.69.1 verification does not establish support for arbitrary version pairs. Fusion results on 8.2 belong to that version's preview scope.

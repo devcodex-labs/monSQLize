@@ -4,9 +4,13 @@ Since v3.4.0, collection accessors and Models can create, inspect, update, drop,
 
 ## Requirements
 
-- MongoDB Atlas, MongoDB Community or Enterprise 8.2+ with `mongot`, or the local `mongodb/mongodb-atlas-local` image.
+- MongoDB Atlas, a compatible MongoDB Community/Enterprise + `mongot` pair, or the local `mongodb/mongodb-atlas-local` image. Check the [current self-managed version pairings](https://www.mongodb.com/docs/search/self-managed/current/deployment/compatibility-requirements/).
 - Plain `mongod` deployments (including `mongodb-memory-server`) do not support Search index commands; calls reject with `SEARCH_INDEX_UNSUPPORTED`.
 - Index builds are asynchronous on the server. Create, update, and drop return once the server accepts the command; use `waitForSearchIndex()` to wait for the outcome.
+
+MongoDB 8.2 is EOL; mongot 1.70.1+ does not pair with it. Historical 8.2.12 + mongot 0.69.1 supports the measured query matrix and READY/queryable waits. Older mongot 0.60.1 accepted indexes and served queries but omitted `status`/`queryable` from its native list output: monSQLize keeps `PENDING`/`false`, so waiting times out. Query hits do not establish a READY status, and the library does not substitute a query probe. The older in-place-update observations below remain separate historical evidence.
+
+For the opt-in quantization, BSON, full-text and hybrid query matrix, see [Vector search verification](vector-search.md#optional-real-environment-verification).
 
 ## API
 
