@@ -35,9 +35,10 @@ export function watchReadable(source: Readable) {
     return {
         source,
         get error() { return error ?? source.errored; },
-        release(): void {
+        release(consumed = false): void {
+            if (released) return;
             released = true;
-            if (source.readableEnded && !source.destroyed) {
+            if (!source.destroyed && (!consumed || source.readableEnded)) {
                 detach();
                 return;
             }
@@ -222,7 +223,7 @@ export async function consumeReadableChunks(
             run();
         }
     }).finally(() => {
-        if (!watched) stream.release();
+        stream.release(true);
     });
 
     if (bytesAccepted === 0) badChunkSize();

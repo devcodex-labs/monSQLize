@@ -335,6 +335,37 @@ describe('GridFS remaining-issue regressions (begin race, finalize rollback, str
         });
     });
 
+    it('keeps an unread source reusable after pre-consumption rejections', async () => {
+        await withRuntime('gridfs_append_unread_retry', async (runtime, db) => {
+            const bucket = runtime.gridfs('b', { chunkSizeBytes: 4 });
+            const payload = Buffer.from('GOOD');
+            const { uploadId } = await bucket.beginResumableUpload('retry.bin', { length: 4, sha256: sha(payload) });
+            const uploads = db.collection('b.uploads');
+            let reads = 0;
+            const source = new Readable({
+                read() {
+                    reads += 1;
+                    this.push(payload);
+                    this.push(null);
+                },
+            });
+            await assert.rejects(bucket.appendChunks(new ObjectId(), 0, source), { code: 'GRIDFS_FILE_NOT_FOUND' });
+            await uploads.updateOne({ _id: uploadId }, { $set: { activeAppend: { token: 'other-writer' } } });
+            await assert.rejects(bucket.appendChunks(uploadId, 0, source), { code: 'GRIDFS_UPLOAD_BUSY' });
+            await uploads.updateOne({ _id: uploadId }, { $unset: { activeAppend: '' } });
+            await assert.rejects(bucket.appendChunks(uploadId, 1, source), (error: unknown) => {
+                const mismatch = error as { code: string; details: { expectedNextChunk: number }[] };
+                return mismatch.code === 'GRIDFS_RESUME_MISMATCH' && mismatch.details[0].expectedNextChunk === 0;
+            });
+            assert.equal(reads, 0);
+            assert.equal(source.destroyed, false);
+            assert.equal(source.listenerCount('error'), 0);
+            assert.equal((await bucket.appendChunks(uploadId, 0, source)).nextChunk, 1);
+            await bucket.finalizeResumableUpload(uploadId);
+            assert.deepEqual(await bucket.download(uploadId), payload);
+        });
+    });
+
     it('releases the append claim when an idle source is destroyed without a close event', { timeout: 10_000 }, async () => {
         await withRuntime('gridfs_append_silent_close', async (runtime, db) => {
             const bucket = runtime.gridfs('b', { chunkSizeBytes: 4 });
