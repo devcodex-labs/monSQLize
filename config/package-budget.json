@@ -1,8 +1,8 @@
 {
-  "comment": "The previous 890000 / 887000 ceilings were exceeded by the GridFS remaining-issue fix (local 2026-11-12 build: 892639 CJS / 889922 ESM). The added bytes are the incremental Readable append consumer, beginResumableUpload post-insert files re-check, finalize pending rollback, and rename release-owner alignment — no dependency change. Raise to 896000 / 893000, keeping ~3 KiB reviewed headroom. Enforce these ceilings in release preflight.",
+  "comment": "GridFS initialization fencing and Readable teardown bring the 2026-11-13 build to about 896200 CJS and 893500 ESM, with no dependency change. Ceilings retain less than 1 KiB of headroom for these measured builds and are enforced in release preflight.",
   "artifacts": {
-    "dist/cjs/index.cjs": 896000,
-    "dist/esm/index.mjs": 893000,
+    "dist/cjs/index.cjs": 897000,
+    "dist/esm/index.mjs": 894000,
     "dist/cjs/cli/data-task.cjs": 50000
   }
 }

@@ -20,7 +20,7 @@ import {
     toNodeBuffer,
     withContentType,
 } from './validate';
-import { consumeReadableChunks } from './stream-chunks';
+import { consumeReadableChunks, watchReadable } from './stream-chunks';
 
 export async function beginResumableUpload(ctx: GridFSContext, filename: string, opts: BeginResumableUploadOptions): Promise<BeginResumableUploadResult> {
     assertFilename(filename, 'beginResumableUpload');
@@ -47,38 +47,40 @@ export async function beginResumableUpload(ctx: GridFSContext, filename: string,
     }
 
     const now = new Date();
+    const ownerToken = randomUUID();
+    const initializing = { _id: uploadId, kind: 'resumable', status: 'initializing', ownerToken };
     try {
         await uploads.insertOne({
-            _id: uploadId,
+            ...initializing,
             filename,
             length: opts.length,
             sha256: opts.sha256,
             chunkSizeBytes,
             ...(metadata ? { metadata } : {}),
             ...(opts.contentType !== undefined ? { contentType: opts.contentType } : {}),
-            kind: 'resumable',
-            status: 'pending',
             nextChunk: 0,
             createdAt: now,
             updatedAt: now,
-            expiresAt: new Date(now.getTime() + 604800 * 1000),
         });
     } catch (error) {
         throw mapDriverError(error, 'beginResumableUpload', ctx, { uploadId, filename });
     }
-    // The insert is the atomic id claim. A concurrent upload can still make a
-    // files document visible after the prechecks and even after this insert.
-    // Re-check files and fail closed: never delete chunks of a visible file.
+    // Only publish a pending session after its orphan cleanup has settled.
+    // Initializing has no TTL and excludes append, finalize, abort and ID reuse.
     try {
         if (await files.findOne({ _id: uploadId }, { projection: { _id: 1 } })) {
             try {
-                await uploads.deleteOne({ _id: uploadId, kind: 'resumable', status: 'pending' });
+                await uploads.deleteOne(initializing);
             } catch { /* Best-effort session cleanup; chunks of the visible file stay. */ }
             throw fileExists('beginResumableUpload', ctx, { id: uploadId, filename, sha256: opts.sha256 });
         }
-        // Chunks can outlive an expired session (the TTL only removes the session document).
-        // This call now owns the id and no file is visible, so leftovers would only break the new upload.
         await ctx.db.collection(chunksCollectionName(ctx.bucketName)).deleteMany({ files_id: uploadId });
+        const updatedAt = new Date();
+        const ready = await uploads.updateOne(initializing, {
+            $set: { status: 'pending', updatedAt, expiresAt: new Date(updatedAt.getTime() + 604800 * 1000) },
+            $unset: { ownerToken: '' },
+        });
+        if (!ready.matchedCount) throw uploadBusy('beginResumableUpload', ctx, uploadId);
     } catch (error) {
         throw mapDriverError(error, 'beginResumableUpload', ctx, { uploadId, filename });
     }
@@ -93,15 +95,29 @@ export async function appendChunks(
 ): Promise<AppendChunksResult> {
     assertObjectId(uploadId, 'appendChunks', 'uploadId');
     assertNonNegativeInteger(fromChunk, 'appendChunks', 'fromChunk');
-    const isStream = isReadableStream(data);
-    if (!isStream && !Buffer.isBuffer(data) && !(data instanceof Uint8Array)) {
+    if (isReadableStream(data)) {
+        const stream = watchReadable(data);
+        try {
+            if (stream.error) throw stream.error;
+            return await appendToSession(ctx, uploadId, fromChunk, stream);
+        } finally {
+            stream.release();
+        }
+    }
+    if (!Buffer.isBuffer(data) && !(data instanceof Uint8Array)) {
         throw invalidArgument('appendChunks', 'data', 'data must be a Buffer, Uint8Array, or Readable');
     }
-    let payload: Buffer | undefined;
-    if (!isStream) {
-        payload = toNodeBuffer(data as Buffer | Uint8Array);
-        if (payload.length === 0) throw badChunkSize();
-    }
+    const payload = toNodeBuffer(data);
+    if (payload.length === 0) throw badChunkSize();
+    return appendToSession(ctx, uploadId, fromChunk, payload);
+}
+
+async function appendToSession(
+    ctx: GridFSContext,
+    uploadId: ObjectId,
+    fromChunk: number,
+    data: Buffer | ReturnType<typeof watchReadable>,
+): Promise<AppendChunksResult> {
     const uploads = ctx.db.collection(uploadsCollectionName(ctx.bucketName));
     const token = randomUUID();
     // A durable single-append claim excludes finalize, abort, and concurrent
@@ -122,6 +138,7 @@ export async function appendChunks(
         throw uploadBusy('appendChunks', ctx, uploadId);
     }
     try {
+        if (!Buffer.isBuffer(data) && data.error) throw data.error;
         const session = await requireSession(ctx, uploadId, 'appendChunks');
         const nextChunk = await contiguousNext(ctx, uploadId, session.nextChunk);
         if (fromChunk > nextChunk) {
@@ -138,23 +155,18 @@ export async function appendChunks(
             await writeChunk(ctx, uploadId, slice.index, slice.bytes, nextChunk);
         };
         let bytesAccepted: number;
-        if (isStream) {
-            const streamed = await consumeReadableChunks(
-                data as Readable,
-                fromChunk,
-                session.length,
-                session.chunkSizeBytes,
-                writeSlice,
-            );
-            bytesAccepted = streamed.bytesAccepted;
-        } else {
-            const slices = planChunkSlices(payload as Buffer, fromChunk, session.length, session.chunkSizeBytes);
+        if (Buffer.isBuffer(data)) {
+            const slices = planChunkSlices(data, fromChunk, session.length, session.chunkSizeBytes);
             const lastIndex = slices[slices.length - 1].index;
             if (lastIndex >= nextChunk && fromChunk !== nextChunk) {
                 throw resumeMismatch('appendChunks', ctx.bucketName, { uploadId, fromChunk, expectedNextChunk: nextChunk });
             }
             for (const slice of slices) await writeSlice(slice);
-            bytesAccepted = (payload as Buffer).length;
+            bytesAccepted = data.length;
+        } else {
+            const streamed = await consumeReadableChunks(data.source, fromChunk, session.length,
+                session.chunkSizeBytes, writeSlice, undefined, data);
+            bytesAccepted = streamed.bytesAccepted;
         }
         const advanced = await contiguousNext(ctx, uploadId, nextChunk);
         const completed = await uploads.updateOne(
@@ -367,6 +379,11 @@ async function committedFile(ctx: GridFSContext, uploadId: ObjectId, session: Gr
         const info = toFileInfo(doc as Record<string, unknown>);
         if (info.metadata?.sha256 !== session.sha256 || info.length !== session.length) {
             throw fileExists('finalizeResumableUpload', ctx, { id: uploadId, filename: session.filename, sha256: session.sha256 });
+        }
+        if (info.chunkSize !== session.chunkSizeBytes) {
+            throw integrityMismatch('finalizeResumableUpload', ctx.bucketName, {
+                uploadId, expected: session.chunkSizeBytes, actual: info.chunkSize,
+            });
         }
         // Metadata-only SHA can be forged by uploadStream(). Never treat it as
         // proof of a previous resumable commit without verifying actual chunks.

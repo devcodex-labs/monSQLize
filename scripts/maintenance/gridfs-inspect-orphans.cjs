@@ -2,7 +2,7 @@
 
 /**
  * Operator-only, inspect-only reporter for GridFS chunk files_id groups.
- * Walks <bucket>.chunks via the existing { files_id, n } index in range pages.
+ * Walks <bucket>.chunks via the existing { files_id, n } index in bounded batches.
  * Each files_id is classified only after a unified re-check of files and uploads:
  *   - visible_file: a files document exists
  *   - owned: no files document, but an uploads owner/session exists
@@ -33,11 +33,15 @@ function fail(message) {
 async function classifyFilesId(db, bucket, group) {
     const files = db.collection(bucket + '.files');
     const uploads = db.collection(bucket + '.uploads');
-    const file = await files.findOne({ _id: group.id }, { projection: { _id: 1 } });
+    const fileFilter = { _id: group.id };
+    const fileProjection = { projection: { _id: 1 } };
+    let file = await files.findOne(fileFilter, fileProjection);
     const owner = await uploads.findOne(
         { _id: group.id },
         { projection: { _id: 1, kind: 1, status: 1 } },
     );
+    // A successful upload publishes the file before it releases its owner.
+    if (!file && !owner) file = await files.findOne(fileFilter, fileProjection);
     let classification;
     if (file) classification = 'visible_file';
     else if (owner) classification = 'owned';
@@ -79,17 +83,14 @@ async function inspectGridFSOrphans(input) {
     const afterId = parseAfter(input.after || input.resumeAfter);
     const chunks = db.collection(bucket + '.chunks');
     const findings = collectFindings ? [] : undefined;
-    let lastId = afterId;
-    let lastN = -1;
     let current = null;
-    let pages = 0;
+    let rows = 0;
     let filesIdsScanned = 0;
     let visibleFiles = 0;
     let owned = 0;
     let candidateOrphans = 0;
     let truncated = false;
     let resumeAfter = null;
-    let lastClassifiedId = afterId;
 
     const flush = async (group) => {
         const finding = await classifyFilesId(db, bucket, group);
@@ -99,57 +100,30 @@ async function inspectGridFSOrphans(input) {
         else candidateOrphans += 1;
         if (typeof onFinding === 'function') onFinding(finding);
         if (findings) findings.push(finding);
-        lastClassifiedId = group.id;
-        if (filesIdsScanned >= maxFindings) {
-            const more = await chunks.find({ files_id: { $gt: group.id } }).project({ _id: 1 }).limit(1).next();
-            if (more) {
-                truncated = true;
-                resumeAfter = {
-                    filesId: group.id instanceof ObjectId ? group.id.toHexString() : String(group.id),
-                };
-            }
-        }
+        return finding.filesId;
     };
 
-    for (;;) {
-        const filter = lastId == null
-            ? {}
-            : lastN < 0
-                ? { files_id: { $gt: lastId } }
-                : {
-                    $or: [
-                        { files_id: { $gt: lastId } },
-                        { files_id: lastId, n: { $gt: lastN } },
-                    ],
-                };
-        const page = await chunks.find(filter)
-            .sort({ files_id: 1, n: 1 })
-            .project({ files_id: 1, n: 1 })
-            .limit(pageSize)
-            .toArray();
-        pages += 1;
-        if (page.length === 0) break;
-        for (const doc of page) {
-            const filesId = doc.files_id;
-            if (!current || !sameId(current.id, filesId)) {
-                if (current) {
-                    await flush(current);
-                    if (truncated) {
-                        current = null;
-                        break;
-                    }
+    const cursor = chunks.find(afterId ? { files_id: { $gt: afterId } } : {})
+        .sort({ files_id: 1, n: 1 })
+        .project({ _id: 0, files_id: 1, n: 1 })
+        .batchSize(pageSize);
+    for await (const doc of cursor) {
+        rows += 1;
+        if (!current || !sameId(current.id, doc.files_id)) {
+            if (current) {
+                const filesId = await flush(current);
+                if (filesIdsScanned === maxFindings) {
+                    truncated = true;
+                    resumeAfter = { filesId };
+                    break;
                 }
-                current = { id: filesId, minN: doc.n, maxN: doc.n, count: 1 };
-            } else {
-                current.count += 1;
-                if (doc.n < current.minN) current.minN = doc.n;
-                if (doc.n > current.maxN) current.maxN = doc.n;
             }
-            lastId = filesId;
-            lastN = doc.n;
+            current = { id: doc.files_id, minN: doc.n, maxN: doc.n, count: 1 };
+        } else {
+            current.count += 1;
+            if (doc.n < current.minN) current.minN = doc.n;
+            if (doc.n > current.maxN) current.maxN = doc.n;
         }
-        if (truncated) break;
-        if (page.length < pageSize) break;
     }
     if (current && !truncated) await flush(current);
 
@@ -157,7 +131,7 @@ async function inspectGridFSOrphans(input) {
         bucket,
         pageSize,
         maxFindings,
-        pages,
+        pages: Math.max(1, Math.ceil(rows / pageSize)),
         filesIdsScanned,
         visibleFiles,
         owned,

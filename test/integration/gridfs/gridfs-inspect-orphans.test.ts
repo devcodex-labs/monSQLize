@@ -94,11 +94,13 @@ describe('GridFS inspect-only orphan reporter', () => {
             })));
 
             const originalFindOne = Collection.prototype.findOne;
+            let published = false;
             (Collection.prototype as any).findOne = async function (...args: unknown[]) {
                 // After the first files_id is classified, make the last id visible before its re-check.
                 if (this.collectionName === 'b.files') {
                     const filter = args[0] as { _id?: ObjectId };
-                    if (filter?._id && filter._id.equals(ids[0])) {
+                    if (!published && filter?._id && filter._id.equals(ids[0])) {
+                        published = true;
                         await db.collection('b.files').insertOne({
                             _id: ids[2], filename: 'late.bin', length: 4, chunkSize: 4, uploadDate: new Date(),
                         });
@@ -115,6 +117,52 @@ describe('GridFS inspect-only orphan reporter', () => {
             } finally {
                 Collection.prototype.findOne = originalFindOne;
             }
+        });
+    });
+
+    it('recognizes a file published between the files and owner lookups', async () => {
+        await withDb(async (db) => {
+            const id = new ObjectId();
+            await db.collection('b.chunks').insertOne({ files_id: id, n: 0, data: Buffer.from('DATA') });
+            await db.collection('b.uploads').insertOne({ _id: id, status: 'uploading' });
+            const original = Collection.prototype.findOne;
+            Collection.prototype.findOne = async function (this: Collection, ...args: unknown[]) {
+                const filter = args[0] as { _id?: ObjectId } | undefined;
+                if (this.collectionName === 'b.uploads' && id.equals(filter?._id)) {
+                    await db.collection('b.files').insertOne({
+                        _id: id, filename: 'published.bin', length: 4, chunkSize: 4, uploadDate: new Date(),
+                    });
+                    await db.collection('b.uploads').deleteOne({ _id: id });
+                }
+                return Reflect.apply(original, this, args);
+            } as typeof original;
+            try {
+                const report = await inspectGridFSOrphans({ db, bucket: 'b' });
+                assert.equal(report.findings[0].classification, 'visible_file');
+                assert.equal(report.candidateOrphans, 0);
+            } finally {
+                Collection.prototype.findOne = original;
+            }
+        });
+    });
+
+    it('counts a group split across batches starting with a negative chunk index', async () => {
+        await withDb(async (db) => {
+            const id = new ObjectId();
+            const nextId = new ObjectId();
+            await db.collection('b.chunks').insertMany([
+                ...[-1, 0, 1].map((n) => ({ files_id: id, n, data: Buffer.from('DATA') })),
+                { files_id: nextId, n: 0, data: Buffer.from('NEXT') },
+            ]);
+            const first = await inspectGridFSOrphans({ db, bucket: 'b', pageSize: 1, maxFindings: 1 });
+            assert.deepEqual(first.findings, [{
+                filesId: id.toHexString(), chunkCount: 3, minN: -1, maxN: 1, classification: 'candidate_orphan',
+            }]);
+            assert.equal(first.truncated, true);
+            const resumed = await inspectGridFSOrphans({ db, bucket: 'b', pageSize: 1, maxFindings: 1, after: first.resumeAfter });
+            assert.equal(resumed.truncated, false);
+            assert.equal(resumed.findings[0].filesId, nextId.toHexString());
+            assert.equal(await db.collection('b.chunks').countDocuments(), 4);
         });
     });
 
@@ -151,11 +199,6 @@ describe('GridFS inspect-only orphan reporter', () => {
             assert.equal(rest.truncated, false);
             assert.equal(rest.resumeAfter, null);
             assert.equal(first.filesIdsScanned + second.filesIdsScanned + rest.filesIdsScanned, total);
-            const seen = new Set([
-                ...first.findings.map((row: { filesId: string }) => row.filesId),
-                ...rest.findings.map((row: { filesId: string }) => row.filesId),
-                ...streamed,
-            ]);
             // streamed includes first+second pages; rest.findings is the remainder
             const all = new Set([
                 ...first.findings.map((row: { filesId: string }) => row.filesId),

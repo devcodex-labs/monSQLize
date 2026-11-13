@@ -15,6 +15,12 @@ function delayed(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function gate(): { wait: Promise<void>; open: () => void } {
+    let open = (): void => {};
+    const wait = new Promise<void>((resolve) => { open = resolve; });
+    return { wait, open };
+}
+
 describe('GridFS remaining-issue regressions (begin race, finalize rollback, streaming append)', () => {
     const bootstrap = createMemoryServerBootstrap();
     let uri = '';
@@ -78,6 +84,47 @@ describe('GridFS remaining-issue regressions (begin race, finalize rollback, str
         });
     });
 
+    it('excludes writes and reuse of an explicit ID until begin cleanup completes', { timeout: 10_000 }, async () => {
+        await withRuntime('gridfs_initializing', async (runtime, db) => {
+            const bucket = runtime.gridfs('b', { chunkSizeBytes: 4 });
+            const id = new ObjectId();
+            const payload = Buffer.from('GOOD');
+            await db.collection('b.chunks').insertOne({ files_id: id, n: 0, data: Buffer.from('OLD!') });
+            const entered = gate();
+            const proceed = gate();
+            const original = Collection.prototype.deleteMany;
+            let paused = false;
+            Collection.prototype.deleteMany = async function (this: Collection, filter, options) {
+                if (!paused && this.collectionName === 'b.chunks' && id.equals(filter?.files_id)) {
+                    paused = true;
+                    entered.open();
+                    await proceed.wait;
+                }
+                return original.call(this, filter, options);
+            };
+            const starting = bucket.beginResumableUpload('starting.bin', { id, length: 4, sha256: sha(payload) });
+            try {
+                await entered.wait;
+                const busy = { code: 'GRIDFS_UPLOAD_BUSY' };
+                await assert.rejects(bucket.appendChunks(id, 0, payload), busy);
+                await assert.rejects(bucket.finalizeResumableUpload(id), busy);
+                await assert.rejects(bucket.abortResumableUpload(id), busy);
+                await assert.rejects(bucket.upload('replacement.bin', payload, { id }), busy);
+                const owner = await db.collection('b.uploads').findOne({ _id: id });
+                assert.equal(owner?.status, 'initializing');
+                assert.equal(owner?.expiresAt, undefined);
+            } finally {
+                proceed.open();
+                Collection.prototype.deleteMany = original;
+                await starting;
+            }
+            assert.equal(await db.collection('b.chunks').countDocuments({ files_id: id }), 0);
+            await bucket.appendChunks(id, 0, payload);
+            await bucket.finalizeResumableUpload(id);
+            assert.deepEqual(await bucket.download(id), payload);
+        });
+    });
+
     it('finalize FILE_EXISTS rolls back to pending so public abort works and visible chunks stay', { timeout: 30_000 }, async () => {
         await withRuntime('gridfs_finalize_rollback', async (runtime, db) => {
             const bucket = runtime.gridfs('b', { chunkSizeBytes: 4 });
@@ -103,6 +150,30 @@ describe('GridFS remaining-issue regressions (begin race, finalize rollback, str
             assert.equal(await db.collection('b.uploads').countDocuments({ _id: session.uploadId }), 0);
             assert.ok(await db.collection('b.files').findOne({ _id: session.uploadId }));
             assert.equal(await db.collection('b.chunks').countDocuments({ files_id: session.uploadId }), 1);
+        });
+    });
+
+    it('retains the finalizing session when the visible file declares a different chunk size', async () => {
+        await withRuntime('gridfs_finalize_wrong_size', async (runtime, db) => {
+            const bucket = runtime.gridfs('b', { chunkSizeBytes: 4 });
+            const payload = Buffer.from('aaaabbbbcccc');
+            const { uploadId } = await bucket.beginResumableUpload('retry.bin', { length: 12, sha256: sha(payload) });
+            await bucket.appendChunks(uploadId, 0, payload);
+            const uploads = db.collection('b.uploads');
+            const files = db.collection('b.files');
+            await uploads.updateOne({ _id: uploadId }, { $set: { status: 'finalizing' }, $unset: { expiresAt: '' } });
+            await files.insertOne({
+                _id: uploadId, filename: 'retry.bin', length: 12, chunkSize: 8,
+                uploadDate: new Date(), metadata: { sha256: sha(payload) },
+            });
+            const owner = await uploads.findOne({ _id: uploadId });
+            await assert.rejects(bucket.finalizeResumableUpload(uploadId), { code: 'GRIDFS_INTEGRITY_MISMATCH' });
+            assert.deepEqual(await uploads.findOne({ _id: uploadId }), owner);
+            assert.equal(await db.collection('b.chunks').countDocuments({ files_id: uploadId }), 3);
+
+            await files.updateOne({ _id: uploadId }, { $set: { chunkSize: 4 } });
+            assert.equal((await bucket.finalizeResumableUpload(uploadId)).chunkSize, 4);
+            assert.deepEqual(await bucket.download(uploadId), payload);
         });
     });
 
@@ -228,6 +299,58 @@ describe('GridFS remaining-issue regressions (begin race, finalize rollback, str
             await bucket.abortResumableUpload(session.uploadId);
             assert.equal(await db.collection('b.uploads').countDocuments({ _id: session.uploadId }), 0);
             assert.equal(await db.collection('b.chunks').countDocuments({ files_id: session.uploadId }), 0);
+        });
+    });
+
+    it('handles a source failure while acquiring the append claim', { timeout: 10_000 }, async () => {
+        await withRuntime('gridfs_append_claim_error', async (runtime, db) => {
+            const bucket = runtime.gridfs('b', { chunkSizeBytes: 4 });
+            const payload = Buffer.from('GOOD');
+            const { uploadId } = await bucket.beginResumableUpload('claim.bin', { length: 4, sha256: sha(payload) });
+            const claiming = gate();
+            const proceed = gate();
+            const original = Collection.prototype.updateOne;
+            Collection.prototype.updateOne = async function (this: Collection, filter, update, options) {
+                if (this.collectionName === 'b.uploads' && !Array.isArray(update) && update.$set?.activeAppend) {
+                    claiming.open();
+                    await proceed.wait;
+                }
+                return original.call(this, filter, update, options);
+            };
+            const source = new Readable({ read() {} });
+            const error = new Error('source failed before claim');
+            const rejected = assert.rejects(bucket.appendChunks(uploadId, 0, source), (actual) => actual === error);
+            try {
+                await claiming.wait;
+                source.destroy(error);
+                await new Promise<void>((resolve) => setImmediate(resolve));
+            } finally {
+                proceed.open();
+                Collection.prototype.updateOne = original;
+                await rejected;
+            }
+            assert.equal((await db.collection('b.uploads').findOne({ _id: uploadId }))?.activeAppend, undefined);
+            assert.equal(await db.collection('b.chunks').countDocuments({ files_id: uploadId }), 0);
+            assert.equal((await bucket.appendChunks(uploadId, 0, payload)).nextChunk, 1);
+        });
+    });
+
+    it('releases the append claim when an idle source is destroyed without a close event', { timeout: 10_000 }, async () => {
+        await withRuntime('gridfs_append_silent_close', async (runtime, db) => {
+            const bucket = runtime.gridfs('b', { chunkSizeBytes: 4 });
+            const payload = Buffer.from('GOOD');
+            const { uploadId } = await bucket.beginResumableUpload('idle.bin', { length: 4, sha256: sha(payload) });
+            const reading = gate();
+            const source = new Readable({ emitClose: false, read() { reading.open(); } });
+            const rejected = assert.rejects(bucket.appendChunks(uploadId, 0, source), { code: 'INVALID_ARGUMENT' });
+            await reading.wait;
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            source.destroy();
+            await rejected;
+            const owner = await db.collection('b.uploads').findOne({ _id: uploadId });
+            assert.equal(owner?.activeAppend, undefined);
+            assert.ok(owner?.expiresAt instanceof Date);
+            await bucket.abortResumableUpload(uploadId);
         });
     });
 

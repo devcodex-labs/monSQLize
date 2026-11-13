@@ -18,6 +18,7 @@ const RECOVERY_ORIGIN_KINDS = new Map([
     ['deleting', 'delete'],
     ['renaming', 'rename'],
     ['cleaning', 'cleanup'],
+    ['initializing', 'resumable'],
     ['activeAppend', 'resumable'],
     ['finalizing', 'resumable'],
     ['aborting', 'resumable'],
@@ -119,6 +120,7 @@ function classify(doc) {
         else if (doc.kind === 'delete' && doc.status === 'deleting') state = 'deleting';
         else if (doc.kind === 'rename' && doc.status === 'renaming') state = 'renaming';
         else if (doc.kind === 'cleanup' && doc.status === 'cleaning') state = 'cleaning';
+        else if (doc.kind === 'resumable' && doc.status === 'initializing') state = 'initializing';
         else if ((!doc.kind || doc.kind === 'resumable') &&
             doc.status === 'pending' && doc.activeAppend) state = 'activeAppend';
         else if ((!doc.kind || doc.kind === 'resumable') &&
@@ -129,7 +131,8 @@ function classify(doc) {
     const requiredKind = RECOVERY_ORIGIN_KINDS.get(state);
     if (!requiredKind ||
         (doc.kind !== requiredKind && !(requiredKind === 'resumable' && !doc.kind)) ||
-        (state === 'activeAppend' && !doc.activeAppend?.token)) {
+        (state === 'activeAppend' && !doc.activeAppend?.token) ||
+        (state === 'initializing' && (doc.kind !== 'resumable' || !doc.ownerToken))) {
         fail('Inconsistent or unsupported owner origin; preserve ownership');
     }
     return state;
@@ -182,6 +185,7 @@ async function recoverGridFSOwnership(input) {
             deleting: 'complete-file-and-chunk-deletion',
             renaming: 'release-after-inspecting-rename-outcome',
             cleaning: 'remove-invisible-orphan-chunks',
+            initializing: 'remove-invisible-orphan-chunks-and-release-initialization',
             activeAppend: 'restore-pending-and-reconcile-prefix',
             finalizing: visible ? 'verify-visible-bytes-and-release-session' : 'restore-pending-for-retry',
             aborting: visible ? 'BLOCK-visible-file-conflict' : 'finish-invisible-chunk-removal',
@@ -286,7 +290,7 @@ async function recoverGridFSOwnership(input) {
             if (sourceStatus === 'deleting') {
                 await files.deleteOne({ _id: id });
                 await chunks.deleteMany({ files_id: id });
-            } else if ((sourceStatus === 'uploading' || sourceStatus === 'cleaning' ||
+            } else if ((sourceStatus === 'uploading' || sourceStatus === 'cleaning' || sourceStatus === 'initializing' ||
                         sourceStatus === 'aborting') && !visibleNow) {
                 await chunks.deleteMany({ files_id: id });
             }

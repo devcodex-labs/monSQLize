@@ -19,6 +19,38 @@ function isPrematureClose(source: Readable, ended: boolean): boolean {
     return source.destroyed && !ended && !source.readableEnded;
 }
 
+/** Capture errors before the append claim and keep handling errors from async destruction. */
+export function watchReadable(source: Readable) {
+    let error: Error | undefined;
+    let released = false;
+    const detach = (): void => {
+        source.removeListener('error', onError);
+        source.removeListener('close', detach);
+    };
+    const onError = (cause: Error): void => {
+        error ??= cause;
+        if (released) detach();
+    };
+    source.on('error', onError);
+    return {
+        source,
+        get error() { return error ?? source.errored; },
+        release(): void {
+            released = true;
+            if (source.readableEnded && !source.destroyed) {
+                detach();
+                return;
+            }
+            if (!source.closed) source.once('close', detach);
+            if (!source.destroyed) source.destroy();
+            // A synchronous _destroy can queue an error even after closed is true.
+            setImmediate(() => {
+                if (source.closed) detach();
+            });
+        },
+    };
+}
+
 /**
  * Consume a Readable into GridFS-sized slices without buffering the whole payload.
  * Retention is limited to a residual shorter than the next expected slice plus the
@@ -36,7 +68,9 @@ export async function consumeReadableChunks(
     chunkSizeBytes: number,
     onChunk: (slice: StreamedChunk) => Promise<void>,
     onBufferedBytes?: (bytes: number) => void,
+    watched?: ReturnType<typeof watchReadable>,
 ): Promise<{ bytesAccepted: number }> {
+    const stream = watched ?? watchReadable(source);
     const total = chunkCount(length, chunkSizeBytes);
     let residual = Buffer.alloc(0);
     let index = fromChunk;
@@ -63,7 +97,7 @@ export async function consumeReadableChunks(
         let offset = 0;
         report(incoming.length);
         while (offset < incoming.length) {
-            if (aborted || isPrematureClose(source, ended)) return;
+            if (aborted || stream.error || isPrematureClose(source, ended)) return;
             if (index >= total) badChunkSize();
             const want = chunkLengthAt(index, length, chunkSizeBytes);
             const have = residual.length + (incoming.length - offset);
@@ -92,6 +126,7 @@ export async function consumeReadableChunks(
 
     await new Promise<void>((resolve, reject) => {
         const detach = (): void => {
+            clearInterval(checkDestroyed);
             source.removeListener('readable', onReadable);
             source.removeListener('end', onEnd);
             source.removeListener('error', onError);
@@ -132,10 +167,11 @@ export async function consumeReadableChunks(
             busy = true;
             try {
                 let incoming: Buffer | string | null;
-                while (!aborted && (incoming = source.read() as Buffer | string | null) !== null) {
+                while (!aborted && !stream.error && !isPrematureClose(source, ended) &&
+                    (incoming = source.read() as Buffer | string | null) !== null) {
                     await takeFrom(Buffer.isBuffer(incoming) ? incoming : Buffer.from(incoming));
                 }
-                if (queuedError) throw queuedError;
+                if (queuedError || stream.error) throw queuedError ?? stream.error;
                 if (isPrematureClose(source, ended)) throw streamClosedError();
                 if (ended || source.readableEnded) {
                     ended = true;
@@ -152,8 +188,8 @@ export async function consumeReadableChunks(
                 pending = true;
                 return;
             }
-            if (queuedError) {
-                finish(queuedError);
+            if (queuedError || stream.error) {
+                finish(queuedError ?? stream.error);
                 return;
             }
             if (isPrematureClose(source, ended)) {
@@ -162,7 +198,7 @@ export async function consumeReadableChunks(
             }
             pump().then(() => {
                 if (settled) return;
-                if (pending || queuedError || isPrematureClose(source, ended)) {
+                if (pending || queuedError || stream.error || isPrematureClose(source, ended)) {
                     pending = false;
                     run();
                     return;
@@ -175,17 +211,18 @@ export async function consumeReadableChunks(
         source.on('end', onEnd);
         source.on('error', onError);
         source.on('close', onClose);
-        if (isPrematureClose(source, ended)) {
-            finish(streamClosedError());
-            return;
-        }
+        // emitClose:false suppresses the notification even when an idle source is destroyed.
+        const checkDestroyed = setInterval(() => {
+            if (isPrematureClose(source, ended)) abort(stream.error ?? streamClosedError());
+        }, 50);
+        checkDestroyed.unref();
         run();
         if (!ended && source.readableEnded) {
             ended = true;
             run();
         }
     }).finally(() => {
-        if (!source.destroyed && !source.readableEnded) source.destroy();
+        if (!watched) stream.release();
     });
 
     if (bytesAccepted === 0) badChunkSize();

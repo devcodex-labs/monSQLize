@@ -182,6 +182,32 @@ describe('consumeReadableChunks', () => {
         );
     });
 
+    it('handles an asynchronous destroy error after the append settles', async () => {
+        let pushed = false;
+        let finishDestroy = (): void => {};
+        const failure = new Error('destroy failed');
+        const source = new Readable({
+            read() {
+                if (pushed) return;
+                pushed = true;
+                this.push(Buffer.from('aaaabbbb'));
+            },
+            destroy(error, callback) {
+                finishDestroy = () => callback(error);
+            },
+        });
+        try {
+            await assert.rejects(settles(consumeReadableChunks(source, 0, 8, 4, async () => {
+                source.destroy(failure);
+            })), (actual) => actual === failure);
+        } finally {
+            finishDestroy();
+            await new Promise<void>((resolve) => setImmediate(resolve));
+        }
+        assert.equal(source.listenerCount('error'), 0);
+        assert.equal(source.listenerCount('close'), 0);
+    });
+
     it('waits for the in-flight write and discards the remaining buffered chunks on destroy', async () => {
         let writeFinished = false;
         let pushed = false;

@@ -261,6 +261,29 @@ describe('GridFS operator recovery: deterministic post-crash state and chunk saf
         });
     });
 
+    it('recovers interrupted initialization after quiescence without deleting a visible file', async () => {
+        await withRuntime(async (bucket, db) => {
+            const payload = Buffer.from('GOOD');
+            const uploads = db.collection('b.uploads');
+            const chunks = db.collection('b.chunks');
+            for (const visible of [false, true]) {
+                const id = new ObjectId();
+                if (visible) await bucket.upload('visible.bin', payload, { id });
+                else await chunks.insertOne({ files_id: id, n: 0, data: payload });
+                await uploads.insertOne({ _id: id, kind: 'resumable', status: 'initializing',
+                    updatedAt: new Date(), ownerToken: 'initialization-token' });
+
+                await assert.rejects(recover(db, id, { quiesced: false }), /requires external writer quiescence/);
+                const receipt = await recover(db, id);
+                assert.equal(receipt.outcome, 'completed');
+                assert.equal(await uploads.findOne({ _id: id }), null);
+                assert.equal(await chunks.countDocuments({ files_id: id }), visible ? 1 : 0);
+                if (visible) assert.deepEqual(await bucket.download(id), payload);
+                else await bucket.beginResumableUpload('retry.bin', { id, length: 4, sha256: digest(payload) });
+            }
+        });
+    });
+
     it('can resume a recovery crash using the persistent recovery token', async () => {
         await withRuntime(async (_, db) => {
             const id = new ObjectId();

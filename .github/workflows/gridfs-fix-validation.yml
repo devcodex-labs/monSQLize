@@ -42,7 +42,10 @@ jobs:
         run: |
           node --test --test-concurrency=1 \
             .generated/test-dist/test/unit/gridfs/gridfs.test.js \
+            .generated/test-dist/test/unit/gridfs/stream-chunks.test.js \
             .generated/test-dist/test/integration/gridfs/gridfs.test.js \
             .generated/test-dist/test/integration/gridfs/gridfs-scan-regressions.test.js \
             .generated/test-dist/test/integration/gridfs/gridfs-ownership-regressions.test.js \
-            .generated/test-dist/test/integration/gridfs/gridfs-stale-recovery.test.js
+            .generated/test-dist/test/integration/gridfs/gridfs-stale-recovery.test.js \
+            .generated/test-dist/test/integration/gridfs/gridfs-remaining-issues.test.js \
+            .generated/test-dist/test/integration/gridfs/gridfs-inspect-orphans.test.js
