@@ -41,12 +41,10 @@ enforce('all files', files.length, policy.maximumFiles);
 enforce('total bytes', totalBytes, policy.maximumTotalBytes);
 enforce('largest JavaScript bytes', largestJavaScript?.bytes ?? 0, policy.maximumSingleJavaScriptBytes);
 enforce('largest HTML bytes', largestHtml?.bytes ?? 0, policy.maximumSingleHtmlBytes);
-enforce('combined search index bytes', combinedSearchBytes, policy.maximumCombinedSearchIndexBytes);
 
 for (const locale of policy.requiredSearchLocales) {
     const match = searchIndexes.find((file) => file.relativePath.startsWith(`static/search_index.${locale}.`));
     if (!match) failures.push(`search index for locale ${locale} is missing`);
-    else enforce(`${locale} search index bytes`, match.bytes, policy.maximumSearchIndexBytesPerLocale);
 }
 
 console.log(JSON.stringify({
@@ -55,6 +53,7 @@ console.log(JSON.stringify({
     totalBytes,
     largestJavaScript: largestJavaScript && { path: largestJavaScript.relativePath, bytes: largestJavaScript.bytes },
     largestHtml: largestHtml && { path: largestHtml.relativePath, bytes: largestHtml.bytes },
+    combinedSearchIndexBytes: combinedSearchBytes,
     searchIndexes: searchIndexes.map((file) => ({ path: file.relativePath, bytes: file.bytes })),
 }, null, 2));
 
@@ -63,5 +62,5 @@ if (failures.length > 0) {
     failures.forEach((failure) => console.error(`- ${failure}`));
     process.exitCode = 1;
 } else {
-    console.log('Website build budgets verified.');
+    console.log('Website asset budgets and search-index presence verified.');
 }

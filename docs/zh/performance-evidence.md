@@ -18,7 +18,7 @@
 ## 当前已验证范围
 
 - `npm run test:performance` 是受控的 FunctionCache 回归守卫，验证 fixture 下的热路径/并发合并行为，不证明固定的生产加速倍数。
-- `npm --prefix website run check:budgets` 约束构建资产和搜索索引的体积趋势；这是传输体积预算，不是页面加载时延声明。
+- `npm --prefix website run check:budgets` 检查构建资产预算与必要语言搜索索引的存在性；逐个和合计记录搜索索引大小，不设固定的搜索索引字节上限。资产传输预算不代表页面加载时延。
 - 批量写、查询缓存、populate、`findPage`、DataTask、SSH 和慢查询日志在建立可复跑负载与证据产物前只作定性描述。
 
 选择批量大小、缓存策略、连接池和运维超时时，应对自己的真实负载做基准测试。

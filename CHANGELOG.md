@@ -7,12 +7,13 @@
 
 ## Unreleased
 
-See the [staging log](./changelogs/unreleased.md) for changes after 3.5.4.
+See the [staging log](./changelogs/unreleased.md) for changes after 3.6.0.
 
 ## Version Overview
 
 | Version | Date | Summary | Details |
 |---------|------|---------|---------|
+| [v3.6.0](./changelogs/v3.6.0.md) | 2026-11-13 | Minor: BSON int8/int1 vector queries, real Search verification and informational documentation search-index sizes | [View](./changelogs/v3.6.0.md) |
 | [v3.5.4](./changelogs/v3.5.4.md) | 2026-11-13 | Patch with GridFS ownership, streaming, and recovery fixes, a required GridFS idle TTL migration, and support for future Search index statuses | [View](./changelogs/v3.5.4.md) |
 | [v3.5.3](./changelogs/v3.5.3.md) | 2026-11-02 | Patch: GridFS upload/download/resumable-session fixes, idempotent finalize retry (contract change), long Search index wait timeouts and appendChunks cost | [View](./changelogs/v3.5.3.md) |
 | [v3.5.2](./changelogs/v3.5.2.md) | 2026-11-02 | Patch: corrected vector search guidance, regrouped Search docs and a new vector search example; no runtime changes | [View](./changelogs/v3.5.2.md) |

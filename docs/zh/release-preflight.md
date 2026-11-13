@@ -23,7 +23,7 @@ npm run release:preflight
    - `docs/zh/verification-entrypoints.md`
 5. 执行快速静态/运行时门禁和完整公开验证链。
 6. 强制执行源码 coverage、可运行示例、MongoDB server matrix、真实 dataTasks integration、CLI matrix 与 package-install smoke。
-7. 使用干净安装与 Chromium 验证文档站类型、构建、站内链接、资产/搜索预算、键盘与移动导航、语言切换、axe WCAG A/AA 和依赖审计。
+7. 使用干净安装与 Chromium 验证文档站类型、构建、站内链接、资产预算、必要搜索索引及大小统计、键盘与移动导航、语言切换、axe WCAG A/AA 和依赖审计。
 8. 执行 `npm pack --dry-run` 并核对打包边界。
 9. `prepublishOnly` 与仓库发布路径共用同一个 `release:preflight` 真相源，直接 publish 也不能绕过门禁。
 10. `verify:release` 仍是显式执行的私有真实环境补充检查，不能代替公开门禁；未配置私有环境时必须记录 `skipReason`，不能伪报通过。

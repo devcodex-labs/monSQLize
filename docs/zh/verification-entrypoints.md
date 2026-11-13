@@ -24,7 +24,7 @@
 | `npm run test:real-env:private` | 私有真实环境检查；默认不进入常规 verify / CI |
 | `npm run release:preflight` | Node 22 严格单一真相源发布门禁：干净且已推送候选 + 发布元数据 + `verify:fast` + 默认测试 + coverage + examples + server matrix + dataTasks/CLI integration + license/audit + 临时安装 + Chromium 网站 verify + 最终 pack 边界 |
 | `npm run test:pack-install` | 构建并打包候选版本，在临时消费者中安装 tarball，验证 CJS、ESM、dataTasks、schema-dsl、TypeScript、MIGRATION/SECURITY、bin、help 与 version |
-| `npm --prefix website run verify` | 使用网站锁文件验证类型、Rspress 构建、站内链接、构建/搜索预算、Chromium 键盘/移动/语言行为、axe WCAG A/AA 和依赖 audit |
+| `npm --prefix website run verify` | 使用网站锁文件验证类型、Rspress 构建、站内链接、资产预算、必要搜索索引及大小统计、Chromium 键盘/移动/语言行为、axe WCAG A/AA 和依赖 audit |
 
 memory-server 相关入口统一使用 `.cache/mongodb-memory-server/binaries` 作为二进制缓存，`.cache/mongodb-memory-server/db` 作为项目内临时数据目录；项目自动创建的 dbPath 会在脚本退出或 runtime close 时清理，避免默认系统临时目录堆积。
 

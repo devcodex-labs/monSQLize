@@ -24,7 +24,7 @@
 | `npm run test:real-env:private` | Private real environment check; do not enter regular verify / CI by default |
 | `npm run release:preflight` | Node 22 strict single-source release gate: clean pushed candidate + release metadata + `verify:fast` + default tests + coverage + examples + server matrix + dataTasks/CLI integration + license/audit + temporary package install + Chromium website verify + final pack boundary |
 | `npm run test:pack-install` | Build and pack the candidate, install the tarball in a temporary consumer, and verify CJS, ESM, dataTasks, schema-dsl, TypeScript, MIGRATION/SECURITY, bin, help, and version |
-| `npm --prefix website run verify` | Verify types, Rspress build, internal links, build/search budgets, Chromium keyboard/mobile/language behavior, axe WCAG A/AA, and dependency audit using the website lockfile |
+| `npm --prefix website run verify` | Verify types, Rspress build, internal links, asset budgets, required search indexes and size reporting, Chromium keyboard/mobile/language behavior, axe WCAG A/AA, and dependency audit using the website lockfile |
 
 The memory-server related entries uniformly use `.cache/mongodb-memory-server/binaries` as the binary cache and `.cache/mongodb-memory-server/db` as the temporary data directory within the project; the dbPath automatically created by the project will be cleared when the script exits or runtime close to avoid the accumulation of default system temporary directories.
 

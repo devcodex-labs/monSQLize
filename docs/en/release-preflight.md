@@ -23,7 +23,7 @@ You can also trigger the **Release Preflight** workflow through GitHub Actions. 
    - `docs/zh/verification-entrypoints.md`
 5. Run the fast static/runtime gate and the complete public verification chain.
 6. Require source coverage, runnable examples, the MongoDB server matrix, real dataTasks integration, the CLI matrix, and package-install smoke tests.
-7. Use a clean install and Chromium to verify docs-site types, build output, internal links, asset/search budgets, keyboard and mobile navigation, language switching, axe WCAG A/AA checks, and dependency audit.
+7. Use a clean install and Chromium to verify docs-site types, build output, internal links, asset budgets, required search indexes and size reporting, keyboard and mobile navigation, language switching, axe WCAG A/AA checks, and dependency audit.
 8. Run `npm pack --dry-run` and verify the packaged file boundary.
 9. Keep `prepublishOnly` and repository publishing on the same `release:preflight` source so a direct publish cannot bypass the gate.
 10. Keep `verify:release` as an explicit supplementary private-environment check; it is not a substitute for the public gate. Record a `skipReason` when that private environment is not configured instead of reporting a pass.

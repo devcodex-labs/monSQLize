@@ -98,7 +98,7 @@ const hits = await runtime.collection('articles').vectorSearch({
 
 ## Quantization and BSON query vectors
 
-The BSON input addition is unreleased source work after 3.5.4. For a registry version whose `vectorSearch()` only accepts arrays, use `collection.aggregate()` with the native `$vectorSearch` stage for BSON vectors.
+BSON int8/int1 input is available starting with 3.6.0. For an earlier version whose `vectorSearch()` only accepts arrays, use `collection.aggregate()` with the native `$vectorSearch` stage for BSON vectors. Verify that the requested version exists in the registry before installing it.
 
 Automatic quantization keeps your stored embeddings and query vectors as numeric arrays. Set `quantization: 'scalar'` or `'binary'` on the vector field in the Search index; continue passing the original finite `number[]` to `vectorSearch()`. The server quantizes it.
 

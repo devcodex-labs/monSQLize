@@ -1,12 +1,8 @@
 # Unreleased
 
-## Changes after v3.5.4
+## Changes after v3.6.0
 
-Unreleased Search additions after [v3.5.4](./v3.5.4.md):
-
-- Accept BSON vector subtype 9 int8 and packed-bit int1 query vectors in Collection and Model `vectorSearch()`, preserving effective bytes, scores and native errors. Numeric arrays remain supported; malformed vectors are rejected locally.
-- Add the opt-in `test:search:real` matrix for automatic quantization, pre-quantized vectors, full-text search, counts and hybrid fusion, with isolated database cleanup and native-driver controls.
-- Document version pairings, the historical MongoDB 8.2 end-of-life boundary and quantized-vector representation requirements. These additions are source candidates, not a claim of npm publication.
+No changes are currently recorded after v3.6.0. See the [3.6.0 release notes](./v3.6.0.md).
 
 ## Archived preparation notes for the 3.3.2 candidate
 

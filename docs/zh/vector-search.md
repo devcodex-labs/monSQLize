@@ -98,7 +98,7 @@ const hits = await runtime.collection('articles').vectorSearch({
 
 ## 量化与 BSON 查询向量
 
-BSON 输入是 3.5.4 之后尚未发布的源码新增能力。对仅接收数组的 npm 版本，可通过 `collection.aggregate()` 中的原生 `$vectorSearch` 阶段执行 BSON 查询。
+BSON int8/int1 输入从 3.6.0 开始提供。对仅接收数组的较早版本，可通过 `collection.aggregate()` 中的原生 `$vectorSearch` 阶段执行 BSON 查询；安装前请核实目标版本已在 registry 发布。
 
 自动量化保留存储的数值数组和查询数组：在 Search 索引的向量字段设置 `quantization: 'scalar'` 或 `'binary'`，调用 `vectorSearch()` 时继续传原始有限 `number[]`，由服务端量化。
 
