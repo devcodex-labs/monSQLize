@@ -1,18 +1,19 @@
 # CHANGELOG
 
-> Summary index — the 3.5.3 versioned details are in [changelogs/v3.5.3.md](./changelogs/v3.5.3.md). A versioned note does not establish npm publication; check the registry and immutable tag before deployment.
-> **Last updated**: 2026-11-02
+> See the [3.5.4 release notes](./changelogs/v3.5.4.md) for the GridFS upgrade procedure. Check the npm registry and version tag before deployment.
+> **Last updated**: 2026-11-13
 
 ---
 
 ## Unreleased
 
-GridFS and Search index fixes from the 2026-11-02 weekly scan, including the idempotent `finalizeResumableUpload` retry, are assigned to **3.5.3** ([versioned notes](./changelogs/v3.5.3.md)); vector search guidance, Search docs regrouping and the vector example are in [3.5.2](./changelogs/v3.5.2.md); README, docs-site share card and release tooling fixes are in [3.5.1](./changelogs/v3.5.1.md); GridFS buckets are in [3.5.0](./changelogs/v3.5.0.md); the Search index lifecycle API is in [3.4.0](./changelogs/v3.4.0.md); the weekly-scan cache-key, health-check and lockfile security fixes are in [3.3.4](./changelogs/v3.3.4.md); the schema-dsl 3.0.5 upgrade is in [3.3.3](./changelogs/v3.3.3.md); the audited 3.3.2 repairs are in its [versioned notes](./changelogs/v3.3.2.md) and the [next-change staging log](https://github.com/devcodex-labs/monSQLize/blob/main/changelogs/unreleased.md). Untagged checkouts remain release candidates.
+See the [staging log](./changelogs/unreleased.md) for changes after 3.5.4.
 
 ## Version Overview
 
 | Version | Date | Summary | Details |
 |---------|------|---------|---------|
+| [v3.5.4](./changelogs/v3.5.4.md) | 2026-11-13 | Patch with GridFS ownership, streaming, and recovery fixes, a required GridFS idle TTL migration, and support for future Search index statuses | [View](./changelogs/v3.5.4.md) |
 | [v3.5.3](./changelogs/v3.5.3.md) | 2026-11-02 | Patch: GridFS upload/download/resumable-session fixes, idempotent finalize retry (contract change), long Search index wait timeouts and appendChunks cost | [View](./changelogs/v3.5.3.md) |
 | [v3.5.2](./changelogs/v3.5.2.md) | 2026-11-02 | Patch: corrected vector search guidance, regrouped Search docs and a new vector search example; no runtime changes | [View](./changelogs/v3.5.2.md) |
 | [v3.5.1](./changelogs/v3.5.1.md) | 2026-10-28 | Patch: README support wording and native-driver example, docs-site share card and locale meta; no runtime changes | [View](./changelogs/v3.5.1.md) |

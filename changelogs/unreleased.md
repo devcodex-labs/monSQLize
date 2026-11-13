@@ -1,11 +1,8 @@
 # Unreleased
 
-## Changes after v3.5.3
+## Changes after v3.5.4
 
-Candidate work (not yet released): GridFS per-file ID ownership, durable append/finalize/abort state, deletion fencing, expiresAt idle-TTL migration, and recovery SHA provenance (trusted pre-verified upload() digest versus uploadStream metadata-only claims). These changes require a coordinated writer drain before upgrading and are pending full compatibility verification. No release version or publication is claimed. The GridFS and Search index fixes from the 2026-11-02 weekly scan are assigned to the [3.5.3 versioned notes](./v3.5.3.md); the vector search guidance and Search docs regrouping are in [3.5.2](./v3.5.2.md). Publication is established by the npm registry and immutable tag, not this file.
-
-- MZ-19 candidate fix: persist direct upload SHA provenance; recovery verifies physical chunks for every visible file, strictly checks only trusted upload()/resumable expected digests, and records metadata-only SHA mismatches as audit warnings.
-- MZ-17: `SearchIndexStatus` is now `KnownSearchIndexStatus | (string & {})`, matching the runtime that passes unknown future server statuses through unchanged instead of rewriting them to `PENDING`. Public types export `KnownSearchIndexStatus`. Waiting defaults and READY/queryable semantics are unchanged.
+No changes are currently recorded after v3.5.4. See the [3.5.4 release notes](./v3.5.4.md).
 
 ## Archived preparation notes for the 3.3.2 candidate
 
