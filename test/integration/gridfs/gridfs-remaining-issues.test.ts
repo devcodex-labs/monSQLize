@@ -177,6 +177,61 @@ describe('GridFS remaining-issue regressions (begin race, finalize rollback, str
         });
     });
 
+    it('returns the file committed by this finalize after a concurrent deletion and ID reuse', { timeout: 10_000 }, async () => {
+        await withRuntime('gridfs_finalize_result_reuse', async (runtime, db) => {
+            const bucket = runtime.gridfs('b', { chunkSizeBytes: 4 });
+            const id = new ObjectId();
+            const firstBytes = Buffer.from('OLD!');
+            const replacementBytes = Buffer.from('NEW!NEW!');
+            await bucket.beginResumableUpload('first.bin', {
+                id, length: firstBytes.length, sha256: sha(firstBytes),
+                contentType: 'application/octet-stream', metadata: { label: 'first' },
+            });
+            await bucket.appendChunks(id, 0, firstBytes);
+
+            const released = gate();
+            const returnFirst = gate();
+            const original = Collection.prototype.deleteOne;
+            let pauseFirst = true;
+            Collection.prototype.deleteOne = async function (this: Collection, filter, options) {
+                const result = await original.call(this, filter, options);
+                if (pauseFirst && this.collectionName === 'b.uploads' && filter?.status === 'finalizing' && id.equals(filter._id)) {
+                    pauseFirst = false;
+                    released.open();
+                    await returnFirst.wait;
+                }
+                return result;
+            };
+            const first = bucket.finalizeResumableUpload(id);
+            try {
+                await released.wait;
+                const committed = await bucket.getFile(id);
+                assert.equal(committed?.filename, 'first.bin');
+                assert.equal(committed?.length, firstBytes.length);
+                assert.equal(committed?.metadata?.sha256, sha(firstBytes));
+                assert.equal(committed?.contentType, 'application/octet-stream');
+
+                await bucket.delete(id);
+                await bucket.beginResumableUpload('replacement.bin', {
+                    id, length: replacementBytes.length, sha256: sha(replacementBytes),
+                    chunkSizeBytes: 8, metadata: { label: 'replacement' },
+                });
+                await bucket.appendChunks(id, 0, replacementBytes);
+                const replacement = await bucket.finalizeResumableUpload(id);
+
+                returnFirst.open();
+                assert.deepEqual(await first, committed);
+                assert.deepEqual(await bucket.getFile(id), replacement);
+                assert.deepEqual(await bucket.download(id), replacementBytes);
+                assert.equal(await db.collection('b.uploads').findOne({ _id: id }), null);
+            } finally {
+                returnFirst.open();
+                Collection.prototype.deleteOne = original;
+                await Promise.allSettled([first]);
+            }
+        });
+    });
+
     it('keeps the new finalize owner when an older retry completes after ID reuse', { timeout: 10_000 }, async () => {
         await withRuntime('gridfs_finalize_owner_reuse', async (runtime, db) => {
             const bucket = runtime.gridfs('b', { chunkSizeBytes: 4 });

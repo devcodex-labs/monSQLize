@@ -290,15 +290,16 @@ export async function finalizeResumableUpload(ctx: GridFSContext, uploadId: Obje
         buildMetadata(session.metadata, session.sha256, 'finalizeResumableUpload'),
         session.contentType,
     );
+    const file = {
+        _id: uploadId,
+        length: session.length,
+        chunkSize: session.chunkSizeBytes,
+        uploadDate: new Date(),
+        filename: session.filename,
+        ...(metadata ? { metadata } : {}),
+    };
     try {
-        await files.insertOne({
-            _id: uploadId,
-            length: session.length,
-            chunkSize: session.chunkSizeBytes,
-            uploadDate: new Date(),
-            filename: session.filename,
-            ...(metadata ? { metadata } : {}),
-        });
+        await files.insertOne(file);
     } catch (error) {
         if (isDuplicateKey(error)) {
             try {
@@ -322,14 +323,8 @@ export async function finalizeResumableUpload(ctx: GridFSContext, uploadId: Obje
     } catch (error) {
         ctx.logger?.warn?.('[gridfs] finalizeResumableUpload could not delete the upload session', { bucket: ctx.bucketName, uploadId: String(uploadId), error });
     }
-    let info;
-    try {
-        info = await files.findOne({ _id: uploadId });
-    } catch (error) {
-        throw mapDriverError(error, 'finalizeResumableUpload', ctx, { uploadId, filename: session.filename });
-    }
-    if (!info) throw fileNotFound('finalizeResumableUpload', ctx, { id: uploadId, filename: session.filename });
-    return toFileInfo(info as Record<string, unknown>);
+    // The ID may be reused as soon as the finalize owner is released.
+    return toFileInfo(file);
 }
 
 export async function abortResumableUpload(ctx: GridFSContext, uploadId: ObjectId): Promise<void> {
