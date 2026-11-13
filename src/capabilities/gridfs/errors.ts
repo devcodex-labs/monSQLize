@@ -12,6 +12,7 @@ export interface GridFSErrorDetails {
     expected?: unknown;
     actual?: unknown;
     missingChunks?: number[];
+    missingChunkCount?: number;
     fromChunk?: number;
     expectedNextChunk?: number;
     start?: number;
@@ -92,11 +93,12 @@ export function uploadBusy(operation: string, ctx: Pick<GridFSContext, 'bucketNa
     });
 }
 
-export function uploadIncomplete(bucket: string, uploadId: ObjectId, missingChunks: number[]): MonSQLizeError {
+export function uploadIncomplete(bucket: string, uploadId: ObjectId, missingChunks: number[], missingCount: number): MonSQLizeError {
     return gridfsError(
         ErrorCodes.GRIDFS_UPLOAD_INCOMPLETE,
         'GridFS resumable upload is missing chunks',
-        { operation: 'finalizeResumableUpload', bucket, uploadId, missingChunks },
+        { operation: 'finalizeResumableUpload', bucket, uploadId, missingChunks,
+            ...(missingCount > missingChunks.length ? { missingChunkCount: missingCount } : {}) },
     );
 }
 

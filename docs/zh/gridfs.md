@@ -92,9 +92,9 @@ await bucket.abortResumableUpload(session.uploadId);
 - 只要 payload 含有新分片，`fromChunk` 就必须等于 `nextChunk`。从更早的序号开始会抛出 `GRIDFS_RESUME_MISMATCH`，并且不会写入。
 - `{ files_id, n }` 唯一索引冲突只有在已存字节相同的时候才算成功。
 
-`finalizeResumableUpload` 要求从 0 开始的每个预期序号恰好对应一个分片，总长度等于会话长度，且 sha256 等于会话摘要。然后插入 files 文档、写入 `metadata.sha256`，并删除会话。缺少的分片序号抛出 `GRIDFS_UPLOAD_INCOMPLETE`，`details[0].missingChunks` 列出缺口。序号无效、重复或越界，以及摘要或分片长度不符，均抛出 `GRIDFS_INTEGRITY_MISMATCH`。这些失败都不会插入 files 文档。
+`finalizeResumableUpload` 要求从 0 开始的每个预期序号恰好对应一个分片，总长度等于会话长度，且 sha256 等于会话摘要。然后插入 files 文档、写入 `metadata.sha256`，并删除会话。缺少分片时抛出 `GRIDFS_UPLOAD_INCOMPLETE`。`details[0].missingChunks` 最多列出前 1,024 个缺失序号，截断时 `details[0].missingChunkCount` 给出缺失总数。序号无效、重复或越界，以及摘要或分片长度不符，均抛出 `GRIDFS_INTEGRITY_MISMATCH`。这些失败都不会插入 files 文档。
 
-会话仍在时，重试 `finalizeResumableUpload` 是幂等的：若同 id 的文件已可见，库会重新哈希**实际存储的 chunks**，只有摘要、文件长度和分片大小都与会话一致时才返回该文件并删除会话。sha256 或长度不一致时抛出 `GRIDFS_FILE_EXISTS`。分片大小不一致时抛出 `GRIDFS_INTEGRITY_MISMATCH`，并保留已有的 `finalizing` 会话。会话已不存在时（上一次 finalize 已完整成功、已 abort 或 TTL 过期），没有可比对的摘要，重试抛 `GRIDFS_FILE_NOT_FOUND`。调用方必须自己持久化 `uploadId`、`length` 和 `sha256`。会话消失后，先用 `getFile(uploadId)` 看文件是否可见，再对**实际字节**重新哈希（例如 `download(uploadId)` 或遍历 `<bucket>.chunks`），与自己保存的长度和摘要比对。不要只信任 `metadata.sha256`：`uploadStream()` 和调用方写入的 `metadata.sha256` 可以是未校验的声明。本包不为此再提供新的公开校验 API。
+会话仍在时，重试 `finalizeResumableUpload` 是幂等的：若同 id 的文件已可见，库会重新哈希**实际存储的 chunks**，只有摘要、文件长度和分片大小都与会话一致时才返回该文件并删除会话。sha256 或长度不一致时抛出 `GRIDFS_FILE_EXISTS`。分片大小不一致时抛出 `GRIDFS_INTEGRITY_MISMATCH`，并保留已有的 `finalizing` 会话。重试期间若同一 ID 已由另一次上传接管，则返回 `GRIDFS_UPLOAD_BUSY`。会话已不存在时（上一次 finalize 已完整成功、已 abort 或 TTL 过期），没有可比对的摘要，重试抛 `GRIDFS_FILE_NOT_FOUND`。调用方必须自己持久化 `uploadId`、`length` 和 `sha256`。会话消失后，先用 `getFile(uploadId)` 看文件是否可见，再对**实际字节**重新哈希（例如 `download(uploadId)` 或遍历 `<bucket>.chunks`），与自己保存的长度和摘要比对。不要只信任 `metadata.sha256`：`uploadStream()` 和调用方写入的 `metadata.sha256` 可以是未校验的声明。本包不为此再提供新的公开校验 API。
 
 `finalizeResumableUpload` 在已经占有 `finalizing` 之后，若因 `GRIDFS_FILE_EXISTS` 或 `GRIDFS_INTEGRITY_MISMATCH` 失败，会把会话 CAS 回 `pending`，以便通过公开 API 执行 `abortResumableUpload`（然后再删除冲突的可见文件）。files 插入过程中含义不明的驱动错误仍会保留 `finalizing`，需显式恢复。
 

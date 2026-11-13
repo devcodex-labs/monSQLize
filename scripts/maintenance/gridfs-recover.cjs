@@ -39,7 +39,7 @@ function toBuffer(data) {
 
 async function verifyVisibleFile(db, bucket, id, session, owner) {
     const files = db.collection(bucket + '.files');
-    const doc = await files.findOne({ _id: id });
+    const doc = await files.findOne({ _id: id }, { readPreference: 'primary' });
     if (!doc) return null;
     if (!Number.isSafeInteger(doc.length) || doc.length < 0 ||
         !Number.isSafeInteger(doc.chunkSize) || doc.chunkSize < 1) {
@@ -50,7 +50,7 @@ async function verifyVisibleFile(db, bucket, id, session, owner) {
     let n = 0;
     let length = 0;
     for await (const chunk of db.collection(bucket + '.chunks')
-        .find({ files_id: id }).sort({ n: 1 })) {
+        .find({ files_id: id }, { readPreference: 'primary' }).sort({ n: 1 })) {
         if (chunk.n !== n || n >= totalChunks) fail('Visible file has a missing, extra or out-of-order chunk');
         const bytes = toBuffer(chunk.data);
         const want = n === totalChunks - 1 ? doc.length - n * doc.chunkSize : doc.chunkSize;
@@ -146,7 +146,7 @@ async function contiguousChunkPrefix(db, bucket, id, session) {
     const count = Math.ceil(session.length / session.chunkSizeBytes);
     let next = 0;
     for await (const doc of db.collection(bucket + '.chunks')
-        .find({ files_id: id }).sort({ n: 1 })) {
+        .find({ files_id: id }, { readPreference: 'primary' }).sort({ n: 1 })) {
         if (doc.n !== next || next >= count) {
             fail('Interrupted append contains a gap or extra chunk; preserve ownership');
         }
@@ -166,7 +166,7 @@ async function recoverGridFSOwnership(input) {
     if (!db || !bucket || typeof bucket !== 'string' || !(id instanceof ObjectId)) fail('Invalid database, bucket or ObjectId');
     if (!expectedStatus || !expectedUpdatedAt) fail('Exact expected status and updatedAt are required');
     const uploads = db.collection(bucket + '.uploads');
-    const doc = await uploads.findOne({ _id: id });
+    const doc = await uploads.findOne({ _id: id }, { readPreference: 'primary' });
     if (!doc) return { outcome: 'no_owner', modified: false };
     if (!(doc.updatedAt instanceof Date) ||
         doc.status !== expectedStatus ||
@@ -176,7 +176,8 @@ async function recoverGridFSOwnership(input) {
     const token = snapshotToken(doc);
     if ((token || null) !== (expectedToken || null)) fail('Owner token changed since inspection');
     const sourceStatus = classify(doc);
-    const visible = await db.collection(bucket + '.files').findOne({ _id: id }, { projection: { _id: 1 } });
+    const fileProjection = { projection: { _id: 1 }, readPreference: 'primary' };
+    const visible = await db.collection(bucket + '.files').findOne({ _id: id }, fileProjection);
     const plan = {
         bucket, uploadId: id.toHexString(), fromStatus: sourceStatus,
         fileVisible: !!visible,
@@ -255,7 +256,7 @@ async function recoverGridFSOwnership(input) {
         const files = db.collection(bucket + '.files');
         // Dry-run may use the pre-claim snapshot. Apply must re-read visibility
         // after the exclusive claim and fail closed if it changed.
-        const visibleAfter = await files.findOne({ _id: id }, { projection: { _id: 1 } });
+        const visibleAfter = await files.findOne({ _id: id }, fileProjection);
         const visibleNow = !!visibleAfter;
         if (visibleNow !== !!visible) {
             fail('File visibility changed after recovery claim; preserve recovering ownership');

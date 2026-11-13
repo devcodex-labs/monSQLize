@@ -10,7 +10,7 @@
 
 dry-run 可以使用领取所有权之前的可见性快照；**apply 必须在独占 claim 之后重新读取 `files`**。若可见性已经变化，或在需要可见文件时 `verifyVisibleFile` 无法确认，脚本失败并保留 `recovering` 所有权。
 
-排查未知 ID 的残留 chunks 时，使用只读巡检脚本 `scripts/maintenance/gridfs-inspect-orphans.cjs`。它按已有 `{ files_id, n }` 索引分批扫描 `<bucket>.chunks`。分类时若未查到 `files` 和 `uploads` 记录，会再次核对 `files`，报告 `visible_file`、`owned` 或 `candidate_orphan`。没有 apply 模式，不会删除，也不会按文档年龄删除。它不是公开的 `GridFSBucket` API。CLI 按行输出 NDJSON 结果及一条摘要。`--max-findings`（默认 1000，上限 100000）限制单次内存；截断时用 `resumeAfter.filesId` 作为下次的 `--after-files-id`。摘要计数在扫描过程中增量累计。
+排查使用 ObjectId 的残留 chunks 时，使用只读巡检脚本 `scripts/maintenance/gridfs-inspect-orphans.cjs`。它按已有 `{ files_id, n }` 索引分批扫描 `<bucket>.chunks`。分类时若未查到 `files` 和 `uploads` 记录，会再次核对 `files`，报告 `visible_file`、`owned` 或 `candidate_orphan`。没有 apply 模式，不会删除，也不会按文档年龄删除。它不是公开的 `GridFSBucket` API。CLI 按行输出 NDJSON 结果及一条摘要。`--max-findings`（默认 1000，上限 100000）限制单次内存；截断时用 `resumeAfter.filesId` 作为下次的 `--after-files-id`。摘要计数在扫描过程中增量累计。
 
 ```sh
 export MONSQLIZE_RECOVERY_MONGODB_URI='<从密钥管理系统读取的 MongoDB URI>'

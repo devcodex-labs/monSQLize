@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Operator-only, inspect-only reporter for GridFS chunk files_id groups.
+ * Operator-only, inspect-only reporter for ObjectId files_id groups.
  * Walks <bucket>.chunks via the existing { files_id, n } index in bounded batches.
  * Each files_id is classified only after a unified re-check of files and uploads:
  *   - visible_file: a files document exists
@@ -34,11 +34,11 @@ async function classifyFilesId(db, bucket, group) {
     const files = db.collection(bucket + '.files');
     const uploads = db.collection(bucket + '.uploads');
     const fileFilter = { _id: group.id };
-    const fileProjection = { projection: { _id: 1 } };
+    const fileProjection = { projection: { _id: 1 }, readPreference: 'primary' };
     let file = await files.findOne(fileFilter, fileProjection);
     const owner = await uploads.findOne(
         { _id: group.id },
-        { projection: { _id: 1, kind: 1, status: 1 } },
+        { projection: { _id: 1, kind: 1, status: 1 }, readPreference: 'primary' },
     );
     // A successful upload publishes the file before it releases its owner.
     if (!file && !owner) file = await files.findOne(fileFilter, fileProjection);
@@ -47,7 +47,7 @@ async function classifyFilesId(db, bucket, group) {
     else if (owner) classification = 'owned';
     else classification = 'candidate_orphan';
     const finding = {
-        filesId: group.id instanceof ObjectId ? group.id.toHexString() : String(group.id),
+        filesId: group.id.toHexString(),
         chunkCount: group.count,
         minN: group.minN,
         maxN: group.maxN,
@@ -63,9 +63,9 @@ async function classifyFilesId(db, bucket, group) {
 function parseAfter(after) {
     if (after == null) return null;
     const raw = after.filesId ?? after.files_id;
-    if (raw == null || raw === '') fail('after.filesId is required to resume');
-    const filesId = raw instanceof ObjectId ? raw : new ObjectId(String(raw));
-    return filesId;
+    if (raw instanceof ObjectId) return raw;
+    if (typeof raw !== 'string' || !ObjectId.isValid(raw)) fail('after.filesId must be an ObjectId');
+    return new ObjectId(raw);
 }
 
 async function inspectGridFSOrphans(input) {
@@ -103,13 +103,16 @@ async function inspectGridFSOrphans(input) {
         return finding.filesId;
     };
 
-    const cursor = chunks.find(afterId ? { files_id: { $gt: afterId } } : {})
+    const cursor = chunks.find({ files_id: { $type: 'objectId', ...(afterId ? { $gt: afterId } : {}) } },
+        { readPreference: 'primary' })
         .sort({ files_id: 1, n: 1 })
         .project({ _id: 0, files_id: 1, n: 1 })
         .batchSize(pageSize);
     for await (const doc of cursor) {
         rows += 1;
-        if (!current || !sameId(current.id, doc.files_id)) {
+        // The query type predicate also matches arrays containing ObjectIds.
+        if (!(doc.files_id instanceof ObjectId)) continue;
+        if (!current || !current.id.equals(doc.files_id)) {
             if (current) {
                 const filesId = await flush(current);
                 if (filesIdsScanned === maxFindings) {
@@ -140,12 +143,6 @@ async function inspectGridFSOrphans(input) {
         resumeAfter,
         ...(findings ? { findings } : {}),
     };
-}
-
-function sameId(left, right) {
-    if (left === right) return true;
-    if (left && right && typeof left.equals === 'function') return left.equals(right);
-    return String(left) === String(right);
 }
 
 function readArg(args, name) {

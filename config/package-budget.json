@@ -1,8 +1,8 @@
 {
-  "comment": "GridFS initialization fencing and Readable teardown bring the 2026-11-13 build to about 896200 CJS and 893500 ESM, with no dependency change. Ceilings retain less than 1 KiB of headroom for these measured builds and are enforced in release preflight.",
+  "comment": "GridFS ownership checks, primary reads and bounded diagnostics bring the 2026-11-13 build to 897375 CJS and 894610 ESM bytes, with no dependency change. Release preflight enforces these ceilings.",
   "artifacts": {
-    "dist/cjs/index.cjs": 897000,
-    "dist/esm/index.mjs": 894000,
+    "dist/cjs/index.cjs": 898000,
+    "dist/esm/index.mjs": 895000,
     "dist/cjs/cli/data-task.cjs": 50000
   }
 }

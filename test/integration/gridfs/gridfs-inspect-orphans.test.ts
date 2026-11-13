@@ -166,6 +166,30 @@ describe('GridFS inspect-only orphan reporter', () => {
         });
     });
 
+    it('skips foreign IDs and preserves an ObjectId continuation on mixed collections', async () => {
+        await withDb(async (db) => {
+            const firstId = new ObjectId();
+            const secondId = new ObjectId();
+            await db.collection('b.chunks').insertMany([
+                { files_id: 3, n: 0 },
+                { files_id: 'foreign', n: 0 },
+                { files_id: firstId.toHexString(), n: 0 },
+                { files_id: firstId, n: 0 },
+                { files_id: secondId, n: 0 },
+            ]);
+            const first = await inspectGridFSOrphans({ db, bucket: 'b', pageSize: 1, maxFindings: 1 });
+            assert.equal(first.findings[0].filesId, firstId.toHexString());
+            assert.deepEqual(first.resumeAfter, { filesId: firstId.toHexString() });
+            const next = await inspectGridFSOrphans({ db, bucket: 'b', pageSize: 1, after: first.resumeAfter });
+            assert.deepEqual(next.findings.map((row: { filesId: string }) => row.filesId), [secondId.toHexString()]);
+            assert.equal(next.truncated, false);
+            await assert.rejects(inspectGridFSOrphans({ db, bucket: 'b', after: { filesId: 'foreign' } }), {
+                code: 'GRIDFS_INSPECT_PRECONDITION_FAILED',
+            });
+            assert.equal(await db.collection('b.chunks').countDocuments(), 5);
+        });
+    });
+
     it('caps findings, streams results, and resumes a large-cardinality scan without deleting', async () => {
         await withDb(async (db) => {
             const total = 250;

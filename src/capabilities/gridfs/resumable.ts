@@ -22,6 +22,8 @@ import {
 } from './validate';
 import { consumeReadableChunks, watchReadable } from './stream-chunks';
 
+const MAX_REPORTED_MISSING_CHUNKS = 1024;
+
 export async function beginResumableUpload(ctx: GridFSContext, filename: string, opts: BeginResumableUploadOptions): Promise<BeginResumableUploadResult> {
     assertFilename(filename, 'beginResumableUpload');
     if (!opts || typeof opts !== 'object') {
@@ -39,10 +41,10 @@ export async function beginResumableUpload(ctx: GridFSContext, filename: string,
     const uploadId = opts.id ?? new ObjectId();
     const files = ctx.db.collection(filesCollectionName(ctx.bucketName));
     const uploads = ctx.db.collection(uploadsCollectionName(ctx.bucketName));
-    if (await files.findOne({ _id: uploadId }, { projection: { _id: 1 } })) {
+    if (await files.findOne({ _id: uploadId }, { projection: { _id: 1 }, readPreference: 'primary' })) {
         throw fileExists('beginResumableUpload', ctx, { id: uploadId, filename, sha256: opts.sha256 });
     }
-    if (await uploads.findOne({ _id: uploadId }, { projection: { _id: 1 } })) {
+    if (await uploads.findOne({ _id: uploadId }, { projection: { _id: 1 }, readPreference: 'primary' })) {
         throw fileExists('beginResumableUpload', ctx, { id: uploadId, filename, sha256: opts.sha256 });
     }
 
@@ -68,7 +70,7 @@ export async function beginResumableUpload(ctx: GridFSContext, filename: string,
     // Only publish a pending session after its orphan cleanup has settled.
     // Initializing has no TTL and excludes append, finalize, abort and ID reuse.
     try {
-        if (await files.findOne({ _id: uploadId }, { projection: { _id: 1 } })) {
+        if (await files.findOne({ _id: uploadId }, { projection: { _id: 1 }, readPreference: 'primary' })) {
             try {
                 await uploads.deleteOne(initializing);
             } catch { /* Best-effort session cleanup; chunks of the visible file stay. */ }
@@ -133,7 +135,7 @@ async function appendToSession(
         throw mapDriverError(error, 'appendChunks', ctx, { uploadId });
     }
     if (!claimed) {
-        const existing = await uploads.findOne({ _id: uploadId });
+        const existing = await uploads.findOne({ _id: uploadId }, { readPreference: 'primary' });
         if (!existing) throw fileNotFound('appendChunks', ctx, { id: uploadId });
         throw uploadBusy('appendChunks', ctx, uploadId);
     }
@@ -196,7 +198,7 @@ async function appendToSession(
 export async function finalizeResumableUpload(ctx: GridFSContext, uploadId: ObjectId): Promise<GridFSFileInfo> {
     assertObjectId(uploadId, 'finalizeResumableUpload', 'uploadId');
     const uploads = ctx.db.collection(uploadsCollectionName(ctx.bucketName));
-    let session = await uploads.findOne({ _id: uploadId }) as unknown as GridFSUploadSession | null;
+    let session = await uploads.findOne({ _id: uploadId }, { readPreference: 'primary' }) as unknown as GridFSUploadSession | null;
     if (!session || (session.kind && session.kind !== 'resumable')) {
         throw fileNotFound('finalizeResumableUpload', ctx, { id: uploadId });
     }
@@ -245,8 +247,15 @@ export async function finalizeResumableUpload(ctx: GridFSContext, uploadId: Obje
         const hash = createHash('sha256');
         let total = 0;
         const missing: number[] = [];
-        const cursor = ctx.db.collection(chunksCollectionName(ctx.bucketName)).find({ files_id: uploadId }).sort({ n: 1 });
+        let missingCount = 0;
+        const cursor = ctx.db.collection(chunksCollectionName(ctx.bucketName))
+            .find({ files_id: uploadId }, { readPreference: 'primary' }).sort({ n: 1 });
         let seen = 0;
+        const recordGap = (end: number): void => {
+            missingCount += end - seen;
+            for (let n = seen; n < end && missing.length < MAX_REPORTED_MISSING_CHUNKS; n++) missing.push(n);
+            seen = end;
+        };
         for await (const doc of cursor) {
             const n = doc.n;
             if (!Number.isSafeInteger(n) || n < seen || n >= expected) {
@@ -254,10 +263,7 @@ export async function finalizeResumableUpload(ctx: GridFSContext, uploadId: Obje
                     uploadId, expected: `chunk index between ${seen} and ${expected - 1}`, actual: n,
                 });
             }
-            while (seen < n) {
-                missing.push(seen);
-                seen += 1;
-            }
+            recordGap(n);
             const bytes = binaryToBuffer(doc.data, 'finalizeResumableUpload');
             const want = chunkLengthAt(n, session.length, session.chunkSizeBytes);
             if (bytes.length !== want) {
@@ -267,11 +273,8 @@ export async function finalizeResumableUpload(ctx: GridFSContext, uploadId: Obje
             total += bytes.length;
             seen += 1;
         }
-        while (seen < expected) {
-            missing.push(seen);
-            seen += 1;
-        }
-        if (missing.length > 0) throw uploadIncomplete(ctx.bucketName, uploadId, missing);
+        recordGap(expected);
+        if (missingCount > 0) throw uploadIncomplete(ctx.bucketName, uploadId, missing, missingCount);
         if (total !== session.length) {
             throw integrityMismatch('finalizeResumableUpload', ctx.bucketName, { uploadId, expected: session.length, actual: total });
         }
@@ -332,7 +335,7 @@ export async function abortResumableUpload(ctx: GridFSContext, uploadId: ObjectI
     const uploads = ctx.db.collection(uploadsCollectionName(ctx.bucketName));
     let session: GridFSUploadSession | null;
     try {
-        session = await uploads.findOne({ _id: uploadId }) as unknown as GridFSUploadSession | null;
+        session = await uploads.findOne({ _id: uploadId }, { readPreference: 'primary' }) as unknown as GridFSUploadSession | null;
     } catch (error) {
         throw mapDriverError(error, 'abortResumableUpload', ctx, { uploadId });
     }
@@ -360,21 +363,25 @@ export async function abortResumableUpload(ctx: GridFSContext, uploadId: ObjectI
     }
 }
 
-/**
- * Resolve a finalize retry against an already visible file under `uploadId`.
- * Returns null when no file exists. A file whose stored sha256 and length match the session is this upload's own
- * earlier commit: delete the leftover session and return it. Any other file is a real conflict (GRIDFS_FILE_EXISTS).
- */
 function finalizingOwner(uploadId: ObjectId, ownerToken?: string) {
     // Legacy finalizing records have no token. Their retries can only clear legacy records.
     return { _id: uploadId, status: 'finalizing', ownerToken: ownerToken ?? { $exists: false } };
 }
 
+/** Verify an already visible file against the session that still owns this ID. */
 async function committedFile(ctx: GridFSContext, uploadId: ObjectId, session: GridFSUploadSession): Promise<GridFSFileInfo | null> {
     const target = { uploadId, filename: session.filename };
+    const uploads = ctx.db.collection(uploadsCollectionName(ctx.bucketName));
+    const owner = finalizingOwner(uploadId, session.ownerToken);
     try {
-        const doc = await ctx.db.collection(filesCollectionName(ctx.bucketName)).findOne({ _id: uploadId });
+        const doc = await ctx.db.collection(filesCollectionName(ctx.bucketName))
+            .findOne({ _id: uploadId }, { readPreference: 'primary' });
         if (!doc) return null;
+        // After capturing the file, verify that the same finalize still owns
+        // this ID. Identical bytes can belong to a later upload with this ID.
+        if (!await uploads.findOne(owner, { projection: { _id: 1 }, readPreference: 'primary' })) {
+            throw uploadBusy('finalizeResumableUpload', ctx, uploadId);
+        }
         const info = toFileInfo(doc as Record<string, unknown>);
         if (info.metadata?.sha256 !== session.sha256 || info.length !== session.length) {
             throw fileExists('finalizeResumableUpload', ctx, { id: uploadId, filename: session.filename, sha256: session.sha256 });
@@ -390,7 +397,7 @@ async function committedFile(ctx: GridFSContext, uploadId: ObjectId, session: Gr
         let total = 0;
         let index = 0;
         for await (const chunk of ctx.db.collection(chunksCollectionName(ctx.bucketName))
-            .find({ files_id: uploadId }).sort({ n: 1 })) {
+            .find({ files_id: uploadId }, { readPreference: 'primary' }).sort({ n: 1 })) {
             const bytes = binaryToBuffer(chunk.data, 'finalizeResumableUpload');
             const expectedSize = chunkLengthAt(index, session.length, session.chunkSizeBytes);
             if (chunk.n !== index || bytes.length !== expectedSize) {
@@ -403,7 +410,7 @@ async function committedFile(ctx: GridFSContext, uploadId: ObjectId, session: Gr
         if (index !== chunkCount(session.length, session.chunkSizeBytes) || total !== session.length || hash.digest('hex') !== session.sha256) {
             throw integrityMismatch('finalizeResumableUpload', ctx.bucketName, { uploadId, expected: session.sha256, actual: 'committed chunks do not match' });
         }
-        await ctx.db.collection(uploadsCollectionName(ctx.bucketName)).deleteOne(finalizingOwner(uploadId, session.ownerToken));
+        await uploads.deleteOne(owner);
         return info;
     } catch (error) {
         // GridFS domain errors (the conflict above) pass through unchanged.
@@ -416,7 +423,7 @@ async function removeInvisibleChunks(ctx: GridFSContext, uploadId: ObjectId, ope
     try {
         const visible = await ctx.db.collection(filesCollectionName(ctx.bucketName)).findOne(
             { _id: uploadId },
-            { projection: { _id: 1 } },
+            { projection: { _id: 1 }, readPreference: 'primary' },
         );
         if (!visible) await ctx.db.collection(chunksCollectionName(ctx.bucketName)).deleteMany({ files_id: uploadId });
     } catch (error) {
@@ -450,7 +457,7 @@ function planChunkSlices(payload: Buffer, fromChunk: number, length: number, chu
 }
 
 async function requireSession(ctx: GridFSContext, uploadId: ObjectId, operation: string): Promise<GridFSUploadSession> {
-    const doc = await ctx.db.collection(uploadsCollectionName(ctx.bucketName)).findOne({ _id: uploadId });
+    const doc = await ctx.db.collection(uploadsCollectionName(ctx.bucketName)).findOne({ _id: uploadId }, { readPreference: 'primary' });
     if (!doc || (doc.kind && doc.kind !== 'resumable')) throw fileNotFound(operation, ctx, { id: uploadId });
     return doc as unknown as GridFSUploadSession;
 }
@@ -464,7 +471,7 @@ async function contiguousNext(ctx: GridFSContext, uploadId: ObjectId, from: numb
     let expected = start;
     try {
         const cursor = ctx.db.collection(chunksCollectionName(ctx.bucketName))
-            .find({ files_id: uploadId, n: { $gte: start } })
+            .find({ files_id: uploadId, n: { $gte: start } }, { readPreference: 'primary' })
             .sort({ n: 1 })
             .project({ _id: 0, n: 1 })
             .batchSize(256);
@@ -479,7 +486,8 @@ async function contiguousNext(ctx: GridFSContext, uploadId: ObjectId, from: numb
 }
 
 async function assertStoredChunk(ctx: GridFSContext, uploadId: ObjectId, n: number, slice: Buffer, expectedNextChunk: number): Promise<void> {
-    const existing = await ctx.db.collection(chunksCollectionName(ctx.bucketName)).findOne({ files_id: uploadId, n });
+    const existing = await ctx.db.collection(chunksCollectionName(ctx.bucketName))
+        .findOne({ files_id: uploadId, n }, { readPreference: 'primary' });
     if (!existing || !sameBytes(binaryToBuffer(existing.data, 'appendChunks'), slice)) {
         throw resumeMismatch('appendChunks', ctx.bucketName, { uploadId, fromChunk: n, expectedNextChunk });
     }

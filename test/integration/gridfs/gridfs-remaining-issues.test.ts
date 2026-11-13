@@ -232,6 +232,118 @@ describe('GridFS remaining-issue regressions (begin race, finalize rollback, str
         });
     });
 
+    it('rejects a stale finalize retry that sees a replacement with the same bytes', { timeout: 10_000 }, async () => {
+        await withRuntime('gridfs_finalize_stale_retry', async (runtime, db) => {
+            const bucket = runtime.gridfs('b', { chunkSizeBytes: 4 });
+            const id = new ObjectId();
+            const payload = Buffer.from('SAME');
+            const opts = { id, length: payload.length, sha256: sha(payload) };
+            await bucket.beginResumableUpload('first.bin', opts);
+            await bucket.appendChunks(id, 0, payload);
+
+            const inserted = gate();
+            const reading = gate();
+            const releaseFirst = gate();
+            const resumeRetry = gate();
+            const originalDelete = Collection.prototype.deleteOne;
+            const originalFind = Collection.prototype.findOne;
+            let pauseRelease = true;
+            let pauseRead = false;
+            Collection.prototype.deleteOne = async function (this: Collection, filter, options) {
+                if (pauseRelease && this.collectionName === 'b.uploads' && filter?.status === 'finalizing') {
+                    pauseRelease = false;
+                    inserted.open();
+                    await releaseFirst.wait;
+                }
+                return originalDelete.call(this, filter, options);
+            };
+            Collection.prototype.findOne = async function (this: Collection, ...args: unknown[]) {
+                if (this.collectionName === 'b.files' && pauseRead) {
+                    pauseRead = false;
+                    reading.open();
+                    await resumeRetry.wait;
+                }
+                return Reflect.apply(originalFind, this, args);
+            } as typeof originalFind;
+
+            const first = bucket.finalizeResumableUpload(id);
+            const pending = [first];
+            try {
+                await inserted.wait;
+                pauseRead = true;
+                const retry = assert.rejects(bucket.finalizeResumableUpload(id), { code: 'GRIDFS_UPLOAD_BUSY' });
+                pending.push(retry);
+                await reading.wait;
+                releaseFirst.open();
+                await first;
+                await bucket.delete(id);
+                await bucket.beginResumableUpload('replacement.bin', { ...opts, metadata: { label: 'replacement' } });
+                await bucket.appendChunks(id, 0, payload);
+                await bucket.finalizeResumableUpload(id);
+                resumeRetry.open();
+                await retry;
+                assert.equal((await bucket.getFile(id))?.filename, 'replacement.bin');
+                assert.deepEqual(await bucket.download(id), payload);
+                assert.equal(await db.collection('b.uploads').findOne({ _id: id }), null);
+            } finally {
+                releaseFirst.open();
+                resumeRetry.open();
+                Collection.prototype.findOne = originalFind;
+                Collection.prototype.deleteOne = originalDelete;
+                await Promise.allSettled(pending);
+            }
+        });
+    });
+
+    it('bounds missing-chunk diagnostics and counts the complete gap', { timeout: 10_000 }, async () => {
+        await withRuntime('gridfs_finalize_gap_bound', async (runtime, db) => {
+            const bucket = runtime.gridfs('b', { chunkSizeBytes: 1 });
+            const length = 10_000_000_000;
+            const { uploadId } = await bucket.beginResumableUpload('large.bin', {
+                length, sha256: sha(Buffer.from('unused')),
+            });
+            await db.collection('b.chunks').insertMany([
+                { files_id: uploadId, n: 0, data: Buffer.from('A') },
+                { files_id: uploadId, n: length - 2, data: Buffer.from('B') },
+            ]);
+            await assert.rejects(bucket.finalizeResumableUpload(uploadId), (error: unknown) => {
+                const incomplete = error as { code: string; details: { missingChunks: number[]; missingChunkCount: number }[] };
+                assert.equal(incomplete.code, 'GRIDFS_UPLOAD_INCOMPLETE');
+                assert.equal(incomplete.details[0].missingChunkCount, length - 2);
+                assert.deepEqual(incomplete.details[0].missingChunks, Array.from({ length: 1024 }, (_, index) => index + 1));
+                return true;
+            });
+            assert.equal((await db.collection('b.uploads').findOne({ _id: uploadId }))?.status, 'pending');
+            assert.equal(await db.collection('b.chunks').countDocuments({ files_id: uploadId }), 2);
+            assert.equal(await db.collection('b.files').countDocuments({ _id: uploadId }), 0);
+        });
+    });
+
+    it('uses primary reads for visibility checks before orphan cleanup', async () => {
+        await withRuntime('gridfs_primary_cleanup', async (runtime, db) => {
+            const bucket = runtime.gridfs('b', { chunkSizeBytes: 4 });
+            const payload = Buffer.from('LIVE');
+            const { id } = await bucket.upload('visible.bin', payload);
+            const original = Collection.prototype.findOne;
+            Collection.prototype.findOne = async function (this: Collection, ...args: unknown[]) {
+                const options = args[1] as { readPreference?: string } | undefined;
+                // Model a secondary that has not yet observed the file commit.
+                if (this.collectionName === 'b.files' && options?.readPreference !== 'primary') return null;
+                return Reflect.apply(original, this, args);
+            } as typeof original;
+            try {
+                await bucket.abortResumableUpload(id);
+                await assert.rejects(bucket.beginResumableUpload('duplicate.bin', {
+                    id, length: payload.length, sha256: sha(payload),
+                }), { code: 'GRIDFS_FILE_EXISTS' });
+            } finally {
+                Collection.prototype.findOne = original;
+            }
+            assert.equal(await db.collection('b.chunks').countDocuments({ files_id: id }), 1);
+            assert.deepEqual(await bucket.download(id), payload);
+        });
+    });
+
     it('keeps the new finalize owner when an older retry completes after ID reuse', { timeout: 10_000 }, async () => {
         await withRuntime('gridfs_finalize_owner_reuse', async (runtime, db) => {
             const bucket = runtime.gridfs('b', { chunkSizeBytes: 4 });
