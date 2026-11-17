@@ -1,4 +1,4 @@
-import MonSQLize, { ModelInstance, Logger, SlowQueryLogConfigManager, type SlowQueryLogConfig, type ResultWithMeta } from 'monsqlize';
+import MonSQLize, { ModelInstance, Logger, SlowQueryLogConfigManager, type SlowQueryLogConfig, type ResultWithMeta, type SQLiteNativeConnection } from 'monsqlize';
 
 const partialSlowLog: SlowQueryLogConfig = SlowQueryLogConfigManager.mergeConfig({
     batch: { enabled: false }, advanced: { errorHandling: 'silent' }, filter: { excludeOperations: ['find'] },
@@ -10,6 +10,8 @@ void partialSlowLog;
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
 type Assert<T extends true> = T;
+type SQLiteHandleIsOpaque = Assert<Equal<{ closed: boolean; close(): Promise<void> } extends SQLiteNativeConnection ? true : false, false>>;
+void (null as SQLiteHandleIsOpaque | null);
 declare const runtime: MonSQLize;
 declare const model: ModelInstance<{ name: string }>;
 // @ts-expect-error The runtime constructor remains private to typed consumers.

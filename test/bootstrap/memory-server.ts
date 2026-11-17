@@ -10,6 +10,7 @@ import {
 
 type MemoryServerOptions = {
     uri?: string;
+    useEnvironmentUri?: boolean;
     binaryVersion?: string;
     dbName?: string;
 };
@@ -30,7 +31,7 @@ let memoryServerInstance: any = null;
 let memoryServerDbPath: string | null = null;
 
 export function createMemoryServerBootstrap(options: MemoryServerOptions = {}): MemoryServerBootstrap {
-    const externalUri = options.uri || process.env.MONSQLIZE_MEMORY_MONGO_URI;
+    const externalUri = options.uri || (options.useEnvironmentUri === false ? undefined : process.env.MONSQLIZE_MEMORY_MONGO_URI);
     const binaryVersion = resolveMemoryServerBinaryVersion(options.binaryVersion);
 
     async function ensureServer(): Promise<MemoryServerContext> {

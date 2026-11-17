@@ -1,0 +1,54 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Verification evidence record (B01 draft)",
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["caseId", "backend", "status", "environment", "inputFingerprints", "artifacts"],
+    "properties": {
+        "caseId": { "type": "string", "minLength": 1 },
+        "backend": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+        "status": { "enum": ["selected", "executed", "passed", "failed", "blocked", "skip"] },
+        "command": { "type": "string", "minLength": 1 },
+        "exitCode": { "type": "integer", "minimum": 0 },
+        "reason": { "type": "string", "minLength": 1 },
+        "environment": {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": { "type": "string", "minLength": 1 }
+        },
+        "inputFingerprints": {
+            "type": "object",
+            "required": ["source", "lock", "fixture", "runner"],
+            "additionalProperties": { "$ref": "#/definitions/digest" }
+        },
+        "artifacts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["path", "sha256"],
+                "properties": {
+                    "path": { "type": "string", "minLength": 1 },
+                    "sha256": { "$ref": "#/definitions/digest" }
+                }
+            }
+        }
+    },
+    "allOf": [
+        {
+            "if": { "properties": { "status": { "enum": ["executed", "passed", "failed"] } } },
+            "then": { "required": ["command", "exitCode"], "properties": { "artifacts": { "minItems": 1 } } }
+        },
+        {
+            "if": { "properties": { "status": { "const": "passed" } } },
+            "then": { "properties": { "exitCode": { "const": 0 } } }
+        },
+        {
+            "if": { "properties": { "status": { "enum": ["failed", "blocked", "skip"] } } },
+            "then": { "required": ["reason"] }
+        }
+    ],
+    "definitions": {
+        "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+    }
+}

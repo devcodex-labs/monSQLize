@@ -1,0 +1,68 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Capability record (B01 draft)",
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["id", "granularity", "backend", "condition", "support", "implementation", "verification", "environment", "release", "references"],
+    "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "granularity": { "enum": ["method", "overload", "field", "operator", "result", "combination"] },
+        "backend": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+        "condition": { "$ref": "#/definitions/condition" },
+        "support": { "enum": ["supported", "conditional", "native-boundary", "unsupported"] },
+        "implementation": { "enum": ["pending", "implemented"] },
+        "verification": { "enum": ["unverified", "passed", "failed", "blocked"] },
+        "environment": { "enum": ["available", "missing", "unverified"] },
+        "release": { "enum": ["stable", "next", "roadmap"] },
+        "references": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["contract", "doc", "test"],
+            "properties": {
+                "contract": { "$ref": "#/definitions/ids" },
+                "error": { "$ref": "#/definitions/ids" },
+                "doc": { "$ref": "#/definitions/ids" },
+                "snippet": { "$ref": "#/definitions/ids" },
+                "test": { "$ref": "#/definitions/ids" },
+                "evidence": { "$ref": "#/definitions/ids" },
+                "fingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+            }
+        }
+    },
+    "if": { "properties": { "verification": { "const": "passed" } } },
+    "then": { "properties": { "references": { "required": ["evidence", "fingerprint"] } } },
+    "definitions": {
+        "id": { "type": "string", "minLength": 1 },
+        "ids": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/definitions/id" } },
+        "condition": {
+            "oneOf": [
+                { "type": "boolean" },
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["op", "args"],
+                    "properties": {
+                        "op": { "enum": ["all", "any"] },
+                        "args": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/condition" } }
+                    }
+                },
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["op", "arg"],
+                    "properties": { "op": { "const": "not" }, "arg": { "$ref": "#/definitions/condition" } }
+                },
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["op", "fact", "value"],
+                    "properties": {
+                        "op": { "enum": ["equal", "has", "version"] },
+                        "fact": { "$ref": "#/definitions/id" },
+                        "value": { "type": ["string", "number", "boolean"] }
+                    }
+                }
+            ]
+        }
+    }
+}

@@ -128,6 +128,7 @@
         "test:compatibility": "npm run build && npm run build:tests && node --test .generated/test-dist/test/compatibility/exports/exports.test.js .generated/test-dist/test/compatibility/matrix.test.js",
         "probe:server-matrix": "node scripts/validation/probe-memory-server-matrix.cjs",
         "test:server-matrix": "node scripts/validation/run-memory-server-matrix.cjs",
+        "test:backend-fixtures": "npm run build && npm run build:tests && tsd --files test/types/backend-ports.test-d.ts && node --test --test-concurrency=1 test/contracts/backend-boundaries.test.cjs .generated/test-dist/test/contracts/backend-fixtures.test.js .generated/test-dist/test/contracts/backend-core-control.test.js",
         "test:search-index:real": "npm run build && node scripts/validation/run-search-index-real-env.cjs",
         "test:search:real": "npm run build && node scripts/validation/run-search-real-env.cjs",
         "test:real-env:private": "node scripts/validation/run-private-real-env-checks.cjs",

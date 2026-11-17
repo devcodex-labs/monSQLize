@@ -1,0 +1,7 @@
+monSQLize SQLite native foundation
+
+SQLite is dedicated to the public domain by its authors.
+Source and terms: https://sqlite.org/copyright.html
+
+The SQLite amalgamation is built from the pinned external source recorded in
+source-manifest.json. This foundation build uses the unmodified amalgamation.

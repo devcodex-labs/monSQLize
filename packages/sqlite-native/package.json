@@ -1,0 +1,12 @@
+{
+    "name": "@monsqlize/sqlite-native",
+    "version": "0.1.0",
+    "description": "SQLite native foundation for monSQLize",
+    "license": "Apache-2.0",
+    "type": "commonjs",
+    "engines": { "node": ">=18" },
+    "exports": {
+        ".": "./index.cjs"
+    },
+    "files": ["index.cjs", "engine-build.cjs", "prebuild", "NOTICE", "source-manifest.json"]
+}

@@ -1,0 +1,18 @@
+{
+    "sqliteVersion": "3.54.1",
+    "sqliteSourceId": "2026-10-16 14:45:20 555e07ef33f69a0957d24d8e555b702464a131d6f1607f4c3c1e4551e8e6ca76",
+    "sqliteArchive": "https://sqlite.org/2026/sqlite-amalgamation-3540100.zip",
+    "sha256": {
+        "sqlite3.c": "0c657666d819f261cc4007526ad57e1669de9949df7a8ea847aa284a2bf0ee52",
+        "sqlite3.h": "d6c84557261893439b341d2e6c35187ae3ea24fbfd843ad94616f72d89242b8c",
+        "sqlite3ext.h": "48963abfefb41ac329ef9d706acb5eadba952a99a748285c9ded6b5e0942721b",
+        "shell.c": "00c5cba13701f8c02771f147190aca4faacdf6f6b0def48246fc6c2af656e9ee"
+    },
+    "sqliteSourceSha3": "e2b869d3003b33c942b7dd7063604fbc53553e1b66609570df39b9b7b558ee81",
+    "sqliteDefines": ["SQLITE_THREADSAFE=1", "SQLITE_ENABLE_PREUPDATE_HOOK=1"],
+    "sqliteRuntimeOptions": ["THREADSAFE=1", "ENABLE_PREUPDATE_HOOK"],
+    "napi": 8,
+    "zig": "0.15.2",
+    "nodeWindowsX64ImportSha256": "a0a84aa03917b578d286010b7521837e9ff1136ffb2e4a406c14316c33fd06f7",
+    "patch": null
+}

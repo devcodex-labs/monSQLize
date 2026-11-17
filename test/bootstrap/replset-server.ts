@@ -10,6 +10,7 @@ import {
 
 type ReplSetOptions = {
     uri?: string;
+    useEnvironmentUri?: boolean;
     binaryVersion?: string;
     dbName?: string;
 };
@@ -30,7 +31,7 @@ let replSetInstance: any = null;
 let replSetDbPath: string | null = null;
 
 export function createReplSetBootstrap(options: ReplSetOptions = {}): ReplSetBootstrap {
-    const externalUri = options.uri || process.env.MONSQLIZE_REPLSET_URI;
+    const externalUri = options.uri || (options.useEnvironmentUri === false ? undefined : process.env.MONSQLIZE_REPLSET_URI);
     const binaryVersion = resolveReplSetBinaryVersion(options.binaryVersion);
 
     async function ensureServer(): Promise<ReplSetContext> {

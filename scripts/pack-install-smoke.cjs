@@ -78,6 +78,8 @@ try {
     run(process.execPath, ['--input-type=module', '-e', "import assert from 'node:assert/strict'; import M,{ModelInstance} from 'monsqlize'; assert.strictEqual(M.ModelInstance,ModelInstance); const instance=new ModelInstance({}, {options:{}}, {collectionName:'packed',dbName:'packed',definition:{autoIndex:false}}); assert(instance instanceof ModelInstance);"], { cwd: consumerRoot });
     run(process.execPath, ['--input-type=module', '-e', "import assert from 'node:assert/strict'; import {Logger} from 'monsqlize'; assert.equal(typeof globalThis.require,'undefined'); assert.match(Logger.generateTraceId(),/^[0-9a-f]{16}$/); const entries=[]; const sink=Object.fromEntries(['debug','info','warn','error'].map(level=>[level,message=>entries.push(message)])); await Logger.withTraceId(()=>Logger.create(sink,{structured:true}).info('packed ESM')); assert.match(JSON.parse(entries[0]).traceId,/^[0-9a-f]{16}$/);"], { cwd: consumerRoot });
     const dependencyTree = JSON.parse(run('npm', ['ls', '--all', '--json'], { cwd: consumerRoot, quiet: true }));
+    assert(!findDependencyVersion(dependencyTree, '@monsqlize/sqlite-native'),
+        'the Mongo-only root smoke consumer must not install the SQLite companion package');
     const installedSchemaDslVersion = findDependencyVersion(dependencyTree, 'schema-dsl');
     assert(
         installedSchemaDslVersion === packageJson.dependencies['schema-dsl'],

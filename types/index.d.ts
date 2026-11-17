@@ -11,6 +11,7 @@ export * from './runtime';
 export * from './saga';
 export * from './search-index';
 export * from './slow-query-log';
+export type { SQLiteNativeConnection } from './sqlite-native';
 export * from './sync';
 export * from './transaction';
 export * from './monsqlize';
